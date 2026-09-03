@@ -1,0 +1,335 @@
+# Builds a cloud-signed App Store IPA. Manual runs may optionally publish to
+# TestFlight; every v* tag publishes after exporting the downloadable artifact.
+name: Release IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      marketing_version:
+        description: "Marketing version override, e.g. 1.2.0 (blank = project value)"
+        required: false
+        type: string
+      publish_testflight:
+        description: "Upload the exported IPA to TestFlight"
+        required: false
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Archive, sign, and export
+    runs-on: macos-latest
+    env:
+      SCHEME: OTodo
+      PROJECT: OTodo.xcodeproj
+      XCODEGEN_VERSION: 2.46.0
+      XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+
+    steps:
+      - name: Verify release prerequisites
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          GITHUB_CLIENT_ID: ${{ vars.GITHUB_OAUTH_CLIENT_ID }}
+        run: |
+          set -u
+          missing=0
+          if [ -z "${KEY_ID:-}" ]; then
+            echo "::error::Missing required secret: APP_STORE_CONNECT_API_KEY_ID"
+            missing=1
+          fi
+          if [ -z "${ISSUER_ID:-}" ]; then
+            echo "::error::Missing required secret: APP_STORE_CONNECT_API_ISSUER_ID"
+            missing=1
+          fi
+          if [ -z "${API_KEY:-}" ]; then
+            echo "::error::Missing required secret: APP_STORE_CONNECT_API_KEY"
+            missing=1
+          fi
+          if [ -z "${GITHUB_CLIENT_ID:-}" ]; then
+            echo "::error::Missing required Actions variable: GITHUB_OAUTH_CLIENT_ID"
+            missing=1
+          fi
+          [ "$missing" -eq 0 ]
+
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Select newest Xcode
+        run: |
+          set -euo pipefail
+          newest="$(python3 <<'PY'
+          import glob
+          import plistlib
+
+          xcodes = []
+          for app in glob.glob("/Applications/Xcode*.app"):
+              try:
+                  with open(f"{app}/Contents/Info.plist", "rb") as info:
+                      value = plistlib.load(info)["CFBundleShortVersionString"]
+                  version = tuple(int(part) for part in value.split("."))
+              except (KeyError, OSError, TypeError, ValueError):
+                  continue
+              xcodes.append((version, app))
+
+          print(max(xcodes)[1] if xcodes else "")
+          PY
+          )"
+          if [ -z "$newest" ]; then
+            echo "::error::No Xcode installation was found on the runner."
+            exit 1
+          fi
+          sudo xcode-select -s "$newest/Contents/Developer"
+          xcodebuild -version
+
+      - name: Set up private output paths
+        run: |
+          set -euo pipefail
+          echo "ARCHIVE_PATH=$RUNNER_TEMP/OTodo.xcarchive" >> "$GITHUB_ENV"
+          echo "EXPORT_DIR=$RUNNER_TEMP/export" >> "$GITHUB_ENV"
+          echo "API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+
+      - name: Validate and install App Store Connect API key
+        env:
+          API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$API_KEY" > "$API_KEY_PATH"
+          chmod 600 "$API_KEY_PATH"
+          if ! grep -q '^-----BEGIN PRIVATE KEY-----' "$API_KEY_PATH" \
+            || ! grep -q '^-----END PRIVATE KEY-----' "$API_KEY_PATH" \
+            || ! openssl pkey -in "$API_KEY_PATH" -noout -check >/dev/null 2>&1; then
+            echo "::error::APP_STORE_CONNECT_API_KEY is not a valid .p8 private key; paste the complete AuthKey_<KEYID>.p8 contents, including the BEGIN and END lines."
+            rm -f "$API_KEY_PATH"
+            exit 1
+          fi
+
+      - name: Install XcodeGen (pinned and verified)
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/xcodegen.zip"
+          install_dir="$RUNNER_TEMP/xcodegen-install"
+          curl -fsSL \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip" \
+            -o "$archive"
+          echo "${XCODEGEN_SHA256}  ${archive}" | shasum -a 256 -c -
+          mkdir -p "$install_dir"
+          unzip -q "$archive" -d "$install_dir"
+          tool="$install_dir/xcodegen/bin/xcodegen"
+          "$tool" --version
+          echo "XCODEGEN=$tool" >> "$GITHUB_ENV"
+
+      - name: Resolve version and unique build number
+        env:
+          INPUT_MARKETING_VERSION: ${{ inputs.marketing_version }}
+        run: |
+          set -euo pipefail
+          marketing_version="${INPUT_MARKETING_VERSION:-}"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            marketing_version="${GITHUB_REF_NAME#v}"
+          fi
+          if { [ "$GITHUB_EVENT_NAME" = "push" ] || [ -n "$marketing_version" ]; } \
+            && ! [[ "$marketing_version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            echo "::error::Invalid marketing version '$marketing_version'; use one to three dot-separated integers, for example 1.2.0."
+            exit 1
+          fi
+          build_number="$(date -u +%s)"
+          echo "BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
+          echo "MARKETING_VERSION=$marketing_version" >> "$GITHUB_ENV"
+          echo "Build number: $build_number; marketing version: ${marketing_version:-project default}"
+
+      - name: Generate Xcode project
+        env:
+          GITHUB_CLIENT_ID: ${{ vars.GITHUB_OAUTH_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          [ -n "$GITHUB_CLIENT_ID" ] || {
+            echo "::error::Missing required Actions variable: GITHUB_OAUTH_CLIENT_ID"
+            exit 1
+          }
+          "$XCODEGEN" generate --spec project.yml
+          [ -d "$PROJECT" ] || {
+            echo "::error::XcodeGen did not create $PROJECT."
+            exit 1
+          }
+
+      - name: Archive with cloud signing
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          GITHUB_CLIENT_ID: ${{ vars.GITHUB_OAUTH_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/archive.log"
+          version_settings=("CURRENT_PROJECT_VERSION=$BUILD_NUMBER")
+          if [ -n "$MARKETING_VERSION" ]; then
+            version_settings+=("MARKETING_VERSION=$MARKETING_VERSION")
+          fi
+
+          set +e
+          xcodebuild archive \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$ARCHIVE_PATH" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$API_KEY_PATH" \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            DEVELOPMENT_TEAM=9492A97LWY \
+            "GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID" \
+            "${version_settings[@]}" 2>&1 | tee "$log"
+          status="${PIPESTATUS[0]}"
+          set -e
+
+          if [ "$status" -ne 0 ]; then
+            if grep -qiE "cloud signing|no profiles for|provisioning profile|maximum number of certificates" "$log"; then
+              echo "::error::Cloud signing failed. Confirm the App Store Connect API key has the Admin role, belongs to team 9492A97LWY, and can provision bundle ID plastickarma.otodo."
+            else
+              echo "::error::Release archive failed; see the xcodebuild output above."
+            fi
+            exit "$status"
+          fi
+
+      - name: Export App Store IPA
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/export.log"
+          : > "$log"
+
+          export_ipa() {
+            local options="$1"
+            xcodebuild -exportArchive \
+              -archivePath "$ARCHIVE_PATH" \
+              -exportPath "$EXPORT_DIR" \
+              -exportOptionsPlist "$options" \
+              -allowProvisioningUpdates \
+              -authenticationKeyPath "$API_KEY_PATH" \
+              -authenticationKeyID "$KEY_ID" \
+              -authenticationKeyIssuerID "$ISSUER_ID" 2>&1 | tee -a "$log"
+            local status="${PIPESTATUS[0]}"
+            return "$status"
+          }
+
+          exported=0
+          if export_ipa ExportOptions.plist; then
+            exported=1
+          else
+            echo "::warning::Export using 'app-store-connect' failed; retrying with legacy method 'app-store'."
+            legacy_options="$RUNNER_TEMP/ExportOptions-legacy.plist"
+            sed 's/app-store-connect/app-store/' ExportOptions.plist > "$legacy_options"
+            rm -rf "$EXPORT_DIR"
+            if export_ipa "$legacy_options"; then
+              exported=1
+            fi
+          fi
+
+          if [ "$exported" -ne 1 ]; then
+            if grep -qi "Cloud signing permission error" "$log"; then
+              echo "::error::Export failed with a cloud-signing permission error. The App Store Connect API key must have the Admin role so Xcode can create an Apple Distribution certificate."
+            elif grep -qiE "cloud signing|no profiles for|provisioning profile" "$log"; then
+              echo "::error::Cloud signing failed during export. Confirm the Admin API key and team 9492A97LWY can provision plastickarma.otodo for App Store distribution."
+            else
+              echo "::error::IPA export failed with both 'app-store-connect' and legacy 'app-store' methods; see the xcodebuild output above."
+            fi
+            exit 1
+          fi
+
+          shopt -s nullglob
+          ipas=("$EXPORT_DIR"/*.ipa)
+          if [ "${#ipas[@]}" -eq 0 ]; then
+            echo "::error::Export completed but produced no IPA."
+            exit 1
+          fi
+          if [ "${#ipas[@]}" -ne 1 ]; then
+            echo "::error::Export produced multiple IPAs; expected exactly one for OTodo."
+            exit 1
+          fi
+          echo "IPA_PATH=${ipas[0]}" >> "$GITHUB_ENV"
+          echo "Exported ${ipas[0]}"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: otodo-ipa
+          path: ${{ runner.temp }}/export/*.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload to TestFlight
+        if: ${{ github.event_name == 'push' || inputs.publish_testflight }}
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          keys_dir="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$keys_dir"
+          chmod 700 "$keys_dir"
+          named_key="$keys_dir/AuthKey_${KEY_ID}.p8"
+          install -m 600 "$API_KEY_PATH" "$named_key"
+          trap 'rm -f "$named_key"' EXIT
+
+          log="$RUNNER_TEMP/testflight-upload.log"
+          set +e
+          xcrun altool --upload-app \
+            --type ios \
+            --file "$IPA_PATH" \
+            --apiKey "$KEY_ID" \
+            --apiIssuer "$ISSUER_ID" 2>&1 | tee "$log"
+          status="${PIPESTATUS[0]}"
+          set -e
+
+          if [ "$status" -ne 0 ] \
+            || grep -qiE "UPLOAD FAILED|Failed to upload package" "$log"; then
+            if grep -qiE "No suitable application records|app.*not.*found|cannot be found" "$log"; then
+              echo "::error::TestFlight upload failed because no App Store Connect app record matches plastickarma.otodo. Create that app record and retry."
+            elif grep -qiE "closed for new build submissions|must contain a higher version" "$log"; then
+              echo "::error::TestFlight rejected this marketing version. Retry with a higher marketing_version or push a higher v* tag."
+            elif grep -qiE "must be built with the iOS .* SDK" "$log"; then
+              echo "::error::TestFlight rejected the SDK used by this runner; use a runner image containing the currently required Xcode SDK."
+            else
+              echo "::error::TestFlight upload failed; see the altool output above."
+            fi
+            exit 1
+          fi
+          if ! grep -qiE "UPLOAD SUCCEEDED|No errors uploading" "$log"; then
+            echo "::error::TestFlight upload did not report success; see the altool output above."
+            exit 1
+          fi
+          echo "PUBLISHED_TESTFLIGHT=1" >> "$GITHUB_ENV"
+
+      - name: Write release summary
+        if: ${{ always() }}
+        run: |
+          {
+            echo "## OTodo release"
+            echo ""
+            echo "- Version: \`${MARKETING_VERSION:-project default}\`"
+            echo "- Build: \`${BUILD_NUMBER:-not archived}\`"
+            if [ "${PUBLISHED_TESTFLIGHT:-0}" = 1 ]; then
+              echo "- TestFlight: uploaded; App Store Connect processing is pending."
+            elif [ -n "${IPA_PATH:-}" ]; then
+              echo "- Artifact: \`otodo-ipa\`"
+              echo "- TestFlight: not requested."
+            else
+              echo "- Result: release did not produce an IPA; inspect the failed step above."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

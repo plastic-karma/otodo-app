@@ -1,0 +1,290 @@
+import Foundation
+
+public enum RecurrenceFrequency: String, Sendable, Codable, CaseIterable, Hashable {
+    case daily = "DAILY"
+    case weekly = "WEEKLY"
+    case monthly = "MONTHLY"
+    case yearly = "YEARLY"
+}
+
+public enum RecurrenceWeekday: String, Sendable, Codable, CaseIterable, Hashable {
+    case monday = "MO"
+    case tuesday = "TU"
+    case wednesday = "WE"
+    case thursday = "TH"
+    case friday = "FR"
+    case saturday = "SA"
+    case sunday = "SU"
+
+    fileprivate var ordinal: Int {
+        switch self {
+        case .monday: 0
+        case .tuesday: 1
+        case .wednesday: 2
+        case .thursday: 3
+        case .friday: 4
+        case .saturday: 5
+        case .sunday: 6
+        }
+    }
+}
+
+public struct RecurrenceRule: Sendable, Equatable, Codable, CustomStringConvertible {
+    public let frequency: RecurrenceFrequency
+    public let interval: UInt64
+    public let byDay: [RecurrenceWeekday]
+    public let byMonthDay: [Int]
+    public let byMonth: [Int]
+
+    public init(
+        frequency: RecurrenceFrequency,
+        interval: UInt64 = 1,
+        byDay: [RecurrenceWeekday] = [],
+        byMonthDay: [Int] = [],
+        byMonth: [Int] = []
+    ) throws {
+        guard interval > 0 else {
+            throw Self.invalid("INTERVAL must be a positive integer")
+        }
+        guard Set(byDay).count == byDay.count else {
+            throw Self.invalid("BYDAY contains a duplicate value")
+        }
+        guard Set(byMonthDay).count == byMonthDay.count,
+              byMonthDay.allSatisfy({ (1 ... 31).contains($0) })
+        else {
+            throw Self.invalid("BYMONTHDAY values must be unique integers from 1 through 31")
+        }
+        guard Set(byMonth).count == byMonth.count,
+              byMonth.allSatisfy({ (1 ... 12).contains($0) })
+        else {
+            throw Self.invalid("BYMONTH values must be unique integers from 1 through 12")
+        }
+        guard byDay.isEmpty || frequency == .weekly else {
+            throw Self.invalid("BYDAY is allowed only with FREQ=WEEKLY")
+        }
+        guard byMonthDay.isEmpty || frequency == .monthly || frequency == .yearly else {
+            throw Self.invalid("BYMONTHDAY is allowed only with FREQ=MONTHLY or FREQ=YEARLY")
+        }
+        guard byMonth.isEmpty || frequency == .yearly else {
+            throw Self.invalid("BYMONTH is allowed only with FREQ=YEARLY")
+        }
+
+        self.frequency = frequency
+        self.interval = interval
+        self.byDay = byDay.sorted { $0.ordinal < $1.ordinal }
+        self.byMonthDay = byMonthDay.sorted()
+        self.byMonth = byMonth.sorted()
+    }
+
+    public init(parsing source: String) throws {
+        guard !source.isEmpty else {
+            throw Self.invalid("Recurrence rule cannot be empty")
+        }
+
+        var frequency: RecurrenceFrequency?
+        var interval: UInt64 = 1
+        var byDay: [RecurrenceWeekday] = []
+        var byMonthDay: [Int] = []
+        var byMonth: [Int] = []
+        var clauses: Set<String> = []
+
+        for clause in source.split(separator: ";", omittingEmptySubsequences: false) {
+            let pieces = clause.split(separator: "=", omittingEmptySubsequences: false)
+            guard pieces.count == 2, !pieces[0].isEmpty, !pieces[1].isEmpty else {
+                throw Self.invalid("Recurrence clause \"\(clause)\" must contain one nonempty '=' value")
+            }
+            let name = String(pieces[0]).uppercased()
+            let value = String(pieces[1]).uppercased()
+            guard clauses.insert(name).inserted else {
+                throw Self.invalid("Recurrence clause \(name) appears more than once")
+            }
+
+            switch name {
+            case "FREQ":
+                guard let parsed = RecurrenceFrequency(rawValue: value) else {
+                    throw Self.invalid("Unsupported recurrence frequency \"\(value)\"")
+                }
+                frequency = parsed
+            case "INTERVAL":
+                guard value.utf8.allSatisfy({ (48 ... 57).contains($0) }),
+                      let parsed = UInt64(value), parsed > 0
+                else {
+                    throw Self.invalid("INTERVAL must be a positive integer")
+                }
+                interval = parsed
+            case "BYDAY":
+                byDay = try Self.parseUniqueList(value, clause: "BYDAY") { item in
+                    guard let weekday = RecurrenceWeekday(rawValue: item) else {
+                        throw Self.invalid(
+                            "Unsupported BYDAY value \"\(item)\"; ordinal weekdays are not supported"
+                        )
+                    }
+                    return weekday
+                }
+            case "BYMONTHDAY":
+                byMonthDay = try Self.parseNumberList(value, range: 1 ... 31, clause: "BYMONTHDAY")
+            case "BYMONTH":
+                byMonth = try Self.parseNumberList(value, range: 1 ... 12, clause: "BYMONTH")
+            default:
+                throw Self.invalid("Unsupported recurrence clause \(name)")
+            }
+        }
+
+        guard let frequency else {
+            throw Self.invalid("FREQ is required")
+        }
+        try self.init(
+            frequency: frequency,
+            interval: interval,
+            byDay: byDay,
+            byMonthDay: byMonthDay,
+            byMonth: byMonth
+        )
+    }
+
+    public static func parse(_ source: String) throws -> RecurrenceRule {
+        try RecurrenceRule(parsing: source)
+    }
+
+    public var description: String {
+        var clauses = ["FREQ=\(frequency.rawValue)", "INTERVAL=\(interval)"]
+        if !byDay.isEmpty {
+            clauses.append("BYDAY=\(byDay.map(\.rawValue).joined(separator: ","))")
+        }
+        if !byMonthDay.isEmpty {
+            clauses.append("BYMONTHDAY=\(byMonthDay.map(String.init).joined(separator: ","))")
+        }
+        if !byMonth.isEmpty {
+            clauses.append("BYMONTH=\(byMonth.map(String.init).joined(separator: ","))")
+        }
+        return clauses.joined(separator: ";")
+    }
+
+    /// Checks the selection clauses that constrain the current occurrence.
+    /// Interval alignment is anchored by that same current occurrence and therefore
+    /// cannot invalidate it.
+    public func matches(_ date: CivilDate) -> Bool {
+        let components = Self.dateComponents(date)
+        switch frequency {
+        case .daily:
+            return true
+        case .weekly:
+            return byDay.isEmpty || byDay.contains(Self.weekday(components))
+        case .monthly:
+            return byMonthDay.isEmpty || byMonthDay.contains(components.day)
+        case .yearly:
+            return (byMonth.isEmpty || byMonth.contains(components.month)) &&
+                (byMonthDay.isEmpty || byMonthDay.contains(components.day))
+        }
+    }
+
+    public static func validatePresence(
+        recurrence: String?,
+        recurrenceFrom: RecurrenceFrom?,
+        dueDate: CivilDate?,
+        lastCompletedDate: CivilDate?
+    ) throws -> RecurrenceRule? {
+        guard let recurrence else {
+            guard recurrenceFrom == nil else {
+                throw OTodoError.validation(
+                    field: "recurrence_from",
+                    message: "recurrence_from is invalid without recurrence"
+                )
+            }
+            guard lastCompletedDate == nil else {
+                throw OTodoError.validation(
+                    field: "last_completed_date",
+                    message: "last_completed_date is invalid without recurrence"
+                )
+            }
+            return nil
+        }
+
+        let rule = try RecurrenceRule(parsing: recurrence)
+        guard recurrenceFrom != nil else {
+            throw OTodoError.validation(
+                field: "recurrence_from",
+                message: "A recurring task must have recurrence_from"
+            )
+        }
+        guard let dueDate else {
+            throw OTodoError.validation(field: "due_date", message: "A recurring task must have due_date")
+        }
+        guard rule.matches(dueDate) else {
+            throw OTodoError.validation(
+                field: "due_date",
+                message: "due_date does not match the recurrence selections"
+            )
+        }
+        return rule
+    }
+
+    private static func parseUniqueList<T: Hashable>(
+        _ value: String,
+        clause: String,
+        parser: (String) throws -> T
+    ) throws -> [T] {
+        var result: [T] = []
+        var seen: Set<T> = []
+        for substring in value.split(separator: ",", omittingEmptySubsequences: false) {
+            guard !substring.isEmpty else {
+                throw invalid("\(clause) contains an empty item")
+            }
+            let item = String(substring)
+            let parsed = try parser(item)
+            guard seen.insert(parsed).inserted else {
+                throw invalid("\(clause) contains duplicate value \"\(item)\"")
+            }
+            result.append(parsed)
+        }
+        return result
+    }
+
+    private static func parseNumberList(
+        _ value: String,
+        range: ClosedRange<Int>,
+        clause: String
+    ) throws -> [Int] {
+        let values: [Int] = try parseUniqueList(value, clause: clause) { item in
+            if item.hasPrefix("-") {
+                throw invalid("\(clause) does not support negative values in v1")
+            }
+            guard item.utf8.allSatisfy({ (48 ... 57).contains($0) }),
+                  let number = Int(item), range.contains(number)
+            else {
+                throw invalid(
+                    "\(clause) values must be integers from \(range.lowerBound) through \(range.upperBound)"
+                )
+            }
+            return number
+        }
+        return values.sorted()
+    }
+
+    private static func dateComponents(_ date: CivilDate) -> (year: Int, month: Int, day: Int) {
+        let bytes = Array(date.rawValue.utf8)
+        func number(_ range: Range<Int>) -> Int {
+            range.reduce(0) { $0 * 10 + Int(bytes[$1] - 48) }
+        }
+        return (number(0 ..< 4), number(5 ..< 7), number(8 ..< 10))
+    }
+
+    private static func weekday(
+        _ components: (year: Int, month: Int, day: Int)
+    ) -> RecurrenceWeekday {
+        var adjustedYear = components.year
+        if components.month <= 2 { adjustedYear -= 1 }
+        let era = adjustedYear >= 0 ? adjustedYear / 400 : (adjustedYear - 399) / 400
+        let yearOfEra = adjustedYear - era * 400
+        let adjustedMonth = components.month + (components.month > 2 ? -3 : 9)
+        let dayOfYear = (153 * adjustedMonth + 2) / 5 + components.day - 1
+        let dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear
+        let daysSinceUnixEpoch = era * 146_097 + dayOfEra - 719_468
+        let mondayOrdinal = ((daysSinceUnixEpoch + 3) % 7 + 7) % 7
+        return RecurrenceWeekday.allCases[mondayOrdinal]
+    }
+
+    private static func invalid(_ message: String) -> OTodoError {
+        .validation(field: "recurrence", message: message)
+    }
+}
