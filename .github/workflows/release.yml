@@ -41,7 +41,7 @@ jobs:
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
           API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
-          GITHUB_CLIENT_ID: ${{ vars.GITHUB_OAUTH_CLIENT_ID }}
+          GITHUB_CLIENT_ID: ${{ vars.GH_OAUTH_CLIENT_ID }}
         run: |
           set -u
           missing=0
@@ -58,7 +58,7 @@ jobs:
             missing=1
           fi
           if [ -z "${GITHUB_CLIENT_ID:-}" ]; then
-            echo "::error::Missing required Actions variable: GITHUB_OAUTH_CLIENT_ID"
+            echo "::error::Missing required Actions variable: GH_OAUTH_CLIENT_ID"
             missing=1
           fi
           [ "$missing" -eq 0 ]
@@ -152,11 +152,11 @@ jobs:
 
       - name: Generate Xcode project
         env:
-          GITHUB_CLIENT_ID: ${{ vars.GITHUB_OAUTH_CLIENT_ID }}
+          GITHUB_CLIENT_ID: ${{ vars.GH_OAUTH_CLIENT_ID }}
         run: |
           set -euo pipefail
           [ -n "$GITHUB_CLIENT_ID" ] || {
-            echo "::error::Missing required Actions variable: GITHUB_OAUTH_CLIENT_ID"
+            echo "::error::Missing required Actions variable: GH_OAUTH_CLIENT_ID"
             exit 1
           }
           "$XCODEGEN" generate --spec project.yml
@@ -169,7 +169,7 @@ jobs:
         env:
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
-          GITHUB_CLIENT_ID: ${{ vars.GITHUB_OAUTH_CLIENT_ID }}
+          GITHUB_CLIENT_ID: ${{ vars.GH_OAUTH_CLIENT_ID }}
         run: |
           set -euo pipefail
           log="$RUNNER_TEMP/archive.log"

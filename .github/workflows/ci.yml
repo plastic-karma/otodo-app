@@ -29,7 +29,7 @@ jobs:
     env:
       PROJECT: OTodo.xcodeproj
       SCHEME: OTodo
-      GITHUB_OAUTH_CLIENT_ID: ${{ vars.GITHUB_OAUTH_CLIENT_ID }}
+      GH_OAUTH_CLIENT_ID: ${{ vars.GH_OAUTH_CLIENT_ID }}
 
     steps:
       - name: Checkout
@@ -116,7 +116,7 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -resultBundlePath "$RUNNER_TEMP/xcode-results/build.xcresult" \
             CODE_SIGNING_ALLOWED=NO \
-            GITHUB_CLIENT_ID="$GITHUB_OAUTH_CLIENT_ID"
+            GITHUB_CLIENT_ID="$GH_OAUTH_CLIENT_ID"
 
       - name: Run UI tests without rebuilding
         run: |
@@ -128,7 +128,7 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -resultBundlePath "$RUNNER_TEMP/xcode-results/test.xcresult" \
             CODE_SIGNING_ALLOWED=NO \
-            GITHUB_CLIENT_ID="$GITHUB_OAUTH_CLIENT_ID"
+            GITHUB_CLIENT_ID="$GH_OAUTH_CLIENT_ID"
 
       - name: Retain failed Xcode result bundles
         if: ${{ failure() }}

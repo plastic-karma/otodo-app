@@ -16,7 +16,7 @@ The workflow cannot create the external Apple or GitHub registrations below. Com
 | Explicit application bundle ID | `plastickarma.otodo` |
 | GitHub workflow | `Release IPA` / `.github/workflows/release.yml` |
 | IPA artifact | `otodo-ipa`, retained for 30 days |
-| Public OAuth Actions variable | `GITHUB_OAUTH_CLIENT_ID` |
+| Public OAuth Actions variable | `GH_OAUTH_CLIENT_ID` |
 | Xcode OAuth build setting | `GITHUB_CLIENT_ID` |
 
 OTodo has no extensions, App Groups, or additional application identifiers.
@@ -107,7 +107,7 @@ Under **Variables → New repository variable**, create exactly:
 
 | Variable name | Exact source/value |
 | --- | --- |
-| `GITHUB_OAUTH_CLIENT_ID` | The public Client ID shown on the `OTodo` GitHub OAuth App page |
+| `GH_OAUTH_CLIENT_ID` | The public Client ID shown on the `OTodo` GitHub OAuth App page |
 
 This is intentionally an Actions **variable**, not a secret. During archive the workflow passes it to `GITHUB_CLIENT_ID`; XcodeGen places it in the app's `GitHubClientID` Info.plist entry. No client secret or PAT is accepted or needed.
 
@@ -116,7 +116,7 @@ The release job checks these names before doing expensive work. A missing value 
 - `Missing required secret: APP_STORE_CONNECT_API_KEY_ID`
 - `Missing required secret: APP_STORE_CONNECT_API_ISSUER_ID`
 - `Missing required secret: APP_STORE_CONNECT_API_KEY`
-- `Missing required Actions variable: GITHUB_OAUTH_CLIENT_ID`
+- `Missing required Actions variable: GH_OAUTH_CLIENT_ID`
 
 ## Before every release
 
@@ -193,7 +193,7 @@ Workflow permissions are least privilege (`contents: read`). Third-party actions
 
 ### A prerequisite annotation names a missing secret or variable
 
-Create the value under the exact category and spelling shown above. `GITHUB_OAUTH_CLIENT_ID` belongs under Actions **Variables**; the three `APP_STORE_CONNECT_API_*` values belong under Actions **Secrets**. Environment-level values do not satisfy the workflow unless that environment is wired into the job.
+Create the value under the exact category and spelling shown above. `GH_OAUTH_CLIENT_ID` belongs under Actions **Variables**; the three `APP_STORE_CONNECT_API_*` values belong under Actions **Secrets**. Environment-level values do not satisfy the workflow unless that environment is wired into the job.
 
 ### `APP_STORE_CONNECT_API_KEY is not a valid .p8 private key`
 
@@ -233,7 +233,7 @@ OTodo's generated Info.plist sets `ITSAppUsesNonExemptEncryption` to `false`, be
 
 ### GitHub sign-in in the released app says OAuth is not configured
 
-Confirm `GITHUB_OAUTH_CLIENT_ID` exists as a repository Actions variable and contains the OAuth App's public Client ID, then rebuild. Confirm **Enable Device Flow** remains selected on that OAuth App. Do not substitute a client secret or PAT. Organization access may also require an organization owner to approve the OAuth App or authorize it for SAML SSO.
+Confirm `GH_OAUTH_CLIENT_ID` exists as a repository Actions variable and contains the OAuth App's public Client ID, then rebuild. Confirm **Enable Device Flow** remains selected on that OAuth App. Do not substitute a client secret or PAT. Organization access may also require an organization owner to approve the OAuth App or authorize it for SAML SSO.
 
 ### The IPA will not install directly on a device
 

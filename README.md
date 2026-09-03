@@ -97,7 +97,7 @@ Losing connectivity, a failed API request, or expired authorization does not dis
 
    | Name | Value |
    | --- | --- |
-   | `GITHUB_OAUTH_CLIENT_ID` | the OAuth app's public Client ID |
+   | `GH_OAUTH_CLIENT_ID` | the OAuth app's public Client ID |
 
 OTodo requests the GitHub `repo` scope so the user can explicitly approve access to public and private repositories. The client sends only the public client ID during Device Flow. It requires **no OAuth client secret, personal access token, or GitHub password**. If an organization enforces SAML SSO or OAuth App restrictions, its owner must separately approve/authorize the OAuth App for that organization.
 
@@ -145,14 +145,14 @@ xcodegen --version
 Generate the project, then build for a generic simulator:
 
 ```sh
-export GITHUB_OAUTH_CLIENT_ID='<public OAuth Client ID>'
+export GH_OAUTH_CLIENT_ID='<public OAuth Client ID>'
 xcodegen generate --spec project.yml
 xcodebuild build \
   -project OTodo.xcodeproj \
   -scheme OTodo \
   -destination 'generic/platform=iOS Simulator' \
   CODE_SIGNING_ALLOWED=NO \
-  GITHUB_CLIENT_ID="$GITHUB_OAUTH_CLIENT_ID"
+  GITHUB_CLIENT_ID="$GH_OAUTH_CLIENT_ID"
 ```
 
 To run or test, open `OTodo.xcodeproj`, select scheme `OTodo` and any installed iOS 17-or-newer iPhone simulator, then Run/Test. Regenerate the project after changing `project.yml`; do not hand-edit generated project settings.
