@@ -108,7 +108,6 @@ final class AppModel {
             isOnline = false
             rootState = .workspace
         } else {
-#endif
             let credentials = KeychainCredentialStore()
             credentialStore = credentials
             repositorySelectionStore = RepositorySelectionStore()
@@ -119,8 +118,18 @@ final class AppModel {
             connectivityMonitor = monitor
             isOnline = monitor.currentConnectivity
             rootState = clientID == nil ? .missingOAuthConfiguration : .authentication
-#if DEBUG
         }
+#else
+        let credentials = KeychainCredentialStore()
+        credentialStore = credentials
+        repositorySelectionStore = RepositorySelectionStore()
+        oauthClient = clientID.map {
+            GitHubOAuthClient(clientID: $0)
+        }
+        let monitor = ConnectivityMonitor()
+        connectivityMonitor = monitor
+        isOnline = monitor.currentConnectivity
+        rootState = clientID == nil ? .missingOAuthConfiguration : .authentication
 #endif
     }
 
