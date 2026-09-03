@@ -7,7 +7,8 @@ final class OTodoUITests: XCTestCase {
         continueAfterFailure = false
 
         let app = XCUIApplication()
-        app.launchArguments.append("-ui-testing")
+        let resetWorkspaceArgument = "-ui-testing-reset-workspace"
+        app.launchArguments.append(contentsOf: ["-ui-testing", resetWorkspaceArgument])
         app.launch()
 
         let taskList = app.descendants(matching: .any)
@@ -63,11 +64,10 @@ final class OTodoUITests: XCTestCase {
         XCTAssertTrue(saveButton.isEnabled, "Save should be enabled for a valid todo name")
         saveButton.tap()
 
-        let createdTask = taskRow(named: originalName, state: "Pending", in: app)
-        guard require(
-            createdTask,
-            in: app,
-            description: "the newly created Pending todo"
+        guard requireEditorDismissed(
+            editor,
+            after: "creating the todo",
+            in: app
         ) else { return }
 
         let pendingStatus = app.staticTexts.matching(
@@ -79,6 +79,13 @@ final class OTodoUITests: XCTestCase {
             description: "the pending sync status after the local save"
         ) else { return }
 
+        guard let createdTask = requireTaskRow(
+            named: originalName,
+            state: "Pending",
+            in: app,
+            taskList: taskList,
+            description: "the newly created Pending todo"
+        ) else { return }
         createdTask.tap()
 
         guard require(
@@ -109,12 +116,110 @@ final class OTodoUITests: XCTestCase {
         XCTAssertTrue(saveButton.isEnabled, "Save should remain enabled after changing the name")
         saveButton.tap()
 
-        let editedTask = taskRow(named: originalName + suffix, state: "Pending", in: app)
-        _ = require(
-            editedTask,
+        guard requireEditorDismissed(
+            editor,
+            after: "editing the todo",
+            in: app
+        ) else { return }
+
+        let editedName = originalName + suffix
+        guard requireTaskRow(
+            named: editedName,
+            state: "Pending",
             in: app,
-            description: "the todo with its edited name"
+            taskList: taskList,
+            description: "the edited Pending todo"
+        ) != nil else { return }
+
+        app.terminate()
+        app.launchArguments = app.launchArguments.filter { $0 != resetWorkspaceArgument }
+        app.launch()
+
+        let relaunchedTaskList = app.descendants(matching: .any)
+            .matching(identifier: "task-list")
+            .firstMatch
+        guard require(
+            relaunchedTaskList,
+            in: app,
+            description: "the task list after relaunch"
+        ) else { return }
+
+        let relaunchedSeededTask = taskRow(named: "Seed todo", state: "Pending", in: app)
+        guard require(
+            relaunchedSeededTask,
+            in: app,
+            description: "the seeded Pending todo after relaunch"
+        ) else { return }
+
+        _ = requireTaskRow(
+            named: editedName,
+            state: "Pending",
+            in: app,
+            taskList: relaunchedTaskList,
+            description: "the durably persisted edited Pending todo after relaunch"
         )
+    }
+
+    @MainActor
+    private func requireTaskRow(
+        named name: String,
+        state: String,
+        in app: XCUIApplication,
+        taskList: XCUIElement,
+        description: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> XCUIElement? {
+        taskList.swipeUp()
+        let row = taskRow(named: name, state: state, in: app)
+        guard require(
+            row,
+            in: app,
+            description: description,
+            file: file,
+            line: line
+        ) else { return nil }
+        return row
+    }
+
+    @MainActor
+    private func requireEditorDismissed(
+        _ editor: XCUIElement,
+        after operation: String,
+        in app: XCUIApplication,
+        timeout: TimeInterval = 8,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> Bool {
+        guard editor.waitForNonExistence(timeout: timeout) else {
+            let saveError = app.descendants(matching: .any).matching(
+                NSPredicate(format: "label BEGINSWITH %@", "Cannot save.")
+            ).firstMatch
+            let detail = saveError.exists
+                ? " Visible save error: \(saveError.label)"
+                : " No visible save error was exposed."
+            attachDiagnostics(in: app, name: "Editor did not dismiss after \(operation)")
+            XCTFail(
+                "Editor did not dismiss after \(operation).\(detail)",
+                file: file,
+                line: line
+            )
+            return false
+        }
+        return true
+    }
+
+    @MainActor
+    private func attachDiagnostics(in app: XCUIApplication, name: String) {
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = "\(name) accessibility hierarchy"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
     }
 
     @MainActor
@@ -143,10 +248,7 @@ final class OTodoUITests: XCTestCase {
         line: UInt = #line
     ) -> Bool {
         guard element.waitForExistence(timeout: timeout) else {
-            let attachment = XCTAttachment(screenshot: app.screenshot())
-            attachment.name = "Missing \(description)"
-            attachment.lifetime = .keepAlways
-            add(attachment)
+            attachDiagnostics(in: app, name: "Missing \(description)")
             XCTFail("Timed out waiting for \(description)", file: file, line: line)
             return false
         }

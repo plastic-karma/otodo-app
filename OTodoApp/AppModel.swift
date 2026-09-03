@@ -36,6 +36,7 @@ final class AppModel {
     private(set) var errorMessage: String?
 
     @ObservationIgnored private let isUITesting: Bool
+    @ObservationIgnored private let resetsUITestingWorkspace: Bool
     @ObservationIgnored private let workspaceRootURL: URL
     @ObservationIgnored private let workspaceStore: FileWorkspaceStore
     @ObservationIgnored private let taskService: TaskWorkspaceService
@@ -68,6 +69,8 @@ final class AppModel {
         let isUITesting = false
 #endif
         self.isUITesting = isUITesting
+        resetsUITestingWorkspace =
+            isUITesting && launchArguments.contains("-ui-testing-reset-workspace")
 
         let clientID = Self.configuredClientID(in: infoDictionary)
         gitHubClientID = clientID
@@ -75,9 +78,9 @@ final class AppModel {
         let rootURL: URL
 #if DEBUG
         if isUITesting {
-            rootURL = FileManager.default.temporaryDirectory
+            rootURL = URL.applicationSupportDirectory
                 .appendingPathComponent(
-                    "plastickarma.otodo-ui-testing-\(ProcessInfo.processInfo.processIdentifier)",
+                    "plastickarma.otodo-ui-testing",
                     isDirectory: true
                 )
         } else {
@@ -931,7 +934,9 @@ final class AppModel {
     private func startUITestingWorkspace() async {
         do {
             let fileManager = FileManager.default
-            if fileManager.fileExists(atPath: workspaceRootURL.path) {
+            if resetsUITestingWorkspace,
+               fileManager.fileExists(atPath: workspaceRootURL.path)
+            {
                 try fileManager.removeItem(at: workspaceRootURL)
             }
 
@@ -952,36 +957,41 @@ final class AppModel {
                     try WorkflowState(id: "done", name: "Done", isTerminal: true),
                 ]
             )
-            let id = try TaskID(rawValue: "01ARZ3NDEKTSV4RRFFQ69G5FAV")
-            let task = try TodoTask(
-                id: id,
-                relativePath: "todos/\(id.rawValue).md",
-                name: "Seed todo",
-                state: "todo",
-                projectSlugs: ["home"],
-                tags: [],
-                dueDate: nil,
-                recurrence: nil,
-                recurrenceFrom: nil,
-                lastCompletedDate: nil,
-                body: "",
-                extraProperties: [
-                    YAMLProperty(name: "base", value: .string(configuration.todosBaseLink)),
-                ]
-            )
-            let content = try ObsidianTaskCodec().serializeTask(task, configuration: configuration)
-            let workspace = try WorkspaceState(
-                selection: selection,
-                configuration: configuration,
-                knownProjectSlugs: ["home"],
-                tasks: [TaskDocument(task: task, content: content, blobSHA: "seed-blob")],
-                baseHeadCommitSHA: "seed-head",
-                baseRootTreeSHA: "seed-tree",
-                pendingChanges: [],
-                conflicts: []
-            )
-            try await workspaceStore.save(workspace, expectedRevision: nil)
-            let restored = try await taskService.loadWorkspace(selection: selection)
+            let restored: WorkspaceState
+            if let existing = try await taskService.load(selection: selection) {
+                restored = existing
+            } else {
+                let id = try TaskID(rawValue: "01ARZ3NDEKTSV4RRFFQ69G5FAV")
+                let task = try TodoTask(
+                    id: id,
+                    relativePath: "todos/\(id.rawValue).md",
+                    name: "Seed todo",
+                    state: "todo",
+                    projectSlugs: ["home"],
+                    tags: [],
+                    dueDate: nil,
+                    recurrence: nil,
+                    recurrenceFrom: nil,
+                    lastCompletedDate: nil,
+                    body: "",
+                    extraProperties: [
+                        YAMLProperty(name: "base", value: .string(configuration.todosBaseLink)),
+                    ]
+                )
+                let content = try ObsidianTaskCodec().serializeTask(task, configuration: configuration)
+                let workspace = try WorkspaceState(
+                    selection: selection,
+                    configuration: configuration,
+                    knownProjectSlugs: ["home"],
+                    tasks: [TaskDocument(task: task, content: content, blobSHA: "seed-blob")],
+                    baseHeadCommitSHA: "seed-head",
+                    baseRootTreeSHA: "seed-tree",
+                    pendingChanges: [],
+                    conflicts: []
+                )
+                try await workspaceStore.save(workspace, expectedRevision: nil)
+                restored = try await taskService.loadWorkspace(selection: selection)
+            }
             apply(restored)
             rootState = .workspace
             isOnline = false
