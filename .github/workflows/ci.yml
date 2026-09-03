@@ -82,6 +82,33 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
 
+      - name: Validate App Store bundle metadata
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import plistlib
+
+          with open("OTodoApp/Info.plist", "rb") as source:
+              info = plistlib.load(source)
+
+          expected_orientations = {
+              "UIInterfaceOrientationPortrait",
+              "UIInterfaceOrientationPortraitUpsideDown",
+              "UIInterfaceOrientationLandscapeLeft",
+              "UIInterfaceOrientationLandscapeRight",
+          }
+          for key in (
+              "UISupportedInterfaceOrientations",
+              "UISupportedInterfaceOrientations~ipad",
+          ):
+              actual = info.get(key)
+              if not isinstance(actual, list) or set(actual) != expected_orientations:
+                  raise SystemExit(f"{key} must contain all four interface orientations")
+
+          if not isinstance(info.get("UILaunchScreen"), dict):
+              raise SystemExit("UILaunchScreen must be a dictionary")
+          PY
+
       - name: Select available iPhone simulator
         run: |
           set -euo pipefail
