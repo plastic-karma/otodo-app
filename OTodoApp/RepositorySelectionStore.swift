@@ -103,10 +103,10 @@ actor RepositorySelectionStore {
             try handle.synchronize()
             try fileManager.setAttributes(restrictiveAttributes, ofItemAtPath: temporaryURL.path)
 
-            let renameResult = temporaryURL.withUnsafeFileSystemRepresentation { sourcePath in
-                fileURL.withUnsafeFileSystemRepresentation { destinationPath in
+            let renameResult: Int32 = temporaryURL.withUnsafeFileSystemRepresentation { sourcePath -> Int32 in
+                fileURL.withUnsafeFileSystemRepresentation { destinationPath -> Int32 in
                     guard let sourcePath, let destinationPath else {
-                        return -1
+                        return Int32(-1)
                     }
                     return Darwin.rename(sourcePath, destinationPath)
                 }
