@@ -185,4 +185,108 @@ final class DomainTests: XCTestCase {
         XCTAssertThrowsError(try JSONDecoder().decode(SyncReport.self, from: data))
     }
 
+    func testRelativeDueDateResolvesDocumentedExamples() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let referenceDate = try date(
+            year: 2026,
+            month: 9,
+            day: 4,
+            hour: 10,
+            minute: 15,
+            calendar: calendar
+        )
+
+        let examples = [
+            ("in 3 days", "2026-09-07", "10:15"),
+            ("in 6 hours", "2026-09-04", "16:15"),
+            ("in 6 months", "2027-03-04", "10:15"),
+        ]
+
+        for (input, expectedDate, expectedTime) in examples {
+            let result = try RelativeDueDateExpression(input).resolve(
+                from: referenceDate,
+                calendar: calendar
+            )
+            XCTAssertEqual(result.date.rawValue, expectedDate, input)
+            XCTAssertEqual(result.time.rawValue, expectedTime, input)
+        }
+    }
+
+    func testRelativeDueDateAcceptsEveryCalendarUnitAndFlexibleCasing() throws {
+        let units: [(String, RelativeDueDateExpression.Unit)] = [
+            ("minute", .minute),
+            ("hours", .hour),
+            ("day", .day),
+            ("weeks", .week),
+            ("month", .month),
+            ("years", .year),
+        ]
+
+        for (rawUnit, expectedUnit) in units {
+            let expression = try RelativeDueDateExpression(" \nIN 2 \(rawUnit)\t")
+            XCTAssertEqual(expression.amount, 2)
+            XCTAssertEqual(expression.unit, expectedUnit)
+        }
+    }
+
+    func testRelativeDueDateRejectsMalformedOrNonpositiveInput() {
+        for input in [
+            "",
+            "3 days",
+            "after 3 days",
+            "in 0 days",
+            "in -1 day",
+            "in 1.5 days",
+            "in one day",
+            "in 3 fortnights",
+            "in 3 days from now",
+        ] {
+            XCTAssertThrowsError(try RelativeDueDateExpression(input), input)
+        }
+    }
+
+    func testRelativeDueDateRoundsForwardToMinuteGranularity() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let referenceDate = try date(
+            year: 2026,
+            month: 9,
+            day: 4,
+            hour: 10,
+            minute: 15,
+            second: 30,
+            calendar: calendar
+        )
+
+        let result = try RelativeDueDateExpression("in 6 hours").resolve(
+            from: referenceDate,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(result.date.rawValue, "2026-09-04")
+        XCTAssertEqual(result.time.rawValue, "16:16")
+    }
+
+    private func date(
+        year: Int,
+        month: Int,
+        day: Int,
+        hour: Int,
+        minute: Int,
+        second: Int = 0,
+        calendar: Calendar
+    ) throws -> Date {
+        var components = DateComponents()
+        components.calendar = calendar
+        components.timeZone = calendar.timeZone
+        components.year = year
+        components.month = month
+        components.day = day
+        components.hour = hour
+        components.minute = minute
+        components.second = second
+        return try XCTUnwrap(calendar.date(from: components))
+    }
+
 }

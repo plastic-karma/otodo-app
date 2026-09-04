@@ -252,6 +252,99 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testRelativeDueDateCanBeAppliedDuringCreation() {
+        continueAfterFailure = false
+
+        let app = XCUIApplication()
+        app.launchArguments.append(contentsOf: ["-ui-testing", "-ui-testing-reset-workspace"])
+        app.launch()
+
+        guard selectFilter("Active", in: app) else { return }
+
+        let addButton = app.buttons["task-add"]
+        guard require(
+            addButton,
+            in: app,
+            description: "the Add Todo button"
+        ) else { return }
+        addButton.tap()
+
+        let editor = app.descendants(matching: .any)
+            .matching(identifier: "task-editor")
+            .firstMatch
+        guard require(
+            editor,
+            in: app,
+            description: "the new todo editor"
+        ) else { return }
+
+        let taskName = "Relative due todo"
+        let nameField = app.textFields["task-editor-name"]
+        guard require(
+            nameField,
+            in: app,
+            description: "the todo name field"
+        ) else { return }
+        nameField.tap()
+        nameField.typeText(taskName)
+
+        let relativeField = app.textFields["task-editor-relative-due-date"]
+        guard require(
+            relativeField,
+            in: app,
+            description: "the relative due-date field"
+        ) else { return }
+        relativeField.tap()
+        relativeField.typeText("in 6 hours")
+
+        let applyButton = app.buttons["task-editor-relative-due-apply"]
+        guard require(
+            applyButton,
+            in: app,
+            description: "the relative due-date Apply button"
+        ) else { return }
+        XCTAssertTrue(applyButton.isEnabled, "A valid relative due date should be applicable")
+        applyButton.tap()
+
+        XCTAssertEqual(
+            app.switches["task-editor-due-date-toggle"].value as? String,
+            "1",
+            "Applying a relative due date should set a calendar date"
+        )
+        editor.swipeUp()
+        XCTAssertEqual(
+            app.switches["task-editor-due-time-toggle"].value as? String,
+            "1",
+            "Applying a relative due date should preserve hour-and-minute precision"
+        )
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Relative due date creation"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        app.buttons["task-editor-save"].tap()
+        guard requireEditorDismissed(
+            editor,
+            after: "creating a todo with a relative due date",
+            in: app
+        ) else { return }
+
+        let relativeTask = app.buttons.matching(
+            NSPredicate(
+                format: "label CONTAINS %@ AND label CONTAINS %@",
+                taskName,
+                " at "
+            )
+        ).firstMatch
+        _ = require(
+            relativeTask,
+            in: app,
+            description: "the todo with its calculated exact due time"
+        )
+    }
+
+    @MainActor
     func testTodayFilterIncludesOverdueAndIsDefault() {
         continueAfterFailure = false
 

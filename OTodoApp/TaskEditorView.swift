@@ -61,6 +61,7 @@ struct TaskEditorView: View {
     @State private var hasDueDate: Bool
     @State private var hasDueTime: Bool
     @State private var dueDate: Date
+    @State private var relativeDueDateText: String
     @State private var isSaving = false
     @State private var saveError: String?
 
@@ -81,6 +82,7 @@ struct TaskEditorView: View {
         _hasDueDate = State(initialValue: draft.dueDate != nil)
         _hasDueTime = State(initialValue: draft.dueTime != nil)
         _dueDate = State(initialValue: Self.date(from: draft.dueDate, time: draft.dueTime))
+        _relativeDueDateText = State(initialValue: "")
     }
 
     var body: some View {
@@ -154,6 +156,38 @@ struct TaskEditorView: View {
                 }
 
                 Section {
+                    if draft.preservedTask == nil {
+                        HStack {
+                            TextField("in 3 days", text: $relativeDueDateText)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .submitLabel(.done)
+                                .onSubmit(applyRelativeDueDate)
+                                .accessibilityLabel("Relative due date")
+                                .accessibilityIdentifier("task-editor-relative-due-date")
+
+                            Button("Apply") {
+                                applyRelativeDueDate()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(parsedRelativeDueDateExpression == nil)
+                            .accessibilityIdentifier("task-editor-relative-due-apply")
+                        }
+
+                        if let relativeDueDateValidationMessage {
+                            Text(relativeDueDateValidationMessage)
+                                .font(.footnote)
+                                .foregroundStyle(.red)
+                                .accessibilityLabel(
+                                    "Invalid relative due date. \(relativeDueDateValidationMessage)"
+                                )
+                        } else {
+                            Text("Set from now using minutes, hours, days, weeks, months, or years.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
                     Toggle("Set due date", isOn: $hasDueDate)
                         .accessibilityIdentifier("task-editor-due-date-toggle")
 
@@ -220,7 +254,11 @@ struct TaskEditorView: View {
                         save()
                     }
                     .accessibilityIdentifier("task-editor-save")
-                    .disabled(validationMessage != nil || isSaving)
+                    .disabled(
+                        validationMessage != nil
+                            || hasPendingRelativeDueDate
+                            || isSaving
+                    )
                 }
             }
             .overlay {
@@ -292,6 +330,36 @@ struct TaskEditorView: View {
         tagsText = tags.joined(separator: ", ") + ", "
     }
 
+    private var hasPendingRelativeDueDate: Bool {
+        !relativeDueDateText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var parsedRelativeDueDateExpression: RelativeDueDateExpression? {
+        guard hasPendingRelativeDueDate else { return nil }
+        return try? RelativeDueDateExpression(relativeDueDateText)
+    }
+
+    private var relativeDueDateValidationMessage: String? {
+        guard hasPendingRelativeDueDate, parsedRelativeDueDateExpression == nil else {
+            return nil
+        }
+        return "Use a phrase such as “in 3 days” or “in 6 hours”."
+    }
+
+    private func applyRelativeDueDate() {
+        guard let expression = parsedRelativeDueDateExpression else { return }
+        do {
+            let resolved = try expression.resolve()
+            dueDate = Self.date(from: resolved.date, time: resolved.time)
+            hasDueDate = true
+            hasDueTime = true
+            relativeDueDateText = ""
+            saveError = nil
+        } catch {
+            saveError = error.localizedDescription
+        }
+    }
+
     private var validationMessage: String? {
         if draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return "A name is required."
@@ -333,7 +401,7 @@ struct TaskEditorView: View {
     }
 
     private func save() {
-        guard validationMessage == nil else { return }
+        guard validationMessage == nil, !hasPendingRelativeDueDate else { return }
 
         var value = draft
         value.projectSlugs = TaskEditorDraft.parseCommaSeparated(projectsText)
