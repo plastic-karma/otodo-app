@@ -366,7 +366,12 @@ final class GitHubClientTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(paths, ["", "teams/blue", "teams/red"])
         let requests = await transport.requests()
         XCTAssertEqual(requests.count, 3)
-        assertRESTRequest(requests[0], method: "GET", path: "/v3/repos/acme/vault/git/ref/heads/feature%2Ftodos")
+        assertRESTRequest(
+            requests[0],
+            method: "GET",
+            path: "/v3/repos/acme/vault/git/ref/heads/feature%2Ftodos",
+            requiresFreshResponse: true
+        )
         XCTAssertTrue(requests[0].queryItems.isEmpty)
         assertRESTRequest(requests[1], method: "GET", path: "/v3/repos/acme/vault/git/commits/head-1")
         XCTAssertTrue(requests[1].queryItems.isEmpty)
@@ -476,7 +481,12 @@ final class GitHubClientTests: XCTestCase, @unchecked Sendable {
             ("/v3/repos/acme/vault/git/blobs/task-blob", []),
         ]
         for (request, expectedRequest) in zip(requests, expected) {
-            assertRESTRequest(request, method: "GET", path: expectedRequest.0)
+            assertRESTRequest(
+                request,
+                method: "GET",
+                path: expectedRequest.0,
+                requiresFreshResponse: expectedRequest.0.contains("/git/ref/heads/")
+            )
             XCTAssertEqual(request.queryItems, expectedRequest.1)
         }
         XCTAssertFalse(requests.contains { $0.url.absoluteString.contains("ignored-blob") })
@@ -801,7 +811,12 @@ final class GitHubClientTests: XCTestCase, @unchecked Sendable {
 
         let successRequests = await successTransport.requests()
         XCTAssertEqual(successRequests.count, 2)
-        assertRESTRequest(successRequests[0], method: "GET", path: "/v3/repos/acme/vault/git/ref/heads/main")
+        assertRESTRequest(
+            successRequests[0],
+            method: "GET",
+            path: "/v3/repos/acme/vault/git/ref/heads/main",
+            requiresFreshResponse: true
+        )
         assertRESTRequest(successRequests[1], method: "PATCH", path: "/v3/repos/acme/vault/git/refs/heads/main", hasJSONBody: true)
         let updateBody = try successRequests[1].jsonObject()
         XCTAssertEqual(updateBody["sha"] as? String, "new-commit")
@@ -832,9 +847,19 @@ final class GitHubClientTests: XCTestCase, @unchecked Sendable {
         }
         let raceRequests = await raceTransport.requests()
         XCTAssertEqual(raceRequests.count, 3)
-        assertRESTRequest(raceRequests[0], method: "GET", path: "/v3/repos/acme/vault/git/ref/heads/main")
+        assertRESTRequest(
+            raceRequests[0],
+            method: "GET",
+            path: "/v3/repos/acme/vault/git/ref/heads/main",
+            requiresFreshResponse: true
+        )
         assertRESTRequest(raceRequests[1], method: "PATCH", path: "/v3/repos/acme/vault/git/refs/heads/main", hasJSONBody: true)
-        assertRESTRequest(raceRequests[2], method: "GET", path: "/v3/repos/acme/vault/git/ref/heads/main")
+        assertRESTRequest(
+            raceRequests[2],
+            method: "GET",
+            path: "/v3/repos/acme/vault/git/ref/heads/main",
+            requiresFreshResponse: true
+        )
         let raceBody = try raceRequests[1].jsonObject()
         XCTAssertEqual(raceBody["sha"] as? String, "our-commit")
         XCTAssertEqual(raceBody["force"] as? Bool, false)
@@ -895,7 +920,12 @@ final class GitHubClientTests: XCTestCase, @unchecked Sendable {
         }
         let staleRequests = await staleTransport.requests()
         XCTAssertEqual(staleRequests.count, 1)
-        assertRESTRequest(staleRequests[0], method: "GET", path: "/v3/repos/acme/vault/git/ref/heads/main")
+        assertRESTRequest(
+            staleRequests[0],
+            method: "GET",
+            path: "/v3/repos/acme/vault/git/ref/heads/main",
+            requiresFreshResponse: true
+        )
     }
 
     private func assertOAuthRequest(
@@ -929,6 +959,7 @@ final class GitHubClientTests: XCTestCase, @unchecked Sendable {
         method: String,
         path: String,
         hasJSONBody: Bool = false,
+        requiresFreshResponse: Bool = false,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
@@ -945,6 +976,18 @@ final class GitHubClientTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(request.header(named: "X-GitHub-Api-Version"), "2026-03-10", file: file, line: line)
         XCTAssertEqual(request.header(named: "User-Agent"), "OTodo/1.0", file: file, line: line)
         XCTAssertEqual(
+            request.cachePolicy,
+            requiresFreshResponse ? .reloadIgnoringLocalCacheData : .useProtocolCachePolicy,
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
+            request.header(named: "Cache-Control"),
+            requiresFreshResponse ? "no-cache" : nil,
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
             request.header(named: "Content-Type"),
             hasJSONBody ? "application/json" : nil,
             file: file,
@@ -958,6 +1001,7 @@ private struct CapturedRequest: Sendable {
     let method: String
     let url: URL
     let headers: [String: String]
+    let cachePolicy: URLRequest.CachePolicy
     let body: Data?
 
     var queryItems: [String] {
@@ -990,6 +1034,7 @@ private actor ScriptedHTTPTransport: HTTPTransport {
             method: request.httpMethod ?? "GET",
             url: request.url!,
             headers: request.allHTTPHeaderFields ?? [:],
+            cachePolicy: request.cachePolicy,
             body: request.httpBody
         ))
         guard responseIndex < responses.count else {

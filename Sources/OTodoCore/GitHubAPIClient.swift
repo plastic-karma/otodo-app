@@ -389,7 +389,8 @@ public actor GitHubAPIClient: GitHubServing {
                 owner,
                 repository,
                 suffix: "git/ref/heads/\(percentEncodePathSegment(branch))"
-            )
+            ),
+            requiresFreshResponse: true
         )
         try validate(response, context: "reading branch \(branch)", notFoundResource: "branch \(branch)")
         let reference: GitHubReferenceDTO = try decode(response, context: "reading branch \(branch)")
@@ -661,7 +662,8 @@ public actor GitHubAPIClient: GitHubServing {
         method: String,
         path: String,
         queryItems: [URLQueryItem] = [],
-        body: Data? = nil
+        body: Data? = nil,
+        requiresFreshResponse: Bool = false
     ) async throws -> HTTPResponse {
         try Task.checkCancellation()
         guard !accessToken.isEmpty,
@@ -671,6 +673,12 @@ public actor GitHubAPIClient: GitHubServing {
         }
 
         var request = URLRequest(url: try apiURL(path: path, queryItems: queryItems))
+        if requiresFreshResponse {
+            // GitHub advertises branch refs as cacheable for 60 seconds. A cached ref can
+            // misclassify an ordinary head race as a rejected non-fast-forward update.
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        }
         request.httpMethod = method
         request.httpBody = body
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
