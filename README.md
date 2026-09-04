@@ -4,6 +4,8 @@ OTodo is an offline-first iOS client for an Obsidian Todo v1 store kept in a Git
 
 The workspace uses a colorful focus card, an airy card-based todo list, and a floating quick-add control while retaining native iOS interactions and accessibility. It displays active todos due today or overdue by default, with filters for every active todo or all todos including terminal states. The Projects sidebar creates and filters projects; project names become lowercase, hyphenated slugs and direct Markdown project records. Todos are ordered by due date, configured workflow-state order, name, and ULID. Swipe right on a todo to reveal Done; swipe left to reveal Delete. The editor supports the name, state, projects, tags, due date, and Markdown body. GitHub tokens are stored in the device Keychain; repository workspaces and their pending changes are stored on the device.
 
+Due reminders are opt-in from the Projects sidebar. When enabled, active dated todos schedule local iOS notifications for 9:00 AM in the device time zone; an already-due todo gets a near-term reminder, and completing, deleting, or rescheduling a todo reconciles its pending alert. If notification access was denied, the control opens the app's iOS Settings page.
+
 ## Requirements
 
 - Swift 6.1 for the Swift package and Linux development

@@ -2,9 +2,11 @@ import SwiftUI
 
 struct RootView: View {
     @Bindable private var model: AppModel
+    private let notifications: TaskNotificationManager
 
-    init(model: AppModel) {
+    init(model: AppModel, notifications: TaskNotificationManager) {
         self.model = model
+        self.notifications = notifications
     }
 
     var body: some View {
@@ -23,7 +25,7 @@ struct RootView: View {
             case .onboarding:
                 RepositorySetupView(model: model)
             case .workspace:
-                TaskListView(model: model)
+                TaskListView(model: model, notifications: notifications)
             }
         }
     }

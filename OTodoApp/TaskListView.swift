@@ -1,17 +1,20 @@
 import Foundation
 import OTodoCore
 import SwiftUI
+import UIKit
 
 struct TaskListView: View {
     @Bindable private var model: AppModel
+    private let notifications: TaskNotificationManager
     @State private var editorPresentation: EditorPresentation?
     @State private var visibility = TaskVisibility.today
     @State private var selectedProject: String?
     @State private var isProjectSidebarPresented = false
     @State private var isProjectEditorPresented = false
 
-    init(model: AppModel) {
+    init(model: AppModel, notifications: TaskNotificationManager) {
         self.model = model
+        self.notifications = notifications
     }
 
     var body: some View {
@@ -467,6 +470,13 @@ struct TaskListView: View {
             .accessibilityIdentifier("project-add")
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
+            Divider()
+                .padding(.horizontal, 16)
+
+            notificationControl
+
+            Divider()
+                .padding(.horizontal, 16)
 
             Button {
                 dismissProjectSidebar()
@@ -494,6 +504,143 @@ struct TaskListView: View {
         .accessibilityIdentifier("project-sidebar")
         .accessibilityAction(.escape) {
             dismissProjectSidebar()
+        }
+    }
+
+    private var notificationControl: some View {
+        Button {
+            Task { @MainActor in
+                switch notifications.status {
+                case .enabled:
+                    await notifications.disable()
+                case .denied:
+                    guard let settingsURL = URL(
+                        string: UIApplication.openSettingsURLString
+                    ) else { return }
+                    _ = await UIApplication.shared.open(settingsURL)
+                case .checking:
+                    break
+                case .notRequested, .disabled:
+                    await notifications.enable(
+                        tasks: model.tasks,
+                        states: model.configuration?.states ?? []
+                    )
+                }
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: notificationIcon)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(notificationColor)
+                    .frame(width: 38, height: 38)
+                    .background(
+                        notificationColor.opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 11)
+                    )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Due reminders")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(notificationDetail)
+                        .font(.caption)
+                        .foregroundStyle(
+                            notifications.errorMessage == nil ? Color.secondary : Color.red
+                        )
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 8)
+
+                if notifications.isUpdating || notifications.status == .checking {
+                    ProgressView()
+                        .controlSize(.small)
+                } else if notifications.isEnabled {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(OTodoTheme.mint)
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.bold())
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(notifications.isUpdating || notifications.status == .checking)
+        .accessibilityLabel("Due reminders")
+        .accessibilityValue(notificationAccessibilityValue)
+        .accessibilityHint(notificationAccessibilityHint)
+        .accessibilityIdentifier("notification-settings")
+    }
+
+    private var notificationDetail: String {
+        if let errorMessage = notifications.errorMessage {
+            return errorMessage
+        }
+        switch notifications.status {
+        case .checking:
+            return "Checking notification access"
+        case .notRequested:
+            return "Get an alert when a todo is due"
+        case .enabled:
+            return "Alerts arrive at 9:00 AM"
+        case .disabled:
+            return "Due-date alerts are off"
+        case .denied:
+            return "Allow notifications in iOS Settings"
+        }
+    }
+
+    private var notificationIcon: String {
+        switch notifications.status {
+        case .enabled:
+            return "bell.badge.fill"
+        case .denied:
+            return "bell.slash.fill"
+        case .checking, .notRequested, .disabled:
+            return "bell.fill"
+        }
+    }
+
+    private var notificationColor: Color {
+        switch notifications.status {
+        case .enabled:
+            return OTodoTheme.mint
+        case .denied:
+            return OTodoTheme.coral
+        case .checking, .notRequested, .disabled:
+            return OTodoTheme.accent
+        }
+    }
+
+    private var notificationAccessibilityValue: String {
+        switch notifications.status {
+        case .checking:
+            return "Checking"
+        case .notRequested:
+            return "Not configured"
+        case .enabled:
+            return "On"
+        case .disabled:
+            return "Off"
+        case .denied:
+            return "Permission required"
+        }
+    }
+
+    private var notificationAccessibilityHint: String {
+        switch notifications.status {
+        case .enabled:
+            return "Turns off due-date notifications"
+        case .denied:
+            return "Opens iOS Settings"
+        case .checking:
+            return ""
+        case .notRequested, .disabled:
+            return "Requests permission and schedules due-date notifications"
         }
     }
 

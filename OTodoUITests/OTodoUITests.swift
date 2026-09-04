@@ -655,6 +655,41 @@ final class OTodoUITests: XCTestCase {
         add(screenshot)
     }
 
+
+    @MainActor
+    func testDueReminderControlIsAvailable() {
+        continueAfterFailure = false
+
+        let app = XCUIApplication()
+        app.launchArguments.append(contentsOf: ["-ui-testing", "-ui-testing-reset-workspace"])
+        app.launch()
+
+        let sidebarButton = app.buttons["project-sidebar-toggle"]
+        guard require(
+            sidebarButton,
+            in: app,
+            description: "the Projects sidebar button"
+        ) else { return }
+        sidebarButton.tap()
+
+        let reminderControl = app.buttons["notification-settings"]
+        guard require(
+            reminderControl,
+            in: app,
+            description: "the due reminder control"
+        ) else { return }
+        let supportedValues = ["Not configured", "On", "Off", "Permission required"]
+        let accessibilityValue = reminderControl.value as? String
+        XCTAssertTrue(
+            supportedValues.contains(accessibilityValue ?? ""),
+            "Reminder control should expose its current authorization state"
+        )
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Due reminder control"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
     @MainActor
     private func selectFilter(
         _ name: String,
