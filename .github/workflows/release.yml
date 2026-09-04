@@ -99,6 +99,7 @@ jobs:
           echo "ARCHIVE_PATH=$RUNNER_TEMP/OTodo.xcarchive" >> "$GITHUB_ENV"
           echo "EXPORT_DIR=$RUNNER_TEMP/export" >> "$GITHUB_ENV"
           echo "API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+          echo "CERTIFICATE_SNAPSHOT=$RUNNER_TEMP/signing-certificates-before.json" >> "$GITHUB_ENV"
 
       - name: Validate and install App Store Connect API key
         env:
@@ -115,6 +116,13 @@ jobs:
             rm -f "$API_KEY_PATH"
             exit 1
           fi
+
+      - name: Prepare ephemeral signing certificate cleanup
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          BOOTSTRAP_CERTIFICATE_SHA1: 9FA921CB63E1777BBD9C9DA26F7D40315EECE498
+        run: python3 .github/scripts/manage_api_certificates.py prepare
 
       - name: Install XcodeGen (pinned and verified)
         run: |
@@ -338,6 +346,13 @@ jobs:
             exit 1
           fi
           echo "PUBLISHED_TESTFLIGHT=1" >> "$GITHUB_ENV"
+      - name: Revoke ephemeral signing certificates
+        if: ${{ always() }}
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+        run: python3 .github/scripts/manage_api_certificates.py cleanup
+
 
       - name: Write release summary
         if: ${{ always() }}

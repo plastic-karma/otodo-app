@@ -14,9 +14,6 @@ struct TaskListView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    SyncStatusView(model: model)
-                }
 
                 Section {
                     Picker("Todo visibility", selection: $visibility) {
@@ -83,6 +80,8 @@ struct TaskListView: View {
                     }
                 } header: {
                     Text("\(visibility.rawValue) Todos")
+                } footer: {
+                    SyncStatusView(model: model)
                 }
             }
             .accessibilityIdentifier("task-list")

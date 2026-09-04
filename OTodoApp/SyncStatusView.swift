@@ -9,60 +9,82 @@ struct SyncStatusView: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: primarySymbol)
-                .font(.title3)
-                .foregroundStyle(primaryColor)
-                .frame(width: 24)
-                .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 7) {
+                Image(systemName: primarySymbol)
+                    .font(.caption)
+                    .foregroundStyle(primaryColor)
+                    .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 4) {
                 Text(primaryText)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.caption.weight(requiresAttention ? .semibold : .regular))
+                    .foregroundStyle(requiresAttention ? .primary : .secondary)
+
+                Spacer(minLength: 8)
 
                 if !model.conflicts.isEmpty {
-                    Text(countText(model.conflicts.count, singular: "conflict needs attention", plural: "conflicts need attention"))
-
-                    Button("Review Conflicts") {
+                    Button("Review") {
                         isReviewingConflicts = true
                     }
+                    .buttonStyle(.borderless)
                     .accessibilityHint("Shows each affected task and the available resolution choices")
                     .accessibilityIdentifier("sync-review-conflicts")
                 }
-                if model.pendingChangeCount > 0 {
-                    Text(countText(model.pendingChangeCount, singular: "change waiting to sync", plural: "changes waiting to sync"))
-                }
-                if let statusMessage = model.statusMessage, !statusMessage.isEmpty {
-                    Text(statusMessage)
+
+                if model.isBusy {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .accessibilityLabel("Sync in progress")
+                } else {
+                    Button {
+                        Task { @MainActor in
+                            await model.refresh()
+                        }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(!model.isOnline)
+                    .accessibilityLabel(model.isOnline ? "Sync now" : "Sync unavailable while offline")
+                    .accessibilityIdentifier("sync-refresh")
                 }
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
 
-            if model.isBusy {
-                ProgressView()
-                    .controlSize(.small)
-                    .accessibilityLabel("Sync in progress")
-            } else {
-                Button {
-                    Task { @MainActor in
-                        await model.refresh()
-                    }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .disabled(!model.isOnline)
-                .accessibilityLabel(model.isOnline ? "Sync now" : "Sync unavailable while offline")
-                .accessibilityIdentifier("sync-refresh")
+            if let detailText {
+                Text(detailText)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.top, 2)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("sync-status")
         .sheet(isPresented: $isReviewingConflicts) {
             ConflictResolutionView(model: model)
         }
+    }
+
+    private var requiresAttention: Bool {
+        !model.isOnline || !model.conflicts.isEmpty
+    }
+
+    private var detailText: String? {
+        if !model.conflicts.isEmpty {
+            return countText(
+                model.conflicts.count,
+                singular: "conflict needs attention",
+                plural: "conflicts need attention"
+            )
+        }
+        if model.pendingChangeCount > 0 {
+            return countText(
+                model.pendingChangeCount,
+                singular: "change waiting to sync",
+                plural: "changes waiting to sync"
+            )
+        }
+        return model.statusMessage.flatMap { $0.isEmpty ? nil : $0 }
     }
 
     private var primaryText: String {
