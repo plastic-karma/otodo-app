@@ -91,6 +91,14 @@ jobs:
           with open("OTodoApp/Info.plist", "rb") as source:
               info = plistlib.load(source)
 
+          expected_version_settings = {
+              "CFBundleShortVersionString": "$(MARKETING_VERSION)",
+              "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
+          }
+          for key, expected in expected_version_settings.items():
+              if info.get(key) != expected:
+                  raise SystemExit(f"{key} must use the {expected} build setting")
+
           expected_orientations = {
               "UIInterfaceOrientationPortrait",
               "UIInterfaceOrientationPortraitUpsideDown",

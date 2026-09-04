@@ -24,6 +24,8 @@ targets:
       path: OTodoApp/Info.plist
       properties:
         CFBundleDisplayName: OTodo
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         ITSAppUsesNonExemptEncryption: false
         GitHubClientID: "$(GITHUB_CLIENT_ID)"
         UILaunchScreen: {}

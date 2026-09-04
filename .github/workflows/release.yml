@@ -205,6 +205,29 @@ jobs:
             exit "$status"
           fi
 
+          app_info="$ARCHIVE_PATH/Products/Applications/OTodo.app/Info.plist"
+          if [ ! -f "$app_info" ]; then
+            echo "::error::Archive is missing the OTodo application Info.plist."
+            exit 1
+          fi
+          archived_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_info")"
+          archived_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_info")"
+          if [ "$archived_build" != "$BUILD_NUMBER" ]; then
+            echo "::error::Archived build number '$archived_build' does not match requested build '$BUILD_NUMBER'."
+            exit 1
+          fi
+          if [ -z "$archived_version" ]; then
+            echo "::error::Archived marketing version is empty."
+            exit 1
+          fi
+          if [ -n "$MARKETING_VERSION" ] && [ "$archived_version" != "$MARKETING_VERSION" ]; then
+            echo "::error::Archived marketing version '$archived_version' does not match requested version '$MARKETING_VERSION'."
+            exit 1
+          fi
+          echo "ARCHIVED_MARKETING_VERSION=$archived_version" >> "$GITHUB_ENV"
+          echo "ARCHIVED_BUILD_NUMBER=$archived_build" >> "$GITHUB_ENV"
+          echo "Archived version $archived_version ($archived_build)."
+
       - name: Export App Store IPA
         env:
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
@@ -322,8 +345,8 @@ jobs:
           {
             echo "## OTodo release"
             echo ""
-            echo "- Version: \`${MARKETING_VERSION:-project default}\`"
-            echo "- Build: \`${BUILD_NUMBER:-not archived}\`"
+            echo "- Version: \`${ARCHIVED_MARKETING_VERSION:-${MARKETING_VERSION:-project default}}\`"
+            echo "- Build: \`${ARCHIVED_BUILD_NUMBER:-${BUILD_NUMBER:-not archived}}\`"
             if [ "${PUBLISHED_TESTFLIGHT:-0}" = 1 ]; then
               echo "- TestFlight: uploaded; App Store Connect processing is pending."
             elif [ -n "${IPA_PATH:-}" ]; then
