@@ -25,7 +25,6 @@ final class AppModel {
     private(set) var tasks: [TodoTask] = []
     private(set) var configuration: StoreConfiguration?
     private(set) var projectChoices: [String] = []
-    var showCompleted = false
 
     private(set) var pendingChangeCount = 0
     private(set) var conflictCount = 0
@@ -664,7 +663,6 @@ final class AppModel {
         pendingChangeCount = 0
         conflictCount = 0
         conflicts = []
-        showCompleted = false
         isBusy = false
         statusMessage = nil
         errorMessage = clearingError.map(Self.message(for:))
@@ -961,29 +959,40 @@ final class AppModel {
             if let existing = try await taskService.load(selection: selection) {
                 restored = existing
             } else {
-                let id = try TaskID(rawValue: "01ARZ3NDEKTSV4RRFFQ69G5FAV")
-                let task = try TodoTask(
-                    id: id,
-                    relativePath: "todos/\(id.rawValue).md",
-                    name: "Seed todo",
-                    state: "todo",
-                    projectSlugs: ["home"],
-                    tags: [],
-                    dueDate: nil,
-                    recurrence: nil,
-                    recurrenceFrom: nil,
-                    lastCompletedDate: nil,
-                    body: "",
-                    extraProperties: [
-                        YAMLProperty(name: "base", value: .string(configuration.todosBaseLink)),
-                    ]
-                )
-                let content = try ObsidianTaskCodec().serializeTask(task, configuration: configuration)
+                let seeds: [(id: String, name: String, state: String, dueDate: CivilDate?)] = [
+                    ("01ARZ3NDEKTSV4RRFFQ69G5FAV", "Seed todo", "todo", try Self.uiTestDate()),
+                    ("01ARZ3NDEKTSV4RRFFQ69G5FAW", "Overdue todo", "todo", try Self.uiTestDate(dayOffset: -1)),
+                    ("01ARZ3NDEKTSV4RRFFQ69G5FAX", "Future todo", "todo", try Self.uiTestDate(dayOffset: 1)),
+                    ("01ARZ3NDEKTSV4RRFFQ69G5FAY", "Undated todo", "todo", nil),
+                    ("01ARZ3NDEKTSV4RRFFQ69G5FAZ", "Completed overdue todo", "done", try Self.uiTestDate(dayOffset: -1)),
+                ]
+                let codec = ObsidianTaskCodec()
+                let documents = try seeds.map { seed in
+                    let id = try TaskID(rawValue: seed.id)
+                    let task = try TodoTask(
+                        id: id,
+                        relativePath: "todos/\(id.rawValue).md",
+                        name: seed.name,
+                        state: seed.state,
+                        projectSlugs: ["home"],
+                        tags: [],
+                        dueDate: seed.dueDate,
+                        recurrence: nil,
+                        recurrenceFrom: nil,
+                        lastCompletedDate: nil,
+                        body: "",
+                        extraProperties: [
+                            YAMLProperty(name: "base", value: .string(configuration.todosBaseLink)),
+                        ]
+                    )
+                    let content = try codec.serializeTask(task, configuration: configuration)
+                    return TaskDocument(task: task, content: content, blobSHA: "seed-\(id.rawValue)")
+                }
                 let workspace = try WorkspaceState(
                     selection: selection,
                     configuration: configuration,
                     knownProjectSlugs: ["home"],
-                    tasks: [TaskDocument(task: task, content: content, blobSHA: "seed-blob")],
+                    tasks: documents,
                     baseHeadCommitSHA: "seed-head",
                     baseRootTreeSHA: "seed-tree",
                     pendingChanges: [],
@@ -1005,6 +1014,22 @@ final class AppModel {
             errorMessage = Self.message(for: error)
             statusMessage = nil
         }
+    }
+
+    private static func uiTestDate(dayOffset: Int = 0) throws -> CivilDate {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        guard let date = calendar.date(byAdding: .day, value: dayOffset, to: Date()) else {
+            throw OTodoError.corruptLocalState(message: "Could not create the UI test date")
+        }
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = components.year,
+              let month = components.month,
+              let day = components.day
+        else {
+            throw OTodoError.corruptLocalState(message: "Could not read the UI test date")
+        }
+        return try CivilDate(rawValue: String(format: "%04d-%02d-%02d", year, month, day))
     }
 #endif
 

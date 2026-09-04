@@ -1,9 +1,11 @@
+import Foundation
 import OTodoCore
 import SwiftUI
 
 struct TaskListView: View {
     @Bindable private var model: AppModel
     @State private var editorPresentation: EditorPresentation?
+    @State private var visibility = TaskVisibility.today
 
     init(model: AppModel) {
         self.model = model
@@ -17,9 +19,10 @@ struct TaskListView: View {
                 }
 
                 Section {
-                    Picker("Todo visibility", selection: $model.showCompleted) {
-                        Text("Active").tag(false)
-                        Text("All").tag(true)
+                    Picker("Todo visibility", selection: $visibility) {
+                        ForEach(TaskVisibility.allCases, id: \.self) { option in
+                            Text(option.rawValue).tag(option)
+                        }
                     }
                     .pickerStyle(.segmented)
                     .accessibilityIdentifier("task-filter")
@@ -54,7 +57,7 @@ struct TaskListView: View {
                         }
                     }
                 } header: {
-                    Text(model.showCompleted ? "All Todos" : "Active Todos")
+                    Text("\(visibility.rawValue) Todos")
                 }
             }
             .accessibilityIdentifier("task-list")
@@ -122,8 +125,8 @@ struct TaskListView: View {
     private var emptyRow: some View {
         ContentUnavailableView {
             Label(
-                model.showCompleted ? "No Todos" : "No Active Todos",
-                systemImage: model.showCompleted ? "checklist" : "checkmark.circle"
+                "No \(visibility.rawValue) Todos",
+                systemImage: visibility == .all ? "checklist" : "checkmark.circle"
             )
         } description: {
             Text(emptyDescription)
@@ -142,16 +145,34 @@ struct TaskListView: View {
         if model.tasks.isEmpty {
             return "Add a todo to get started. Changes are saved locally when offline."
         }
-        return "Terminal todos are hidden. Choose All to see them."
+        switch visibility {
+        case .today:
+            return "No active todos are due today or overdue."
+        case .active:
+            return "No active todos. Choose All to see terminal todos."
+        case .all:
+            return "Add a todo to get started."
+        }
     }
 
     private var visibleTasks: [TodoTask] {
         let states = model.configuration?.states ?? []
         let stateOrder = Dictionary(uniqueKeysWithValues: states.enumerated().map { ($0.element.id, $0.offset) })
         let terminalStates = Set(states.lazy.filter(\.isTerminal).map(\.id))
+        let today = currentDateKey
 
         return model.tasks
-            .filter { model.showCompleted || !terminalStates.contains($0.state) }
+            .filter { task in
+                let isTerminal = terminalStates.contains(task.state)
+                switch visibility {
+                case .today:
+                    return !isTerminal && task.dueDate.map { $0.rawValue <= today } == true
+                case .active:
+                    return !isTerminal
+                case .all:
+                    return true
+                }
+            }
             .sorted { lhs, rhs in
                 switch (lhs.dueDate, rhs.dueDate) {
                 case let (left?, right?) where left != right:
@@ -179,10 +200,27 @@ struct TaskListView: View {
             }
     }
 
+    private var currentDateKey: String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        let components = calendar.dateComponents([.year, .month, .day], from: .now)
+        return String(
+            format: "%04d-%02d-%02d",
+            components.year!,
+            components.month!,
+            components.day!
+        )
+    }
 
     private func state(for id: String) -> WorkflowState? {
         model.configuration?.states.first(where: { $0.id == id })
     }
+}
+
+private enum TaskVisibility: String, CaseIterable, Hashable {
+    case today = "Today"
+    case active = "Active"
+    case all = "All"
 }
 
 private enum EditorPresentation: Identifiable {

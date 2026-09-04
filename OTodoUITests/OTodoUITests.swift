@@ -20,6 +20,8 @@ final class OTodoUITests: XCTestCase {
             description: "the seeded task list"
         ) else { return }
 
+        guard selectFilter("Active", in: app) else { return }
+
         let seededTask = taskRow(named: "Seed todo", state: "Pending", in: app)
         guard require(
             seededTask,
@@ -144,6 +146,8 @@ final class OTodoUITests: XCTestCase {
             description: "the task list after relaunch"
         ) else { return }
 
+        guard selectFilter("Active", in: app) else { return }
+
         let relaunchedSeededTask = taskRow(named: "Seed todo", state: "Pending", in: app)
         guard require(
             relaunchedSeededTask,
@@ -158,6 +162,98 @@ final class OTodoUITests: XCTestCase {
             taskList: relaunchedTaskList,
             description: "the durably persisted edited Pending todo after relaunch"
         )
+    }
+
+    @MainActor
+    func testTodayFilterIncludesOverdueAndIsDefault() {
+        continueAfterFailure = false
+
+        let app = XCUIApplication()
+        app.launchArguments.append(contentsOf: ["-ui-testing", "-ui-testing-reset-workspace"])
+        app.launch()
+
+        let taskList = app.descendants(matching: .any)
+            .matching(identifier: "task-list")
+            .firstMatch
+        guard require(
+            taskList,
+            in: app,
+            description: "the seeded task list"
+        ) else { return }
+
+        let filter = app.segmentedControls["task-filter"]
+        guard require(
+            filter,
+            in: app,
+            description: "the todo visibility filter"
+        ) else { return }
+        XCTAssertTrue(filter.buttons["Today"].isSelected, "Today should be selected by default")
+
+        guard require(
+            taskRow(named: "Overdue todo", state: "Pending", in: app),
+            in: app,
+            description: "the overdue todo in Today"
+        ) else { return }
+        guard require(
+            taskRow(named: "Seed todo", state: "Pending", in: app),
+            in: app,
+            description: "the todo due today in Today"
+        ) else { return }
+        XCTAssertFalse(
+            taskRow(named: "Future todo", state: "Pending", in: app).exists,
+            "Today should hide future todos"
+        )
+        XCTAssertFalse(
+            taskRow(named: "Undated todo", state: "Pending", in: app).exists,
+            "Today should hide undated todos"
+        )
+        XCTAssertFalse(
+            taskRow(named: "Completed overdue todo", state: "Done", in: app).exists,
+            "Today should hide terminal todos"
+        )
+
+        guard selectFilter("Active", in: app) else { return }
+        guard require(
+            taskRow(named: "Future todo", state: "Pending", in: app),
+            in: app,
+            description: "the future todo in Active"
+        ) else { return }
+        guard require(
+            taskRow(named: "Undated todo", state: "Pending", in: app),
+            in: app,
+            description: "the undated todo in Active"
+        ) else { return }
+        XCTAssertFalse(
+            taskRow(named: "Completed overdue todo", state: "Done", in: app).exists,
+            "Active should hide terminal todos"
+        )
+
+        guard selectFilter("All", in: app) else { return }
+        _ = require(
+            taskRow(named: "Completed overdue todo", state: "Done", in: app),
+            in: app,
+            description: "the completed overdue todo in All"
+        )
+    }
+
+    @MainActor
+    private func selectFilter(
+        _ name: String,
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> Bool {
+        let button = app.segmentedControls["task-filter"].buttons[name]
+        guard require(
+            button,
+            in: app,
+            description: "the \(name) todo filter",
+            file: file,
+            line: line
+        ) else { return false }
+        button.tap()
+        XCTAssertTrue(button.isSelected, "\(name) should be selected", file: file, line: line)
+        return true
     }
 
     @MainActor

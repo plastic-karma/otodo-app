@@ -2,7 +2,7 @@
 
 OTodo is an offline-first iOS client for an Obsidian Todo v1 store kept in a GitHub repository. It signs in through GitHub's OAuth Device Flow, discovers stores on a selected branch, and lets you create and edit todos without making a local Git checkout.
 
-The app displays active todos by default and can include terminal todos. Todos are ordered by due date, configured workflow-state order, name, and ULID. The editor supports the name, state, projects, tags, due date, and Markdown body. GitHub tokens are stored in the device Keychain; repository workspaces and their pending changes are stored on the device.
+The app displays active todos due today or overdue by default, with filters for every active todo or all todos including terminal states. Todos are ordered by due date, configured workflow-state order, name, and ULID. The editor supports the name, state, projects, tags, due date, and Markdown body. GitHub tokens are stored in the device Keychain; repository workspaces and their pending changes are stored on the device.
 
 ## Requirements
 
