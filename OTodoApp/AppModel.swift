@@ -997,12 +997,14 @@ final class AppModel {
             if let existing = try await taskService.load(selection: selection) {
                 restored = existing
             } else {
-                let seeds: [(id: String, name: String, state: String, dueDate: CivilDate?)] = [
-                    ("01ARZ3NDEKTSV4RRFFQ69G5FAV", "Seed todo", "todo", try Self.uiTestDate()),
-                    ("01ARZ3NDEKTSV4RRFFQ69G5FAW", "Overdue todo", "todo", try Self.uiTestDate(dayOffset: -1)),
-                    ("01ARZ3NDEKTSV4RRFFQ69G5FAX", "Future todo", "todo", try Self.uiTestDate(dayOffset: 1)),
-                    ("01ARZ3NDEKTSV4RRFFQ69G5FAY", "Undated todo", "todo", nil),
-                    ("01ARZ3NDEKTSV4RRFFQ69G5FAZ", "Completed overdue todo", "done", try Self.uiTestDate(dayOffset: -1)),
+                let seeds: [
+                    (id: String, name: String, state: String, project: String, dueDate: CivilDate?)
+                ] = [
+                    ("01ARZ3NDEKTSV4RRFFQ69G5FAV", "Seed todo", "todo", "home", try Self.uiTestDate()),
+                    ("01ARZ3NDEKTSV4RRFFQ69G5FAW", "Overdue todo", "todo", "home", try Self.uiTestDate(dayOffset: -1)),
+                    ("01ARZ3NDEKTSV4RRFFQ69G5FAX", "Future todo", "todo", "work", try Self.uiTestDate(dayOffset: 1)),
+                    ("01ARZ3NDEKTSV4RRFFQ69G5FAY", "Undated todo", "todo", "work", nil),
+                    ("01ARZ3NDEKTSV4RRFFQ69G5FAZ", "Completed overdue todo", "done", "home", try Self.uiTestDate(dayOffset: -1)),
                 ]
                 let codec = ObsidianTaskCodec()
                 let documents = try seeds.map { seed in
@@ -1012,7 +1014,7 @@ final class AppModel {
                         relativePath: "todos/\(id.rawValue).md",
                         name: seed.name,
                         state: seed.state,
-                        projectSlugs: ["home"],
+                        projectSlugs: [seed.project],
                         tags: [],
                         dueDate: seed.dueDate,
                         recurrence: nil,
@@ -1029,7 +1031,7 @@ final class AppModel {
                 let workspace = try WorkspaceState(
                     selection: selection,
                     configuration: configuration,
-                    knownProjectSlugs: ["home"],
+                    knownProjectSlugs: ["home", "work"],
                     tasks: documents,
                     baseHeadCommitSHA: "seed-head",
                     baseRootTreeSHA: "seed-tree",

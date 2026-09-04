@@ -278,6 +278,90 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testProjectSidebarFiltersEveryVisibility() {
+        continueAfterFailure = false
+
+        let app = XCUIApplication()
+        app.launchArguments.append(contentsOf: ["-ui-testing", "-ui-testing-reset-workspace"])
+        app.launch()
+
+        let sidebarButton = app.buttons["project-sidebar-toggle"]
+        guard require(
+            sidebarButton,
+            in: app,
+            description: "the project sidebar button"
+        ) else { return }
+        sidebarButton.tap()
+
+        let sidebar = app.descendants(matching: .any)
+            .matching(identifier: "project-sidebar")
+            .firstMatch
+        guard require(
+            sidebar,
+            in: app,
+            description: "the project sidebar"
+        ) else { return }
+
+        let workProject = app.buttons["project-filter-work"]
+        guard require(
+            workProject,
+            in: app,
+            description: "the Work project filter"
+        ) else { return }
+        workProject.tap()
+        XCTAssertTrue(
+            sidebar.waitForNonExistence(timeout: 3),
+            "Choosing a project should close the sidebar"
+        )
+
+        XCTAssertFalse(
+            taskRow(named: "Seed todo", state: "Pending", in: app).exists,
+            "Today should hide todos outside the selected project"
+        )
+        XCTAssertFalse(
+            taskRow(named: "Overdue todo", state: "Pending", in: app).exists,
+            "Today should hide overdue todos outside the selected project"
+        )
+
+        guard selectFilter("Active", in: app) else { return }
+        guard require(
+            taskRow(named: "Future todo", state: "Pending", in: app),
+            in: app,
+            description: "the active todo in Work"
+        ) else { return }
+        guard require(
+            taskRow(named: "Undated todo", state: "Pending", in: app),
+            in: app,
+            description: "the undated todo in Work"
+        ) else { return }
+        XCTAssertFalse(
+            taskRow(named: "Seed todo", state: "Pending", in: app).exists,
+            "Active should remain scoped to Work"
+        )
+
+        guard selectFilter("All", in: app) else { return }
+        XCTAssertFalse(
+            taskRow(named: "Completed overdue todo", state: "Done", in: app).exists,
+            "All should remain scoped to Work"
+        )
+
+        sidebarButton.tap()
+        guard require(
+            app.buttons["project-filter-all"],
+            in: app,
+            description: "the All Todos project filter"
+        ) else { return }
+        app.buttons["project-filter-all"].tap()
+
+        guard selectFilter("Today", in: app) else { return }
+        _ = require(
+            taskRow(named: "Seed todo", state: "Pending", in: app),
+            in: app,
+            description: "the home todo after clearing the project filter"
+        )
+    }
+
+    @MainActor
     func testSwipeActionsCompleteAndDeleteDurably() {
         continueAfterFailure = false
 

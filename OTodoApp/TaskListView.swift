@@ -6,13 +6,16 @@ struct TaskListView: View {
     @Bindable private var model: AppModel
     @State private var editorPresentation: EditorPresentation?
     @State private var visibility = TaskVisibility.today
+    @State private var selectedProject: String?
+    @State private var isProjectSidebarPresented = false
 
     init(model: AppModel) {
         self.model = model
     }
 
     var body: some View {
-        NavigationStack {
+        ZStack(alignment: .leading) {
+            NavigationStack {
             List {
 
                 Section {
@@ -88,16 +91,14 @@ struct TaskListView: View {
             .refreshable {
                 await model.refresh()
             }
-            .navigationTitle("Todos")
+            .navigationTitle(selectedProject.map(projectDisplayName) ?? "Todos")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right") {
-                        Task { @MainActor in
-                            await model.signOut()
-                        }
+                    Button("Projects", systemImage: "line.3.horizontal") {
+                        isProjectSidebarPresented = true
                     }
-                    .disabled(model.isBusy)
-                    .accessibilityIdentifier("sign-out")
+                    .accessibilityHint("Shows project filters")
+                    .accessibilityIdentifier("project-sidebar-toggle")
                 }
 
                 ToolbarItem(placement: .primaryAction) {
@@ -133,7 +134,149 @@ struct TaskListView: View {
                     )
                 }
             }
+            }
+            .allowsHitTesting(!isProjectSidebarPresented)
+            .accessibilityHidden(isProjectSidebarPresented)
+            .onChange(of: model.projectChoices) { _, projects in
+                if let selectedProject, !projects.contains(selectedProject) {
+                    self.selectedProject = nil
+                }
+            }
+
+            if isProjectSidebarPresented {
+                Button {
+                    dismissProjectSidebar()
+                } label: {
+                    Color.black.opacity(0.24)
+                        .ignoresSafeArea()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close projects")
+
+                projectSidebar
+                    .transition(.move(edge: .leading))
+            }
         }
+        .animation(.snappy(duration: 0.24), value: isProjectSidebarPresented)
+    }
+
+    private var projectSidebar: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Projects")
+                        .font(.title2.bold())
+                    Text("Choose what to focus on")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button("Close", systemImage: "xmark.circle.fill") {
+                    dismissProjectSidebar()
+                }
+                .labelStyle(.iconOnly)
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("project-sidebar-close")
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 18)
+
+            Divider()
+
+            ScrollView {
+                LazyVStack(spacing: 6) {
+                    projectFilterButton(nil)
+
+                    ForEach(model.projectChoices, id: \.self) { project in
+                        projectFilterButton(project)
+                    }
+                }
+                .padding(12)
+            }
+
+            Divider()
+
+            Button {
+                dismissProjectSidebar()
+                Task { @MainActor in
+                    await model.signOut()
+                }
+            } label: {
+                Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(model.isBusy)
+            .accessibilityIdentifier("sign-out")
+            .padding(20)
+        }
+        .frame(width: 300)
+        .frame(maxHeight: .infinity)
+        .background(.regularMaterial)
+        .shadow(color: .black.opacity(0.18), radius: 20, x: 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("project-sidebar")
+        .accessibilityAction(.escape) {
+            dismissProjectSidebar()
+        }
+    }
+
+    private func projectFilterButton(_ project: String?) -> some View {
+        let isSelected = selectedProject == project
+        let title = project.map(projectDisplayName) ?? "All Todos"
+        let count = project.map(taskCount(for:)) ?? model.tasks.count
+
+        return Button {
+            selectedProject = project
+            dismissProjectSidebar()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: project == nil ? "tray.full" : "folder")
+                    .frame(width: 22)
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+
+                Text(title)
+                    .font(.body.weight(isSelected ? .semibold : .regular))
+
+                Spacer()
+
+                Text("\(count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+
+                Image(systemName: "checkmark")
+                    .font(.caption.bold())
+                    .foregroundStyle(.tint)
+                    .opacity(isSelected ? 1 : 0)
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 46)
+            .contentShape(Rectangle())
+            .background(
+                isSelected ? Color.accentColor.opacity(0.13) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 12)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title), \(count) todos")
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        .accessibilityIdentifier(project.map { "project-filter-\($0)" } ?? "project-filter-all")
+    }
+
+    private func taskCount(for project: String) -> Int {
+        model.tasks.lazy.filter { $0.projectSlugs.contains(project) }.count
+    }
+
+    private func projectDisplayName(_ project: String) -> String {
+        project.replacingOccurrences(of: "-", with: " ").capitalized
+    }
+
+    private func dismissProjectSidebar() {
+        isProjectSidebarPresented = false
     }
 
     private var loadingRow: some View {
@@ -169,13 +312,18 @@ struct TaskListView: View {
         if model.tasks.isEmpty {
             return "Add a todo to get started. Changes are saved locally when offline."
         }
+        let projectScope = selectedProject.map {
+            " in \(projectDisplayName($0))"
+        } ?? ""
         switch visibility {
         case .today:
-            return "No active todos are due today or overdue."
+            return "No active todos\(projectScope) are due today or overdue."
         case .active:
-            return "No active todos. Choose All to see terminal todos."
+            return "No active todos\(projectScope). Choose All to see terminal todos."
         case .all:
-            return "Add a todo to get started."
+            return selectedProject.map {
+                "No todos in \(projectDisplayName($0)) yet."
+            } ?? "Add a todo to get started."
         }
     }
 
@@ -187,6 +335,11 @@ struct TaskListView: View {
 
         return model.tasks
             .filter { task in
+                if let selectedProject,
+                   !task.projectSlugs.contains(selectedProject)
+                {
+                    return false
+                }
                 let isTerminal = terminalStates.contains(task.state)
                 switch visibility {
                 case .today:
