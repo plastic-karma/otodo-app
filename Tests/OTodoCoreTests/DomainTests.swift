@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import OTodoCore
 
@@ -16,6 +17,26 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(try CivilDate(rawValue: "0000-02-29").rawValue, "0000-02-29")
         XCTAssertThrowsError(try CivilDate(rawValue: "2025-02-29"))
         XCTAssertNoThrow(try CivilDate(rawValue: "2024-02-29"))
+    }
+
+    func testCivilTimeUsesMinuteGranularity() throws {
+        let midnight = try CivilTime(rawValue: "00:00")
+        let finalMinute = try CivilTime(rawValue: "23:59")
+
+        XCTAssertEqual(midnight.hour, 0)
+        XCTAssertEqual(midnight.minute, 0)
+        XCTAssertLessThan(midnight, finalMinute)
+
+        let encoded = try JSONEncoder().encode(finalMinute)
+        XCTAssertEqual(String(data: encoded, encoding: .utf8), "\"23:59\"")
+        XCTAssertEqual(try JSONDecoder().decode(CivilTime.self, from: encoded), finalMinute)
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(CivilTime.self, from: Data("\"24:00\"".utf8))
+        )
+        XCTAssertThrowsError(try CivilTime(rawValue: "9:00"))
+        XCTAssertThrowsError(try CivilTime(rawValue: "24:00"))
+        XCTAssertThrowsError(try CivilTime(rawValue: "23:60"))
+        XCTAssertThrowsError(try CivilTime(rawValue: "12:34:56"))
     }
 
     func testRepositorySelectionNormalizesStorePath() throws {

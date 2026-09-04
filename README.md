@@ -2,9 +2,9 @@
 
 OTodo is an offline-first iOS client for an Obsidian Todo v1 store kept in a GitHub repository. It signs in through GitHub's OAuth Device Flow, discovers stores on a selected branch, and lets you create projects plus create, edit, complete, and delete todos without making a local Git checkout.
 
-The workspace uses a colorful focus card, an airy card-based todo list, and a floating quick-add control while retaining native iOS interactions and accessibility. It displays active todos due today or overdue by default, with filters for every active todo or all todos including terminal states. The Projects sidebar creates and filters projects; project names become lowercase, hyphenated slugs and direct Markdown project records. Todos are ordered by due date, configured workflow-state order, name, and ULID. Swipe right on a todo to reveal Done; swipe left to reveal Delete. The editor supports the name, state, projects, tags, due date, and Markdown body. GitHub tokens are stored in the device Keychain; repository workspaces and their pending changes are stored on the device.
+The workspace uses a colorful focus card, an airy card-based todo list, and a floating quick-add control while retaining native iOS interactions and accessibility. It displays active todos due today or overdue by default, with filters for every active todo or all todos including terminal states. The Projects sidebar creates and filters projects; project names become lowercase, hyphenated slugs and direct Markdown project records. Todos are ordered by due date and time, configured workflow-state order, name, and ULID. Swipe right on a todo to reveal Done; swipe left to reveal Delete. The editor supports the name, state, projects, tags, due date with optional exact time, and Markdown body. GitHub tokens are stored in the device Keychain; repository workspaces and their pending changes are stored on the device.
 
-Due reminders are opt-in from the Projects sidebar. When enabled, active dated todos schedule local iOS notifications for 9:00 AM in the device time zone; an already-due todo gets a near-term reminder, and completing, deleting, or rescheduling a todo reconciles its pending alert. If notification access was denied, the control opens the app's iOS Settings page.
+Due reminders are opt-in from the Projects sidebar. When enabled, active dated todos schedule local iOS notifications at their exact due time, or at 9:00 AM in the device time zone for date-only todos; an already-due todo gets a near-term reminder, and completing, deleting, or rescheduling a todo reconciles its pending alert. If notification access was denied, the control opens the app's iOS Settings page.
 
 ## Requirements
 
@@ -54,6 +54,7 @@ projects:
 tags:
   - errands
 due_date: 2026-09-03
+due_time: "14:30"
 ---
 Optional Markdown notes.
 ```
@@ -61,14 +62,14 @@ Optional Markdown notes.
 The exact record contract is:
 
 - Required: nonempty single-line `name`, configured `state`, `projects` list, and `tags` list.
-- Optional: `due_date` and `last_completed_date` as real `YYYY-MM-DD` civil dates; `recurrence`; and `recurrence_from`, which is `schedule` or `completion`.
+- Optional: `due_date` and `last_completed_date` as real `YYYY-MM-DD` civil dates; `due_time` as a 24-hour `HH:mm` value that requires `due_date`; `recurrence`; and `recurrence_from`, which is `schedule` or `completion`.
 - Project slugs match `[a-z0-9][a-z0-9-]*` and are unique per task. Project links must be `[[<obsidian_link_prefix>/<projects_directory>/<slug>]]`, with the empty prefix omitting that first component.
 - Tags must be unique, nonempty strings without whitespace, control characters, commas, brackets, or braces, and cannot begin with `#`.
 - `id` frontmatter is rejected. Other frontmatter properties and the Markdown body are preserved when OTodo edits a task. Core fields are emitted canonically.
 - Recurrence supports `FREQ=DAILY|WEEKLY|MONTHLY|YEARLY`, positive `INTERVAL`, non-ordinal `BYDAY` for weekly rules, `BYMONTHDAY=1..31` for monthly/yearly rules, and `BYMONTH=1..12` for yearly rules. A recurring task requires both `due_date` and `recurrence_from`, and its due date must match its selection clauses. The current UI preserves existing recurrence fields but does not edit them or calculate a next occurrence.
 - The configuration limit is 1 MiB; each selected task/project record is limited to 8 MiB; at most 10,000 selected files and 64 MiB of decoded selected content are loaded.
 
-`Sources/OTodoCore/Resources/schema.json` is the bundled structural schema. Runtime validation additionally enforces the configuration, paths, project existence, dates, recurrence subset, and filename identity described above.
+`Sources/OTodoCore/Resources/schema.json` is the bundled structural schema. Runtime validation additionally enforces the configuration, paths, project existence, dates, times, recurrence subset, and filename identity described above.
 
 ## Offline, outbox, and conflict behavior
 

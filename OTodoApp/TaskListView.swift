@@ -840,6 +840,17 @@ struct TaskListView: View {
                     break
                 }
 
+                switch (lhs.dueTime, rhs.dueTime) {
+                case let (left?, right?) where left != right:
+                    return left < right
+                case (nil, _?):
+                    return true
+                case (_?, nil):
+                    return false
+                default:
+                    break
+                }
+
                 let lhsStateIndex = stateOrder[lhs.state] ?? Int.max
                 let rhsStateIndex = stateOrder[rhs.state] ?? Int.max
                 if lhsStateIndex != rhsStateIndex {

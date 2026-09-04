@@ -94,14 +94,30 @@ struct TaskRowView: View {
 
     private var duePresentation: (label: String, color: Color)? {
         guard let dueDate = task.dueDate else { return nil }
-        let formatted = formattedDate(dueDate.rawValue)
+        let formattedDate = formattedDate(dueDate.rawValue)
+        let formattedTime = task.dueTime.map { self.formattedTime($0) }
         if dueDate.rawValue < today {
-            return ("Overdue · \(formatted)", .red)
+            return (
+                ["Overdue", formattedDate, formattedTime].compactMap { $0 }.joined(separator: " · "),
+                .red
+            )
         }
         if dueDate.rawValue == today {
+            if let dueTime = task.dueTime,
+               let currentTime,
+               dueTime < currentTime
+            {
+                return ("Overdue · \(formattedTime ?? dueTime.rawValue)", .red)
+            }
+            if let formattedTime {
+                return ("Today · \(formattedTime)", OTodoTheme.coral)
+            }
             return ("Today", OTodoTheme.coral)
         }
-        return (formatted, OTodoTheme.accent)
+        return (
+            [formattedDate, formattedTime].compactMap { $0 }.joined(separator: " · "),
+            OTodoTheme.accent
+        )
     }
 
     private var projectDescription: String {
@@ -127,13 +143,42 @@ struct TaskRowView: View {
         return date.formatted(.dateTime.month(.abbreviated).day())
     }
 
+    private func formattedTime(_ value: CivilTime) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        guard let date = calendar.date(
+            from: DateComponents(
+                timeZone: calendar.timeZone,
+                year: 2000,
+                month: 1,
+                day: 1,
+                hour: value.hour,
+                minute: value.minute
+            )
+        ) else {
+            return value.rawValue
+        }
+        return date.formatted(date: .omitted, time: .shortened)
+    }
+
+    private var currentTime: CivilTime? {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        let components = calendar.dateComponents([.hour, .minute], from: .now)
+        guard let hour = components.hour, let minute = components.minute else {
+            return nil
+        }
+        return try? CivilTime(rawValue: String(format: "%02d:%02d", hour, minute))
+    }
+
     private var accessibilityDescription: String {
         var values = [task.name, "State: \(workflowState?.name ?? task.state)"]
         if workflowState?.isTerminal == true {
             values.append("Terminal state")
         }
         if let dueDate = task.dueDate {
-            values.append("Due: \(dueDate.rawValue)")
+            let timeSuffix = task.dueTime.map { " at \($0.rawValue)" } ?? ""
+            values.append("Due: \(dueDate.rawValue)\(timeSuffix)")
         }
         if !task.projectSlugs.isEmpty {
             values.append("Projects: \(task.projectSlugs.joined(separator: ", "))")

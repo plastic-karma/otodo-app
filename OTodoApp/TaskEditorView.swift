@@ -8,6 +8,7 @@ struct TaskEditorDraft: Equatable, Sendable {
     var projectSlugs: [String]
     var tags: [String]
     var dueDate: CivilDate?
+    var dueTime: CivilTime?
     var body: String
 
     // Keeping the source value with the draft makes an edit a lossless value operation.
@@ -21,6 +22,7 @@ struct TaskEditorDraft: Equatable, Sendable {
         projectSlugs = []
         tags = []
         dueDate = nil
+        dueTime = nil
         body = ""
         preservedTask = nil
     }
@@ -31,6 +33,7 @@ struct TaskEditorDraft: Equatable, Sendable {
         projectSlugs = task.projectSlugs
         tags = task.tags
         dueDate = task.dueDate
+        dueTime = task.dueTime
         body = task.body
         preservedTask = task
     }
@@ -56,6 +59,7 @@ struct TaskEditorView: View {
     @State private var projectsText: String
     @State private var tagsText: String
     @State private var hasDueDate: Bool
+    @State private var hasDueTime: Bool
     @State private var dueDate: Date
     @State private var isSaving = false
     @State private var saveError: String?
@@ -75,7 +79,8 @@ struct TaskEditorView: View {
         _projectsText = State(initialValue: draft.projectSlugs.joined(separator: ", "))
         _tagsText = State(initialValue: draft.tags.joined(separator: ", "))
         _hasDueDate = State(initialValue: draft.dueDate != nil)
-        _dueDate = State(initialValue: Self.date(from: draft.dueDate))
+        _hasDueTime = State(initialValue: draft.dueTime != nil)
+        _dueDate = State(initialValue: Self.date(from: draft.dueDate, time: draft.dueTime))
     }
 
     var body: some View {
@@ -161,11 +166,24 @@ struct TaskEditorView: View {
                         .datePickerStyle(.graphical)
                         .environment(\.calendar, Self.gregorianCalendar)
                         .accessibilityIdentifier("task-editor-due-date-picker")
+
+                        Toggle("Include time", isOn: $hasDueTime)
+                            .accessibilityIdentifier("task-editor-due-time-toggle")
+
+                        if hasDueTime {
+                            DatePicker(
+                                "Time",
+                                selection: $dueDate,
+                                displayedComponents: .hourAndMinute
+                            )
+                            .environment(\.calendar, Self.gregorianCalendar)
+                            .accessibilityIdentifier("task-editor-due-time-picker")
+                        }
                     }
                 } header: {
                     Text("Due date")
                 } footer: {
-                    Text(hasDueDate ? "Choose a calendar date." : "This todo has no due date.")
+                    Text(dueDateHelpText)
                 }
 
                 Section("Notes") {
@@ -321,6 +339,7 @@ struct TaskEditorView: View {
         value.projectSlugs = TaskEditorDraft.parseCommaSeparated(projectsText)
         value.tags = TaskEditorDraft.parseCommaSeparated(tagsText)
         value.dueDate = selectedDueDate
+        value.dueTime = selectedDueTime
         isSaving = true
         saveError = nil
 
@@ -353,13 +372,37 @@ struct TaskEditorView: View {
         )
     }
 
+    private var selectedDueTime: CivilTime? {
+        guard hasDueDate, hasDueTime else { return nil }
+        let components = Self.gregorianCalendar.dateComponents(
+            [.hour, .minute],
+            from: dueDate
+        )
+        guard let hour = components.hour, let minute = components.minute else {
+            return nil
+        }
+        return try? CivilTime(
+            rawValue: String(format: "%02d:%02d", hour, minute)
+        )
+    }
+
+    private var dueDateHelpText: String {
+        guard hasDueDate else {
+            return "This todo has no due date."
+        }
+        if hasDueTime {
+            return "Choose the calendar date and exact due time."
+        }
+        return "Choose a calendar date. Date-only reminders arrive at 9:00 AM."
+    }
+
     private static var gregorianCalendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .autoupdatingCurrent
         return calendar
     }
 
-    private static func date(from civilDate: CivilDate?) -> Date {
+    private static func date(from civilDate: CivilDate?, time: CivilTime?) -> Date {
         guard let civilDate else { return .now }
 
         let parts = civilDate.rawValue.split(separator: "-").compactMap {
@@ -373,7 +416,8 @@ struct TaskEditorView: View {
         components.year = parts[0]
         components.month = parts[1]
         components.day = parts[2]
-        components.hour = 12
+        components.hour = time?.hour ?? 12
+        components.minute = time?.minute ?? 0
         return Self.gregorianCalendar.date(from: components) ?? .now
     }
 

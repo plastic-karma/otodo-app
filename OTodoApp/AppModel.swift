@@ -521,6 +521,7 @@ final class AppModel {
                 projectSlugs: draft.projectSlugs,
                 tags: draft.tags,
                 dueDate: draft.dueDate,
+                dueTime: draft.dueTime,
                 body: draft.body
             )
             guard sessionID == operationSession else { return }
@@ -569,6 +570,7 @@ final class AppModel {
                     projectSlugs: draft.projectSlugs,
                     tags: draft.tags,
                     dueDate: draft.dueDate,
+                    dueTime: draft.dueTime,
                     body: draft.body
                 )
             )

@@ -91,6 +91,56 @@ public struct CivilDate: Sendable, Hashable, Codable, Comparable, CustomStringCo
     }
 }
 
+public struct CivilTime: Sendable, Hashable, Codable, Comparable, CustomStringConvertible {
+    public let rawValue: String
+
+    public init(rawValue: String) throws {
+        let bytes = Array(rawValue.utf8)
+        guard bytes.count == 5,
+              bytes[2] == 58,
+              bytes.enumerated().allSatisfy({ index, byte in
+                  index == 2 || (48 ... 57).contains(byte)
+              })
+        else {
+            throw OTodoError.validation(field: "time", message: "Expected HH:mm")
+        }
+
+        let hour = Int(bytes[0] - 48) * 10 + Int(bytes[1] - 48)
+        let minute = Int(bytes[3] - 48) * 10 + Int(bytes[4] - 48)
+        guard (0 ... 23).contains(hour), (0 ... 59).contains(minute) else {
+            throw OTodoError.validation(
+                field: "time",
+                message: "Expected a 24-hour time from 00:00 through 23:59"
+            )
+        }
+        self.rawValue = rawValue
+    }
+
+    public var hour: Int {
+        Int(rawValue.prefix(2))!
+    }
+
+    public var minute: Int {
+        Int(rawValue.suffix(2))!
+    }
+
+    public var description: String { rawValue }
+
+    public static func < (lhs: CivilTime, rhs: CivilTime) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        try self.init(rawValue: container.decode(String.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
 public struct WorkflowState: Sendable, Codable, Equatable {
     public let id: String
     public let name: String
@@ -242,6 +292,7 @@ public struct TodoTask: Sendable, Codable, Equatable {
     public var projectSlugs: [String]
     public var tags: [String]
     public var dueDate: CivilDate?
+    public var dueTime: CivilTime?
     public var recurrence: String?
     public var recurrenceFrom: RecurrenceFrom?
     public var lastCompletedDate: CivilDate?
@@ -256,6 +307,7 @@ public struct TodoTask: Sendable, Codable, Equatable {
         projectSlugs: [String],
         tags: [String],
         dueDate: CivilDate?,
+        dueTime: CivilTime? = nil,
         recurrence: String?,
         recurrenceFrom: RecurrenceFrom?,
         lastCompletedDate: CivilDate?,
@@ -280,6 +332,12 @@ public struct TodoTask: Sendable, Codable, Equatable {
         try DomainValidation.validateStateID(state, field: "state")
         try DomainValidation.validateProjectSlugs(projectSlugs)
         try DomainValidation.validateTags(tags)
+        guard dueTime == nil || dueDate != nil else {
+            throw OTodoError.validation(
+                field: "dueTime",
+                message: "A due time requires a due date"
+            )
+        }
         try DomainValidation.validateRecurrence(
             recurrence: recurrence,
             recurrenceFrom: recurrenceFrom,
@@ -295,6 +353,7 @@ public struct TodoTask: Sendable, Codable, Equatable {
         self.projectSlugs = projectSlugs
         self.tags = tags
         self.dueDate = dueDate
+        self.dueTime = dueTime
         self.recurrence = recurrence
         self.recurrenceFrom = recurrenceFrom
         self.lastCompletedDate = lastCompletedDate
@@ -303,7 +362,7 @@ public struct TodoTask: Sendable, Codable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, relativePath, name, state, projectSlugs, tags, dueDate, recurrence
+        case id, relativePath, name, state, projectSlugs, tags, dueDate, dueTime, recurrence
         case recurrenceFrom, lastCompletedDate, body, extraProperties
     }
 
@@ -317,6 +376,7 @@ public struct TodoTask: Sendable, Codable, Equatable {
             projectSlugs: container.decode([String].self, forKey: .projectSlugs),
             tags: container.decode([String].self, forKey: .tags),
             dueDate: container.decodeIfPresent(CivilDate.self, forKey: .dueDate),
+            dueTime: container.decodeIfPresent(CivilTime.self, forKey: .dueTime),
             recurrence: container.decodeIfPresent(String.self, forKey: .recurrence),
             recurrenceFrom: container.decodeIfPresent(RecurrenceFrom.self, forKey: .recurrenceFrom),
             lastCompletedDate: container.decodeIfPresent(CivilDate.self, forKey: .lastCompletedDate),
@@ -692,7 +752,7 @@ public struct RemoteChange: Sendable, Codable, Equatable {
 
 private enum DomainValidation {
     private static let coreProperties: Set<String> = [
-        "id", "name", "state", "projects", "tags", "due_date", "recurrence",
+        "id", "name", "state", "projects", "tags", "due_date", "due_time", "recurrence",
         "recurrence_from", "last_completed_date",
     ]
 

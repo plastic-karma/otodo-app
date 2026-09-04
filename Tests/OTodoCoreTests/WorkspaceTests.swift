@@ -242,6 +242,7 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
                 projectSlugs: ["beta"],
                 tags: ["edited"],
                 dueDate: try CivilDate(rawValue: "2026-10-04"),
+                dueTime: try CivilTime(rawValue: "14:45"),
                 body: editedBody
             )
         )
@@ -253,6 +254,8 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(afterEdit.revision, 2)
         XCTAssertEqual(afterEdit.tasks.map(\.task), [edited])
         XCTAssertEqual(afterEdit.tasks[0].task.body, editedBody)
+        XCTAssertEqual(afterEdit.tasks[0].task.dueTime, try CivilTime(rawValue: "14:45"))
+        XCTAssertTrue(afterEdit.tasks[0].content.contains("due_time: \"14:45\""))
         XCTAssertEqual(afterEdit.tasks[0].task.extraProperties, added.extraProperties)
         XCTAssertEqual(afterEdit.pendingChanges.count, 1)
         XCTAssertEqual(afterEdit.pendingChanges[0].id, pendingID)
@@ -771,6 +774,56 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    func testListTasksOrdersDateOnlyBeforeTimedTasksAndTimesAscending() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let dueDate = try CivilDate(rawValue: "2026-01-01")
+        let dateOnlyID = taskID("01ARZ3NDEKTSV4RRFFQ69G5FB3")
+        let morningID = taskID("01ARZ3NDEKTSV4RRFFQ69G5FB4")
+        let afternoonID = taskID("01ARZ3NDEKTSV4RRFFQ69G5FB5")
+        let workspace = try makeWorkspace(
+            selection: selection,
+            configuration: configuration,
+            tasks: [
+                makeDocument(
+                    id: afternoonID,
+                    name: "Afternoon",
+                    dueDate: dueDate,
+                    dueTime: try CivilTime(rawValue: "14:30"),
+                    configuration: configuration
+                ),
+                makeDocument(
+                    id: dateOnlyID,
+                    name: "Date only",
+                    dueDate: dueDate,
+                    configuration: configuration
+                ),
+                makeDocument(
+                    id: morningID,
+                    name: "Morning",
+                    dueDate: dueDate,
+                    dueTime: try CivilTime(rawValue: "09:15"),
+                    configuration: configuration
+                ),
+            ]
+        )
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(workspace, expectedRevision: nil)
+        let service = makeService(
+            store: store,
+            id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FB6"),
+            now: Date(timeIntervalSince1970: 1_700_004_000),
+            uuid: UUID(uuidString: "88888888-8888-8888-8888-888888888888")!
+        )
+
+        let active = try await service.listTasks(selection: selection)
+
+        XCTAssertEqual(active.map(\.id), [dateOnlyID, morningID, afternoonID])
+    }
+
     func testUseRemoteConflictResolutionPersistsExactRemoteTaskAndClearsOverlay() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1153,6 +1206,7 @@ private func makeDocument(
     projectSlugs: [String] = [],
     tags: [String] = [],
     dueDate: CivilDate? = nil,
+    dueTime: CivilTime? = nil,
     body: String = "",
     blobSHA: String? = nil,
     configuration: StoreConfiguration
@@ -1166,6 +1220,7 @@ private func makeDocument(
         projectSlugs: projectSlugs,
         tags: tags,
         dueDate: dueDate,
+        dueTime: dueTime,
         recurrence: nil,
         recurrenceFrom: nil,
         lastCompletedDate: nil,

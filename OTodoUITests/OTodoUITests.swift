@@ -171,7 +171,7 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
-    func testDueDateUsesNativePicker() {
+    func testDueDateAndTimeControlsPersistExactTime() {
         continueAfterFailure = false
 
         let app = XCUIApplication()
@@ -208,6 +208,46 @@ final class OTodoUITests: XCTestCase {
         XCTAssertFalse(
             app.textFields["Due date"].exists,
             "Due dates should not use a text input"
+        )
+
+        editor.swipeUp()
+        let timeToggle = app.switches["task-editor-due-time-toggle"]
+        guard require(
+            timeToggle,
+            in: app,
+            description: "the optional due-time control"
+        ) else { return }
+        timeToggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(
+            timeToggle.value as? String,
+            "1",
+            "Enabling exact time should update the due-time control"
+        )
+        editor.swipeUp()
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Todo due time editor"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        app.buttons["task-editor-save"].tap()
+        guard requireEditorDismissed(
+            editor,
+            after: "adding an exact due time",
+            in: app
+        ) else { return }
+
+        let timedTask = app.buttons.matching(
+            NSPredicate(
+                format: "label CONTAINS %@ AND label CONTAINS %@",
+                "Seed todo",
+                "at 12:00"
+            )
+        ).firstMatch
+        _ = require(
+            timedTask,
+            in: app,
+            description: "the todo with its exact due time"
         )
     }
 

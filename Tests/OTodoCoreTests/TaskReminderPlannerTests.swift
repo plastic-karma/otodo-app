@@ -54,6 +54,90 @@ struct TaskReminderPlannerTests {
         #expect(reminders[2].fireDate == tomorrowAtNine)
     }
 
+    @Test("Uses an exact due time when one is present")
+    func usesExactDueTime() throws {
+        let task = try makeTask(
+            idSuffix: "07",
+            name: "Timed task",
+            state: "todo",
+            dueDate: "2026-09-05",
+            dueTime: "14:35"
+        )
+        let state = try WorkflowState(id: "todo", name: "Pending", isTerminal: false)
+        let now = try #require(
+            fixedCalendar.date(
+                from: DateComponents(
+                    timeZone: fixedCalendar.timeZone,
+                    year: 2026,
+                    month: 9,
+                    day: 4,
+                    hour: 8
+                )
+            )
+        )
+        let reminder = try #require(
+            TaskReminderPlanner.reminders(
+                for: [task],
+                states: [state],
+                now: now,
+                calendar: fixedCalendar
+            ).first
+        )
+        let expectedFireDate = try #require(
+            fixedCalendar.date(
+                from: DateComponents(
+                    timeZone: fixedCalendar.timeZone,
+                    year: 2026,
+                    month: 9,
+                    day: 5,
+                    hour: 14,
+                    minute: 35
+                )
+            )
+        )
+
+        let expectedTime = try CivilTime(rawValue: "14:35")
+        #expect(reminder.fireDate == expectedFireDate)
+        #expect(reminder.dueTime == expectedTime)
+        #expect(reminder.identifier.hasSuffix(".1435"))
+    }
+
+    @Test("Treats an elapsed exact time as overdue")
+    func elapsedExactTimeIsOverdue() throws {
+        let task = try makeTask(
+            idSuffix: "08",
+            name: "Elapsed task",
+            state: "todo",
+            dueDate: "2026-09-05",
+            dueTime: "14:35"
+        )
+        let state = try WorkflowState(id: "todo", name: "Pending", isTerminal: false)
+        let scheduledDate = try #require(
+            fixedCalendar.date(
+                from: DateComponents(
+                    timeZone: fixedCalendar.timeZone,
+                    year: 2026,
+                    month: 9,
+                    day: 5,
+                    hour: 14,
+                    minute: 35
+                )
+            )
+        )
+        let now = scheduledDate.addingTimeInterval(3_600)
+        let reminder = try #require(
+            TaskReminderPlanner.reminders(
+                for: [task],
+                states: [state],
+                now: now,
+                calendar: fixedCalendar
+            ).first
+        )
+
+        #expect(reminder.timing == .overdue)
+        #expect(reminder.fireDate == now.addingTimeInterval(60))
+    }
+
     @Test("Reminder identity includes the due date")
     func identityChangesWhenDueDateChanges() throws {
         let task = try makeTask(
@@ -108,7 +192,8 @@ struct TaskReminderPlannerTests {
         idSuffix: String,
         name: String,
         state: String,
-        dueDate: String?
+        dueDate: String?,
+        dueTime: String? = nil
     ) throws -> TodoTask {
         let rawID = "01ARZ3NDEKTSV4RRFFQ69G5F\(idSuffix)"
         return try TodoTask(
@@ -119,6 +204,7 @@ struct TaskReminderPlannerTests {
             projectSlugs: [],
             tags: [],
             dueDate: try dueDate.map(CivilDate.init(rawValue:)),
+            dueTime: try dueTime.map(CivilTime.init(rawValue:)),
             recurrence: nil,
             recurrenceFrom: nil,
             lastCompletedDate: nil,

@@ -6,6 +6,7 @@ public struct TaskUpdate: Sendable, Equatable {
     public var projectSlugs: [String]
     public var tags: [String]
     public var dueDate: CivilDate?
+    public var dueTime: CivilTime?
     public var body: String
 
     public init(
@@ -14,6 +15,7 @@ public struct TaskUpdate: Sendable, Equatable {
         projectSlugs: [String],
         tags: [String],
         dueDate: CivilDate?,
+        dueTime: CivilTime? = nil,
         body: String
     ) {
         self.name = name
@@ -21,6 +23,7 @@ public struct TaskUpdate: Sendable, Equatable {
         self.projectSlugs = projectSlugs
         self.tags = tags
         self.dueDate = dueDate
+        self.dueTime = dueTime
         self.body = body
     }
 
@@ -31,6 +34,7 @@ public struct TaskUpdate: Sendable, Equatable {
             projectSlugs: task.projectSlugs,
             tags: task.tags,
             dueDate: task.dueDate,
+            dueTime: task.dueTime,
             body: task.body
         )
     }
@@ -87,8 +91,8 @@ public actor TaskWorkspaceService {
         return document.task
     }
 
-    /// Returns nonterminal tasks by default, ordered by due date (undated last),
-    /// configured state order, exact UTF-8 name order, then ULID.
+    /// Returns nonterminal tasks by default, ordered by due date and time
+    /// (date-only before timed, undated last), configured state order, exact UTF-8 name order, then ULID.
     public func listTasks(
         selection: RepositorySelection,
         includeTerminal: Bool = false
@@ -119,6 +123,14 @@ public actor TaskWorkspaceService {
                 case let (left?, right?): return left < right
                 case (_?, nil): return true
                 case (nil, _?): return false
+                case (nil, nil): break
+                }
+            }
+            if lhs.dueTime != rhs.dueTime {
+                switch (lhs.dueTime, rhs.dueTime) {
+                case let (left?, right?): return left < right
+                case (nil, _?): return true
+                case (_?, nil): return false
                 case (nil, nil): break
                 }
             }
@@ -201,6 +213,7 @@ public actor TaskWorkspaceService {
         projectSlugs: [String] = [],
         tags: [String] = [],
         dueDate: CivilDate? = nil,
+        dueTime: CivilTime? = nil,
         recurrence: String? = nil,
         recurrenceFrom: RecurrenceFrom? = nil,
         lastCompletedDate: CivilDate? = nil,
@@ -221,6 +234,7 @@ public actor TaskWorkspaceService {
             projectSlugs: projectSlugs,
             tags: tags,
             dueDate: dueDate,
+            dueTime: dueTime,
             recurrence: recurrence,
             recurrenceFrom: recurrenceFrom,
             lastCompletedDate: lastCompletedDate,
@@ -298,6 +312,7 @@ public actor TaskWorkspaceService {
             projectSlugs: update.projectSlugs,
             tags: update.tags,
             dueDate: update.dueDate,
+            dueTime: update.dueTime,
             recurrence: original.task.recurrence,
             recurrenceFrom: original.task.recurrenceFrom,
             lastCompletedDate: original.task.lastCompletedDate,
@@ -338,6 +353,7 @@ public actor TaskWorkspaceService {
         projectSlugs: [String],
         tags: [String],
         dueDate: CivilDate?,
+        dueTime: CivilTime? = nil,
         body: String
     ) async throws -> TodoTask {
         try await editTask(
@@ -350,6 +366,7 @@ public actor TaskWorkspaceService {
                 projectSlugs: projectSlugs,
                 tags: tags,
                 dueDate: dueDate,
+                dueTime: dueTime,
                 body: body
             )
         )

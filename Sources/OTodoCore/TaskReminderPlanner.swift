@@ -11,6 +11,7 @@ public struct TaskReminder: Sendable, Equatable {
     public let taskID: TaskID
     public let taskName: String
     public let dueDate: CivilDate
+    public let dueTime: CivilTime?
     public let fireDate: Date
     public let timing: TaskReminderTiming
 
@@ -19,6 +20,7 @@ public struct TaskReminder: Sendable, Equatable {
         taskID: TaskID,
         taskName: String,
         dueDate: CivilDate,
+        dueTime: CivilTime?,
         fireDate: Date,
         timing: TaskReminderTiming
     ) {
@@ -26,6 +28,7 @@ public struct TaskReminder: Sendable, Equatable {
         self.taskID = taskID
         self.taskName = taskName
         self.dueDate = dueDate
+        self.dueTime = dueTime
         self.fireDate = fireDate
         self.timing = timing
     }
@@ -54,7 +57,8 @@ public enum TaskReminderPlanner {
                   let dueDate = task.dueDate,
                   let scheduledDate = Self.scheduledDate(
                       for: dueDate,
-                      hour: defaultHour,
+                      time: task.dueTime,
+                      defaultHour: defaultHour,
                       calendar: calendar
                   )
             else {
@@ -63,7 +67,7 @@ public enum TaskReminderPlanner {
 
             let dueDay = calendar.startOfDay(for: scheduledDate)
             let timing: TaskReminderTiming
-            if dueDay < startOfToday {
+            if dueDay < startOfToday || (task.dueTime != nil && scheduledDate <= now) {
                 timing = .overdue
             } else if dueDay == startOfToday {
                 timing = .dueToday
@@ -74,11 +78,15 @@ public enum TaskReminderPlanner {
             let fireDate = scheduledDate > now
                 ? scheduledDate
                 : now.addingTimeInterval(minimumLeadTime)
+            let timeIdentity = task.dueTime.map {
+                $0.rawValue.replacingOccurrences(of: ":", with: "")
+            } ?? "date"
             return TaskReminder(
-                identifier: "\(identifierPrefix)\(task.id.rawValue).\(dueDate.rawValue)",
+                identifier: "\(identifierPrefix)\(task.id.rawValue).\(dueDate.rawValue).\(timeIdentity)",
                 taskID: task.id,
                 taskName: task.name,
                 dueDate: dueDate,
+                dueTime: task.dueTime,
                 fireDate: fireDate,
                 timing: timing
             )
@@ -86,6 +94,14 @@ public enum TaskReminderPlanner {
         .sorted { lhs, rhs in
             if lhs.dueDate != rhs.dueDate {
                 return lhs.dueDate < rhs.dueDate
+            }
+            if lhs.dueTime != rhs.dueTime {
+                switch (lhs.dueTime, rhs.dueTime) {
+                case let (left?, right?): return left < right
+                case (nil, _?): return true
+                case (_?, nil): return false
+                case (nil, nil): break
+                }
             }
             if lhs.taskName != rhs.taskName {
                 return lhs.taskName.utf8.lexicographicallyPrecedes(rhs.taskName.utf8)
@@ -98,7 +114,8 @@ public enum TaskReminderPlanner {
 
     private static func scheduledDate(
         for dueDate: CivilDate,
-        hour: Int,
+        time: CivilTime?,
+        defaultHour: Int,
         calendar: Calendar
     ) -> Date? {
         let parts = dueDate.rawValue.split(separator: "-").compactMap { Int($0) }
@@ -110,8 +127,8 @@ public enum TaskReminderPlanner {
         components.year = parts[0]
         components.month = parts[1]
         components.day = parts[2]
-        components.hour = hour
-        components.minute = 0
+        components.hour = time?.hour ?? defaultHour
+        components.minute = time?.minute ?? 0
         return calendar.date(from: components)
     }
 }

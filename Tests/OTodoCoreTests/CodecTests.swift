@@ -317,6 +317,7 @@ final class CodecTests: XCTestCase {
             tags: ["zeta", "alpha"],
             additionalLines: [
                 "due_date: 2026-01-06",
+                "due_time: \"14:35\"",
                 "recurrence: \"byday=TU,MO;interval=2;freq=weekly\"",
                 "recurrence_from: completion",
                 "last_completed_date: 2025-12-23",
@@ -333,6 +334,7 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(task.projectSlugs, ["zeta", "alpha"])
         XCTAssertEqual(task.tags, ["zeta", "alpha"])
         XCTAssertEqual(task.dueDate, try CivilDate(rawValue: "2026-01-06"))
+        XCTAssertEqual(task.dueTime, try CivilTime(rawValue: "14:35"))
         XCTAssertEqual(task.recurrence, "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TU")
         XCTAssertEqual(task.recurrenceFrom, .completion)
         XCTAssertEqual(task.lastCompletedDate, try CivilDate(rawValue: "2025-12-23"))
@@ -349,6 +351,7 @@ final class CodecTests: XCTestCase {
             "  - \"alpha\"",
             "  - \"zeta\"",
             "due_date: 2026-01-06",
+            "due_time: \"14:35\"",
             "recurrence: \"FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TU\"",
             "recurrence_from: completion",
             "last_completed_date: 2025-12-23",
@@ -391,6 +394,30 @@ final class CodecTests: XCTestCase {
                 configuration: configuration
             ),
             field: "due_date"
+        )
+    }
+
+    func testTaskCodecRejectsInvalidOrOrphanedDueTime() {
+        assertValidation(
+            try codec.parseTask(
+                id: taskID,
+                relativePath: taskPath,
+                text: taskRecord(additionalLines: [
+                    "due_date: 2026-01-06",
+                    "due_time: \"24:00\"",
+                ]),
+                configuration: configuration
+            ),
+            field: "due_time"
+        )
+        assertValidation(
+            try codec.parseTask(
+                id: taskID,
+                relativePath: taskPath,
+                text: taskRecord(additionalLines: ["due_time: \"09:30\""]),
+                configuration: configuration
+            ),
+            field: "dueTime"
         )
     }
 

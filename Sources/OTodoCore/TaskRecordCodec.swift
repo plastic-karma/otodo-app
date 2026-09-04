@@ -7,7 +7,7 @@ public struct ObsidianTaskCodec: TaskRecordCoding, Sendable {
     public static let maximumYAMLNodes = 100_000
 
     private static let coreKeys: Set<String> = [
-        "name", "state", "projects", "tags", "due_date", "recurrence",
+        "name", "state", "projects", "tags", "due_date", "due_time", "recurrence",
         "recurrence_from", "last_completed_date",
     ]
 
@@ -44,6 +44,7 @@ public struct ObsidianTaskCodec: TaskRecordCoding, Sendable {
         let projectLinks = try Self.requiredStringList(values, key: "projects")
         let tags = try Self.requiredStringList(values, key: "tags")
         let dueDate = try Self.optionalDate(values, key: "due_date")
+        let dueTime = try Self.optionalTime(values, key: "due_time")
         let recurrenceSource = try Self.optionalString(values, key: "recurrence")
         let recurrenceFromSource = try Self.optionalString(values, key: "recurrence_from")
         let lastCompletedDate = try Self.optionalDate(values, key: "last_completed_date")
@@ -82,6 +83,7 @@ public struct ObsidianTaskCodec: TaskRecordCoding, Sendable {
             projectSlugs: projectSlugs,
             tags: tags,
             dueDate: dueDate,
+            dueTime: dueTime,
             recurrence: rule?.description,
             recurrenceFrom: recurrenceFrom,
             lastCompletedDate: lastCompletedDate,
@@ -113,6 +115,7 @@ public struct ObsidianTaskCodec: TaskRecordCoding, Sendable {
             projectSlugs: task.projectSlugs,
             tags: task.tags,
             dueDate: task.dueDate,
+            dueTime: task.dueTime,
             recurrence: rule?.description,
             recurrenceFrom: task.recurrenceFrom,
             lastCompletedDate: task.lastCompletedDate,
@@ -133,6 +136,9 @@ public struct ObsidianTaskCodec: TaskRecordCoding, Sendable {
         try YAMLWriter.appendStringList(tags, key: "tags", to: &output)
         if let dueDate = task.dueDate {
             output += "due_date: \(dueDate.rawValue)\n"
+        }
+        if let dueTime = task.dueTime {
+            output += "due_time: \(try YAMLWriter.quoted(dueTime.rawValue))\n"
         }
         if let rule {
             output += "recurrence: \(try YAMLWriter.quoted(rule.description))\n"
@@ -210,6 +216,21 @@ public struct ObsidianTaskCodec: TaskRecordCoding, Sendable {
             return try CivilDate(rawValue: string)
         } catch {
             throw OTodoError.validation(field: key, message: "Expected a valid YYYY-MM-DD date")
+        }
+    }
+
+    private static func optionalTime(
+        _ values: [String: YAMLValue],
+        key: String
+    ) throws -> CivilTime? {
+        guard let value = values[key] else { return nil }
+        guard case let .string(string) = value else {
+            throw OTodoError.validation(field: key, message: "Property must be a time scalar")
+        }
+        do {
+            return try CivilTime(rawValue: string)
+        } catch {
+            throw OTodoError.validation(field: key, message: "Expected a valid HH:mm time")
         }
     }
 
