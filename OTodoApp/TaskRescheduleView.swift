@@ -10,10 +10,9 @@ struct TaskRescheduleView: View {
 
     @State private var selectedDate: Date
     @State private var includesTime: Bool
-    @State private var relativeDueDateText = ""
+    @State private var hasPendingRelativeDueDate = false
     @State private var isSaving = false
     @State private var saveError: String?
-    @FocusState private var isRelativeDueDateFocused: Bool
 
     init(
         task: TodoTask,
@@ -37,36 +36,15 @@ struct TaskRescheduleView: View {
                 }
 
                 Section {
-                    HStack {
-                        TextField("in 3 days", text: $relativeDueDateText)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .submitLabel(.done)
-                            .onSubmit(applyRelativeDueDate)
-                            .focused($isRelativeDueDateFocused)
-                            .accessibilityLabel("Relative due date")
-                            .accessibilityIdentifier("task-reschedule-relative-due-date")
-
-                        Button("Apply") {
-                            applyRelativeDueDate()
+                    RelativeDueDateField(
+                        accessibilityIdentifierPrefix: "task-reschedule-relative-due",
+                        onPendingChange: { hasPendingRelativeDueDate = $0 },
+                        onApply: { resolvedDate in
+                            selectedDate = resolvedDate
+                            includesTime = true
+                            saveError = nil
                         }
-                        .buttonStyle(.bordered)
-                        .disabled(parsedRelativeDueDateExpression == nil)
-                        .accessibilityIdentifier("task-reschedule-relative-due-apply")
-                    }
-
-                    if let relativeDueDateValidationMessage {
-                        Text(relativeDueDateValidationMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                            .accessibilityLabel(
-                                "Invalid relative due date. \(relativeDueDateValidationMessage)"
-                            )
-                    } else {
-                        Text("Set from now using minutes, hours, days, weeks, months, or years.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
+                    )
                 } header: {
                     Text("Relative")
                 }
@@ -148,40 +126,10 @@ struct TaskRescheduleView: View {
         }
     }
 
-    private var hasPendingRelativeDueDate: Bool {
-        !relativeDueDateText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var parsedRelativeDueDateExpression: RelativeDueDateExpression? {
-        guard hasPendingRelativeDueDate else { return nil }
-        return try? RelativeDueDateExpression(relativeDueDateText)
-    }
-
-    private var relativeDueDateValidationMessage: String? {
-        guard hasPendingRelativeDueDate, parsedRelativeDueDateExpression == nil else {
-            return nil
-        }
-        return "Use a phrase such as “in 3 days” or “in 6 hours”."
-    }
-
     private var validationMessage: String? {
         TaskSchedule.civilDate(from: selectedDate) == nil
             ? "Choose a valid due date."
             : nil
-    }
-
-    private func applyRelativeDueDate() {
-        guard let expression = parsedRelativeDueDateExpression else { return }
-        do {
-            let resolved = try expression.resolve(calendar: TaskSchedule.calendar)
-            selectedDate = TaskSchedule.date(from: resolved.date, time: resolved.time)
-            includesTime = true
-            relativeDueDateText = ""
-            isRelativeDueDateFocused = false
-            saveError = nil
-        } catch {
-            saveError = error.localizedDescription
-        }
     }
 
     private func save() {

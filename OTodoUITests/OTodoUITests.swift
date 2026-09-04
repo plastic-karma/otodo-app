@@ -551,8 +551,14 @@ final class OTodoUITests: XCTestCase {
             description: "the relative due-date field"
         ) else { return }
         relativeField.tap()
-        relativeField.typeText("in 6 hours")
-
+        for character in "in 6 hours" {
+            relativeField.typeText(String(character))
+        }
+        XCTAssertEqual(
+            relativeField.value as? String,
+            "in 6 hours",
+            "Interactive typing should preserve every relative due-date character"
+        )
         let applyButton = app.buttons["task-editor-relative-due-apply"]
         guard require(
             applyButton,
