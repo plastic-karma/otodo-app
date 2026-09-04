@@ -124,9 +124,9 @@ struct SyncStatusView: View {
             return .orange
         }
         if model.isBusy || model.pendingChangeCount > 0 {
-            return .blue
+            return OTodoTheme.accent
         }
-        return .green
+        return OTodoTheme.mint
     }
 
     private func countText(_ count: Int, singular: String, plural: String) -> String {

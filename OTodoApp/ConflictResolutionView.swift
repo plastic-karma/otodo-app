@@ -39,8 +39,11 @@ struct ConflictResolutionView: View {
                 }
             }
             .accessibilityIdentifier("conflict-resolution-list")
+            .scrollContentBackground(.hidden)
+            .background(OTodoCanvas())
             .navigationTitle("Review Conflicts")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .interactiveDismissDisabled(isResolving)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

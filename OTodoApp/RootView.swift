@@ -16,6 +16,8 @@ struct RootView: View {
                 } description: {
                     Text("Set the GITHUB_CLIENT_ID build setting to the client ID of a GitHub OAuth app, then rebuild OTodo.")
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(OTodoCanvas())
             case .authentication:
                 AuthenticationView(model: model)
             case .onboarding:

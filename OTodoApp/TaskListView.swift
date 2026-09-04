@@ -15,127 +15,220 @@ struct TaskListView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .leading) {
+        let displayedTasks = visibleTasks
+        let today = currentDateKey
+
+        return ZStack(alignment: .leading) {
             NavigationStack {
-            List {
+                ZStack {
+                    OTodoCanvas()
 
-                Section {
-                    Picker("Todo visibility", selection: $visibility) {
-                        ForEach(TaskVisibility.allCases, id: \.self) { option in
-                            Text(option.rawValue).tag(option)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .accessibilityIdentifier("task-filter")
-                }
-
-                if let errorMessage = model.errorMessage, !errorMessage.isEmpty {
-                    Section {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
-                            .accessibilityLabel("Error. \(errorMessage)")
-                    }
-                }
-
-                Section {
-                    if model.isBusy && model.tasks.isEmpty {
-                        loadingRow
-                    } else if visibleTasks.isEmpty {
-                        emptyRow
-                    } else {
-                        ForEach(visibleTasks, id: \.id) { task in
-                            Button {
-                                editorPresentation = .edit(task)
-                            } label: {
-                                TaskRowView(
-                                    task: task,
-                                    workflowState: state(for: task.state)
+                    List {
+                        Section {
+                            workspaceHero(taskCount: displayedTasks.count)
+                                .listRowInsets(
+                                    EdgeInsets(top: 8, leading: 16, bottom: 6, trailing: 16)
                                 )
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityHint("Opens the todo editor")
-                            .accessibilityIdentifier("task-row-\(task.id.rawValue)")
-                            .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                                if state(for: task.state)?.isTerminal != true,
-                                   completionState != nil
-                                {
-                                    Button {
-                                        complete(task)
-                                    } label: {
-                                        Label("Done", systemImage: "checkmark")
-                                    }
-                                    .tint(.green)
-                                    .disabled(model.isBusy)
-                                    .accessibilityIdentifier("task-complete-\(task.id.rawValue)")
-                                }
-                            }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button(role: .destructive) {
-                                    Task { @MainActor in
-                                        await model.deleteTask(task)
-                                    }
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-                                .disabled(model.isBusy)
-                                .accessibilityIdentifier("task-delete-\(task.id.rawValue)")
-                            }
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
                         }
-                    }
-                } header: {
-                    Text("\(visibility.rawValue) Todos")
-                } footer: {
-                    SyncStatusView(model: model)
-                }
-            }
-            .accessibilityIdentifier("task-list")
-            .refreshable {
-                await model.refresh()
-            }
-            .navigationTitle(selectedProject.map(projectDisplayName) ?? "Todos")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Projects", systemImage: "line.3.horizontal") {
-                        isProjectSidebarPresented = true
-                    }
-                    .accessibilityHint("Shows project filters")
-                    .accessibilityIdentifier("project-sidebar-toggle")
-                }
 
-                ToolbarItem(placement: .primaryAction) {
-                    Button("Add Todo", systemImage: "plus") {
-                        guard model.configuration != nil else { return }
-                        editorPresentation = .create
-                    }
-                    .disabled(model.configuration == nil)
-                    .accessibilityIdentifier("task-add")
-                }
-            }
-            .sheet(item: $editorPresentation) { presentation in
-                if let configuration = model.configuration {
-                    TaskEditorView(
-                        draft: presentation.draft(configuration: configuration),
-                        configuration: configuration,
-                        projectChoices: model.projectChoices,
-                        tagChoices: model.tagChoices
-                    ) { value in
-                        switch presentation {
-                        case .create:
-                            await model.createTask(draft: value)
-                        case let .edit(task):
-                            await model.updateTask(id: task.id, draft: value)
+                        Section {
+                            Picker("Todo visibility", selection: $visibility) {
+                                ForEach(TaskVisibility.allCases, id: \.self) { option in
+                                    Text(option.rawValue).tag(option)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .padding(5)
+                            .background(
+                                .thinMaterial,
+                                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            )
+                            .accessibilityIdentifier("task-filter")
+                            .listRowInsets(
+                                EdgeInsets(top: 4, leading: 16, bottom: 8, trailing: 16)
+                            )
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
                         }
-                        return model.errorMessage
+
+                        if let errorMessage = model.errorMessage, !errorMessage.isEmpty {
+                            Section {
+                                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.red)
+                                    .padding(14)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(
+                                        Color.red.opacity(0.09),
+                                        in: RoundedRectangle(
+                                            cornerRadius: 16,
+                                            style: .continuous
+                                        )
+                                    )
+                                    .accessibilityLabel("Error. \(errorMessage)")
+                                    .listRowInsets(
+                                        EdgeInsets(
+                                            top: 4,
+                                            leading: 16,
+                                            bottom: 4,
+                                            trailing: 16
+                                        )
+                                    )
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
+                            }
+                        }
+
+                        Section {
+                            if model.isBusy && model.tasks.isEmpty {
+                                loadingRow
+                            } else if displayedTasks.isEmpty {
+                                emptyRow
+                            } else {
+                                ForEach(displayedTasks, id: \.id) { task in
+                                    Button {
+                                        editorPresentation = .edit(task)
+                                    } label: {
+                                        TaskRowView(
+                                            task: task,
+                                            workflowState: state(for: task.state),
+                                            today: today
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityHint("Opens the todo editor")
+                                    .accessibilityIdentifier(
+                                        "task-row-\(task.id.rawValue)"
+                                    )
+                                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                                        if state(for: task.state)?.isTerminal != true,
+                                           completionState != nil
+                                        {
+                                            Button {
+                                                complete(task)
+                                            } label: {
+                                                Label("Done", systemImage: "checkmark")
+                                            }
+                                            .tint(OTodoTheme.mint)
+                                            .disabled(model.isBusy)
+                                            .accessibilityIdentifier(
+                                                "task-complete-\(task.id.rawValue)"
+                                            )
+                                        }
+                                    }
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                        Button(role: .destructive) {
+                                            Task { @MainActor in
+                                                await model.deleteTask(task)
+                                            }
+                                        } label: {
+                                            Label("Delete", systemImage: "trash")
+                                        }
+                                        .disabled(model.isBusy)
+                                        .accessibilityIdentifier(
+                                            "task-delete-\(task.id.rawValue)"
+                                        )
+                                    }
+                                    .listRowInsets(
+                                        EdgeInsets(
+                                            top: 5,
+                                            leading: 16,
+                                            bottom: 5,
+                                            trailing: 16
+                                        )
+                                    )
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
+                                }
+                            }
+
+                            SyncStatusView(model: model)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(
+                                    .thinMaterial,
+                                    in: RoundedRectangle(
+                                        cornerRadius: 14,
+                                        style: .continuous
+                                    )
+                                )
+                                .listRowInsets(
+                                    EdgeInsets(
+                                        top: 12,
+                                        leading: 16,
+                                        bottom: 6,
+                                        trailing: 16
+                                    )
+                                )
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                        } header: {
+                            taskSectionHeader(count: displayedTasks.count)
+                        }
+                        .listSectionSeparator(.hidden)
                     }
-                    .presentationDetents([.large])
-                } else {
-                    ContentUnavailableView(
-                        "Todo configuration unavailable",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text("Close the editor and refresh the workspace.")
-                    )
+                    .listStyle(.plain)
+                    .listSectionSpacing(10)
+                    .scrollContentBackground(.hidden)
+                    .contentMargins(.top, 2, for: .scrollContent)
+                    .safeAreaInset(edge: .bottom) {
+                        Color.clear
+                            .frame(height: 72)
+                            .accessibilityHidden(true)
+                    }
+                    .accessibilityIdentifier("task-list")
+                    .refreshable {
+                        await model.refresh()
+                    }
+                    .overlay(alignment: .bottomTrailing) {
+                        addTodoButton
+                            .padding(.trailing, 20)
+                            .padding(.bottom, 18)
+                    }
                 }
-            }
+                .navigationTitle(selectedProject.map(projectDisplayName) ?? "Todos")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbarBackground(.hidden, for: .navigationBar)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            isProjectSidebarPresented = true
+                        } label: {
+                            Image(systemName: "line.3.horizontal")
+                                .font(.body.weight(.semibold))
+                        }
+                        .accessibilityLabel("Projects")
+                        .accessibilityHint("Shows project filters")
+                        .accessibilityIdentifier("project-sidebar-toggle")
+                    }
+                }
+                .sheet(item: $editorPresentation) { presentation in
+                    if let configuration = model.configuration {
+                        TaskEditorView(
+                            draft: presentation.draft(configuration: configuration),
+                            configuration: configuration,
+                            projectChoices: model.projectChoices,
+                            tagChoices: model.tagChoices
+                        ) { value in
+                            switch presentation {
+                            case .create:
+                                await model.createTask(draft: value)
+                            case let .edit(task):
+                                await model.updateTask(id: task.id, draft: value)
+                            }
+                            return model.errorMessage
+                        }
+                        .presentationDetents([.large])
+                    } else {
+                        ContentUnavailableView(
+                            "Todo configuration unavailable",
+                            systemImage: "exclamationmark.triangle",
+                            description: Text("Close the editor and refresh the workspace.")
+                        )
+                    }
+                }
             }
             .allowsHitTesting(!isProjectSidebarPresented)
             .accessibilityHidden(isProjectSidebarPresented)
@@ -149,7 +242,7 @@ struct TaskListView: View {
                 Button {
                     dismissProjectSidebar()
                 } label: {
-                    Color.black.opacity(0.24)
+                    Color.black.opacity(0.32)
                         .ignoresSafeArea()
                 }
                 .buttonStyle(.plain)
@@ -184,41 +277,178 @@ struct TaskListView: View {
         }
     }
 
-    private var projectSidebar: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Projects")
-                        .font(.title2.bold())
-                    Text("Choose what to focus on")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+    private func workspaceHero(taskCount: Int) -> some View {
+        ZStack(alignment: .topTrailing) {
+            OTodoTheme.heroGradient
+
+            Image(systemName: heroSymbol)
+                .font(.system(size: 104, weight: .bold))
+                .foregroundStyle(.white.opacity(0.10))
+                .offset(x: 24, y: -22)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Label(heroEyebrow, systemImage: heroSymbol)
+                        .font(.caption.weight(.bold))
+                        .tracking(0.8)
+
+                    Spacer()
+
+                    Text("\(taskCount) \(taskCount == 1 ? "todo" : "todos")")
+                        .font(.caption.weight(.semibold))
+                        .monospacedDigit()
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.white.opacity(0.16), in: Capsule())
                 }
 
-                Spacer()
+                Text(heroTitle)
+                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
 
-                Button("Close", systemImage: "xmark.circle.fill") {
+                Text(heroSubtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.82))
+            }
+            .foregroundStyle(.white)
+            .padding(22)
+            .frame(maxWidth: .infinity, minHeight: 168, alignment: .bottomLeading)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .shadow(color: OTodoTheme.accent.opacity(0.22), radius: 18, y: 10)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("workspace-hero")
+    }
+
+    private func taskSectionHeader(count: Int) -> some View {
+        HStack {
+            Text(visibility == .today ? "Your focus" : "\(visibility.rawValue) todos")
+                .font(.headline)
+                .foregroundStyle(.primary)
+
+            Spacer()
+
+            Text("\(count)")
+                .font(.caption.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(OTodoTheme.accent)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(OTodoTheme.accent.opacity(0.10), in: Capsule())
+        }
+        .padding(.horizontal, 4)
+        .textCase(nil)
+    }
+
+    private var addTodoButton: some View {
+        Button {
+            guard model.configuration != nil else { return }
+            editorPresentation = .create
+        } label: {
+            Image(systemName: "plus")
+                .font(.title2.bold())
+                .foregroundStyle(.white)
+                .frame(width: 58, height: 58)
+                .background(OTodoTheme.heroGradient, in: Circle())
+                .shadow(color: OTodoTheme.accent.opacity(0.34), radius: 12, y: 7)
+        }
+        .disabled(model.configuration == nil)
+        .opacity(model.configuration == nil ? 0.45 : 1)
+        .accessibilityLabel("Add Todo")
+        .accessibilityIdentifier("task-add")
+    }
+
+    private var heroTitle: String {
+        if let selectedProject {
+            return projectDisplayName(selectedProject)
+        }
+        switch visibility {
+        case .today:
+            return "Today"
+        case .active:
+            return "In Motion"
+        case .all:
+            return "All Todos"
+        }
+    }
+
+    private var heroEyebrow: String {
+        selectedProject == nil ? "YOUR FOCUS" : "PROJECT"
+    }
+
+    private var heroSymbol: String {
+        if selectedProject != nil {
+            return "folder.fill"
+        }
+        switch visibility {
+        case .today:
+            return "sun.max.fill"
+        case .active:
+            return "bolt.fill"
+        case .all:
+            return "tray.full.fill"
+        }
+    }
+
+    private var heroSubtitle: String {
+        if selectedProject != nil {
+            return "\(visibility.rawValue) view · clear the next meaningful step"
+        }
+        switch visibility {
+        case .today:
+            return Date.now.formatted(
+                .dateTime.weekday(.wide).month(.wide).day()
+            )
+        case .active:
+            return "Everything still in motion"
+        case .all:
+            return "The complete picture, finished work included"
+        }
+    }
+
+    private var projectSidebar: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 14) {
+                Image(systemName: "square.grid.2x2.fill")
+                    .font(.title3.bold())
+                    .frame(width: 44, height: 44)
+                    .background(.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 13))
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Projects")
+                        .font(.title2.bold())
+                    Text("Choose what deserves your focus")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.78))
+                }
+
+                Spacer(minLength: 8)
+
+                Button("Close", systemImage: "xmark") {
                     dismissProjectSidebar()
                 }
                 .labelStyle(.iconOnly)
-                .font(.title3)
-                .foregroundStyle(.secondary)
+                .font(.body.bold())
+                .foregroundStyle(.white)
+                .frame(width: 36, height: 36)
+                .background(.white.opacity(0.14), in: Circle())
                 .accessibilityIdentifier("project-sidebar-close")
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 18)
-
-            Divider()
+            .foregroundStyle(.white)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 22)
+            .background(OTodoTheme.heroGradient)
 
             ScrollView {
-                LazyVStack(spacing: 6) {
+                LazyVStack(spacing: 8) {
                     projectFilterButton(nil)
 
                     ForEach(model.projectChoices, id: \.self) { project in
                         projectFilterButton(project)
                     }
                 }
-                .padding(12)
+                .padding(14)
             }
 
             Divider()
@@ -228,14 +458,15 @@ struct TaskListView: View {
                 isProjectEditorPresented = true
             } label: {
                 Label("New Project", systemImage: "folder.badge.plus")
+                    .font(.body.weight(.semibold))
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.large)
             .disabled(model.configuration == nil || model.isBusy)
             .accessibilityIdentifier("project-add")
-            .padding(20)
-
-            Divider()
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
 
             Button {
                 dismissProjectSidebar()
@@ -244,18 +475,21 @@ struct TaskListView: View {
                 }
             } label: {
                 Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+                    .font(.subheadline)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
             .disabled(model.isBusy)
             .accessibilityIdentifier("sign-out")
-            .padding(20)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
         }
-        .frame(width: 300)
+        .frame(width: 316)
         .frame(maxHeight: .infinity)
-        .background(.regularMaterial)
-        .shadow(color: .black.opacity(0.18), radius: 20, x: 8)
+        .background(OTodoTheme.card)
+        .shadow(color: .black.opacity(0.24), radius: 24, x: 10)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("project-sidebar")
         .accessibilityAction(.escape) {
@@ -267,42 +501,71 @@ struct TaskListView: View {
         let isSelected = selectedProject == project
         let title = project.map(projectDisplayName) ?? "All Todos"
         let count = project.map(taskCount(for:)) ?? model.tasks.count
+        let color = projectColor(project)
 
         return Button {
             selectedProject = project
             dismissProjectSidebar()
         } label: {
             HStack(spacing: 12) {
-                Image(systemName: project == nil ? "tray.full" : "folder")
-                    .frame(width: 22)
-                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                Image(systemName: project == nil ? "tray.full.fill" : "folder.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(color)
+                    .frame(width: 38, height: 38)
+                    .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
 
                 Text(title)
                     .font(.body.weight(isSelected ? .semibold : .regular))
+                    .foregroundStyle(.primary)
 
-                Spacer()
+                Spacer(minLength: 8)
 
                 Text("\(count)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .font(.caption.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(isSelected ? OTodoTheme.accent : .secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.primary.opacity(0.055), in: Capsule())
 
-                Image(systemName: "checkmark")
-                    .font(.caption.bold())
-                    .foregroundStyle(.tint)
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.body)
+                    .foregroundStyle(OTodoTheme.accent)
                     .opacity(isSelected ? 1 : 0)
             }
-            .padding(.horizontal, 12)
-            .frame(minHeight: 46)
+            .padding(.horizontal, 11)
+            .frame(minHeight: 58)
             .contentShape(Rectangle())
             .background(
-                isSelected ? Color.accentColor.opacity(0.13) : Color.clear,
-                in: RoundedRectangle(cornerRadius: 12)
+                isSelected ? OTodoTheme.accent.opacity(0.11) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 15, style: .continuous)
             )
+            .overlay {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 15, style: .continuous)
+                        .strokeBorder(OTodoTheme.accent.opacity(0.15))
+                }
+            }
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(title), \(count) todos")
         .accessibilityValue(isSelected ? "Selected" : "Not selected")
         .accessibilityIdentifier(project.map { "project-filter-\($0)" } ?? "project-filter-all")
+    }
+
+    private func projectColor(_ project: String?) -> Color {
+        guard let project else { return OTodoTheme.accent }
+        let paletteIndex = project.utf8.reduce(0) { ($0 + Int($1)) % 4 }
+        switch paletteIndex {
+        case 0:
+            return OTodoTheme.violet
+        case 1:
+            return OTodoTheme.coral
+        case 2:
+            return OTodoTheme.gold
+        default:
+            return OTodoTheme.mint
+        }
     }
 
     private func taskCount(for project: String) -> Int {
@@ -318,31 +581,61 @@ struct TaskListView: View {
     }
 
     private var loadingRow: some View {
-        HStack {
-            Spacer()
-            ProgressView("Loading todos")
-            Spacer()
+        HStack(spacing: 12) {
+            ProgressView()
+                .tint(OTodoTheme.accent)
+            Text("Gathering your todos…")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 32)
+        .padding(24)
+        .frame(maxWidth: .infinity)
+        .background(
+            OTodoTheme.raisedCard,
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
+        .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
+        .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
     }
 
     private var emptyRow: some View {
-        ContentUnavailableView {
-            Label(
-                "No \(visibility.rawValue) Todos",
-                systemImage: visibility == .all ? "checklist" : "checkmark.circle"
-            )
-        } description: {
+        VStack(spacing: 14) {
+            Image(systemName: visibility == .all ? "checklist" : "checkmark")
+                .font(.title2.bold())
+                .foregroundStyle(.white)
+                .frame(width: 52, height: 52)
+                .background(OTodoTheme.heroGradient, in: Circle())
+                .shadow(color: OTodoTheme.accent.opacity(0.2), radius: 9, y: 5)
+
+            Text("No \(visibility.rawValue) Todos")
+                .font(.title3.bold())
+
             Text(emptyDescription)
-        } actions: {
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
             if model.configuration != nil {
-                Button("Add Todo") {
+                Button("Add a Todo") {
                     editorPresentation = .create
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
             }
         }
-        .padding(.vertical, 24)
+        .padding(28)
+        .frame(maxWidth: .infinity)
+        .background(
+            OTodoTheme.raisedCard,
+            in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.045))
+        }
+        .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
+        .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
     }
 

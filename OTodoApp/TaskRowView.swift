@@ -1,55 +1,130 @@
+import Foundation
 import OTodoCore
 import SwiftUI
 
 struct TaskRowView: View {
     let task: TodoTask
     let workflowState: WorkflowState?
+    let today: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(task.name)
-                .font(.headline)
-                .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(alignment: .top, spacing: 14) {
+            statusMark
+                .padding(.top, 2)
 
-            HStack(spacing: 8) {
-                Label(workflowState?.name ?? task.state, systemImage: stateSymbol)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(task.name)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .strikethrough(workflowState?.isTerminal == true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                if workflowState?.isTerminal == true {
-                    Text("Terminal")
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.secondary.opacity(0.14), in: Capsule())
+                    Text(workflowState?.name ?? task.state)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(stateColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(stateColor.opacity(0.11), in: Capsule())
                 }
 
-                if let dueDate = task.dueDate {
-                    Label(dueDate.rawValue, systemImage: "calendar")
+                if let duePresentation {
+                    Label(duePresentation.label, systemImage: "calendar")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(duePresentation.color)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(duePresentation.color.opacity(0.11), in: Capsule())
                 }
-            }
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
 
-            if !task.projectSlugs.isEmpty || !task.tags.isEmpty {
-                Text(metadataDescription)
+                if !task.projectSlugs.isEmpty || !task.tags.isEmpty {
+                    HStack(spacing: 12) {
+                        if !task.projectSlugs.isEmpty {
+                            Label(projectDescription, systemImage: "folder.fill")
+                        }
+                        if !task.tags.isEmpty {
+                            Label(tagDescription, systemImage: "tag.fill")
+                        }
+                    }
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(1)
+                }
             }
         }
-        .padding(.vertical, 4)
+        .padding(16)
+        .background(
+            OTodoTheme.raisedCard,
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.045))
+        }
+        .shadow(color: .black.opacity(0.055), radius: 10, y: 4)
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
     }
 
-    private var stateSymbol: String {
-        workflowState?.isTerminal == true ? "checkmark.circle" : "circle.dotted"
+    private var statusMark: some View {
+        ZStack {
+            Circle()
+                .fill(
+                    workflowState?.isTerminal == true
+                        ? OTodoTheme.mint
+                        : stateColor.opacity(0.10)
+                )
+            Circle()
+                .strokeBorder(stateColor, lineWidth: 2)
+
+            if workflowState?.isTerminal == true {
+                Image(systemName: "checkmark")
+                    .font(.caption2.bold())
+                    .foregroundStyle(.white)
+            }
+        }
+        .frame(width: 24, height: 24)
+        .accessibilityHidden(true)
     }
 
-    private var metadataDescription: String {
-        let projects = task.projectSlugs.map { "Project: \($0)" }
-        let tags = task.tags.map { "#\($0)" }
-        return (projects + tags).joined(separator: "  ")
+    private var stateColor: Color {
+        workflowState?.isTerminal == true ? OTodoTheme.mint : OTodoTheme.accent
+    }
+
+    private var duePresentation: (label: String, color: Color)? {
+        guard let dueDate = task.dueDate else { return nil }
+        let formatted = formattedDate(dueDate.rawValue)
+        if dueDate.rawValue < today {
+            return ("Overdue · \(formatted)", .red)
+        }
+        if dueDate.rawValue == today {
+            return ("Today", OTodoTheme.coral)
+        }
+        return (formatted, OTodoTheme.accent)
+    }
+
+    private var projectDescription: String {
+        task.projectSlugs
+            .map { $0.replacingOccurrences(of: "-", with: " ").capitalized }
+            .joined(separator: ", ")
+    }
+
+    private var tagDescription: String {
+        task.tags.map { "#\($0)" }.joined(separator: ", ")
+    }
+
+    private func formattedDate(_ value: String) -> String {
+        let parts = value.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return value }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        guard let date = calendar.date(
+            from: DateComponents(year: parts[0], month: parts[1], day: parts[2])
+        ) else {
+            return value
+        }
+        return date.formatted(.dateTime.month(.abbreviated).day())
     }
 
     private var accessibilityDescription: String {

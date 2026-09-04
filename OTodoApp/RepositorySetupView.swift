@@ -52,7 +52,11 @@ struct RepositorySetupView: View {
                     connectSection
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(OTodoCanvas())
             .navigationTitle("Choose Todo Store")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .refreshable {
                 await model.loadRepositories()
             }
@@ -158,6 +162,9 @@ struct RepositorySetupView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .listRowBackground(
+            isSelected ? OTodoTheme.accent.opacity(0.10) : OTodoTheme.raisedCard
+        )
         .disabled(model.isBusy)
         .accessibilityLabel("\(repository.owner) slash \(repository.name), \(repository.isPrivate ? "Private" : "Public") repository")
         .accessibilityValue(isSelected ? "Selected" : "Not selected")
@@ -262,6 +269,9 @@ struct RepositorySetupView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .listRowBackground(
+            isSelected ? OTodoTheme.accent.opacity(0.10) : OTodoTheme.raisedCard
+        )
         .disabled(model.isBusy)
         .accessibilityLabel("Todo store at \(title)")
         .accessibilityValue(isSelected ? "Selected" : "Not selected")

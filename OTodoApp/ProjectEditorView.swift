@@ -50,8 +50,11 @@ struct ProjectEditorView: View {
                 }
             }
             .accessibilityIdentifier("project-editor")
+            .scrollContentBackground(.hidden)
+            .background(OTodoCanvas())
             .navigationTitle("New Project")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .interactiveDismissDisabled(isSaving)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

@@ -9,6 +9,7 @@ struct OTodoApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(model: model)
+                .tint(OTodoTheme.accent)
                 .task {
                     await model.start()
                 }

@@ -183,8 +183,11 @@ struct TaskEditorView: View {
                 }
             }
             .accessibilityIdentifier("task-editor")
+            .scrollContentBackground(.hidden)
+            .background(OTodoCanvas())
             .navigationTitle(draft.preservedTask == nil ? "New Todo" : "Edit Todo")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .interactiveDismissDisabled(isSaving)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

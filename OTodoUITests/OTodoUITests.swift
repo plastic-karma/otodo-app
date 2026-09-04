@@ -75,6 +75,12 @@ final class OTodoUITests: XCTestCase {
         let pendingStatus = app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS[c] %@", "waiting to sync")
         ).firstMatch
+        for _ in 0..<3 {
+            if pendingStatus.exists {
+                break
+            }
+            taskList.swipeUp()
+        }
         guard require(
             pendingStatus,
             in: app,
@@ -609,6 +615,44 @@ final class OTodoUITests: XCTestCase {
             taskRow(named: "Overdue todo", state: "Pending", in: app).exists,
             "The deleted todo should remain absent after relaunch"
         )
+    }
+
+    @MainActor
+    func testWorkspaceVisualDesign() {
+        continueAfterFailure = false
+
+        let app = XCUIApplication()
+        app.launchArguments.append(contentsOf: ["-ui-testing", "-ui-testing-reset-workspace"])
+        app.launch()
+
+        let hero = app.descendants(matching: .any)
+            .matching(identifier: "workspace-hero")
+            .firstMatch
+        guard require(
+            hero,
+            in: app,
+            description: "the workspace focus card"
+        ) else { return }
+        guard require(
+            app.segmentedControls["task-filter"],
+            in: app,
+            description: "the styled visibility control"
+        ) else { return }
+        guard require(
+            app.buttons["task-add"],
+            in: app,
+            description: "the floating Add Todo button"
+        ) else { return }
+        guard require(
+            taskRow(named: "Seed todo", state: "Pending", in: app),
+            in: app,
+            description: "a styled todo card"
+        ) else { return }
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "OTodo workspace redesign"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     @MainActor

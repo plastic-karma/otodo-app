@@ -4,6 +4,12 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      export_ui_snapshots:
+        description: Export UI test screenshot attachments
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -164,6 +170,25 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/xcode-results/test.xcresult" \
             CODE_SIGNING_ALLOWED=NO \
             GITHUB_CLIENT_ID="$GH_OAUTH_CLIENT_ID"
+
+      - name: Export UI snapshots
+        if: ${{ success() && inputs.export_ui_snapshots }}
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/ui-snapshots"
+          mkdir -p "$output"
+          xcrun xcresulttool export attachments \
+            --path "$RUNNER_TEMP/xcode-results/test.xcresult" \
+            --output-path "$output"
+
+      - name: Upload UI snapshots
+        if: ${{ success() && inputs.export_ui_snapshots }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ui-snapshots
+          path: ${{ runner.temp }}/ui-snapshots
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Retain failed Xcode result bundles
         if: ${{ failure() }}

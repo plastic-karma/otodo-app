@@ -12,52 +12,65 @@ struct AuthenticationView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    header
+            ZStack {
+                OTodoCanvas()
 
-                    if let deviceCode = model.deviceCode {
-                        authorizationCard(for: deviceCode)
-                    } else {
-                        startCard
-                    }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        header
 
-                    if let errorMessage = model.errorMessage {
-                        Label {
-                            Text(errorMessage)
-                        } icon: {
-                            Image(systemName: "exclamationmark.triangle.fill")
+                        if let deviceCode = model.deviceCode {
+                            authorizationCard(for: deviceCode)
+                        } else {
+                            startCard
                         }
-                        .foregroundStyle(.red)
-                        .accessibilityIdentifier("authentication.error")
-                    }
 
-                    if model.isBusy, let statusMessage = model.statusMessage {
-                        ProgressView(statusMessage)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .accessibilityIdentifier("authentication.progress")
+                        if let errorMessage = model.errorMessage {
+                            Label {
+                                Text(errorMessage)
+                            } icon: {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                            }
+                            .foregroundStyle(.red)
+                            .accessibilityIdentifier("authentication.error")
+                        }
+
+                        if model.isBusy, let statusMessage = model.statusMessage {
+                            ProgressView(statusMessage)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .accessibilityIdentifier("authentication.progress")
+                        }
                     }
+                    .frame(maxWidth: 560, alignment: .leading)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 30)
+                    .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: 560, alignment: .leading)
-                .padding()
-                .frame(maxWidth: .infinity)
             }
-            .navigationTitle("Sign in to GitHub")
+            .navigationTitle("Welcome")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
         }
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Image(systemName: "checklist")
-                .font(.largeTitle)
-                .foregroundStyle(.tint)
+        HStack(alignment: .center, spacing: 16) {
+            Image(systemName: "checkmark")
+                .font(.title.bold())
+                .foregroundStyle(.white)
+                .frame(width: 64, height: 64)
+                .background(OTodoTheme.heroGradient, in: RoundedRectangle(cornerRadius: 20))
+                .shadow(color: OTodoTheme.accent.opacity(0.25), radius: 12, y: 7)
                 .accessibilityHidden(true)
 
-            Text("Connect OTodo")
-                .font(.title.bold())
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Meet OTodo")
+                    .font(.system(.title, design: .rounded, weight: .bold))
 
-            Text("Authorize this device to access your GitHub repositories. OTodo never asks for a personal access token or your GitHub password.")
-                .foregroundStyle(.secondary)
+                Text("A calm place for the work that matters.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -92,8 +105,16 @@ struct AuthenticationView: View {
                 .accessibilityIdentifier("authentication.start")
             }
         }
-        .padding()
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .padding(20)
+        .background(
+            OTodoTheme.raisedCard,
+            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.045))
+        }
+        .shadow(color: .black.opacity(0.06), radius: 12, y: 5)
     }
 
     private func authorizationCard(for deviceCode: OAuthDeviceCode) -> some View {
@@ -164,8 +185,16 @@ struct AuthenticationView: View {
                 .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("authentication.cancel")
             }
-            .padding()
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+            .padding(20)
+            .background(
+                OTodoTheme.raisedCard,
+                in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.045))
+            }
+            .shadow(color: .black.opacity(0.06), radius: 12, y: 5)
         }
     }
 
