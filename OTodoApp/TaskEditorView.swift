@@ -62,6 +62,7 @@ struct TaskEditorView: View {
     @State private var hasDueTime: Bool
     @State private var dueDate: Date
     @State private var relativeDueDateText: String
+    @State private var detectedDueDatePhrase: DetectedDueDatePhrase?
     @State private var isSaving = false
     @State private var saveError: String?
 
@@ -83,15 +84,33 @@ struct TaskEditorView: View {
         _hasDueTime = State(initialValue: draft.dueTime != nil)
         _dueDate = State(initialValue: TaskSchedule.date(from: draft.dueDate, time: draft.dueTime))
         _relativeDueDateText = State(initialValue: "")
+        _detectedDueDatePhrase = State(
+            initialValue: Self.detectDueDatePhrase(in: draft.name)
+        )
     }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Todo") {
-                    TextField("Name", text: $draft.name)
-                        .textInputAutocapitalization(.sentences)
-                        .accessibilityIdentifier("task-editor-name")
+                    HighlightedTaskNameField(
+                        text: $draft.name,
+                        highlightRange: detectedDueDatePhrase?.utf16Range,
+                        accessibilityIdentifier: "task-editor-name"
+                    )
+                    .onChange(of: draft.name) { _, name in
+                        detectedDueDatePhrase = Self.detectDueDatePhrase(in: name)
+                    }
+
+                    if let detectedDueDatePhrase {
+                        let explanation = "Due \(detectedDueDatePhrase.dueDate.rawValue) · “\(detectedDueDatePhrase.phrase)” will be removed when saved"
+                        Label(explanation, systemImage: "calendar.badge.checkmark")
+                            .font(.footnote)
+                            .foregroundStyle(OTodoTheme.accent)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(explanation)
+                            .accessibilityIdentifier("task-editor-detected-due-date")
+                    }
 
                     Picker("State", selection: $draft.state) {
                         ForEach(configuration.states, id: \.id) { state in
@@ -361,8 +380,11 @@ struct TaskEditorView: View {
     }
 
     private var validationMessage: String? {
-        if draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "A name is required."
+        let savedName = detectedDueDatePhrase?.nameWithoutPhrase ?? draft.name
+        if savedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return detectedDueDatePhrase == nil
+                ? "A name is required."
+                : "Add a name besides the due date."
         }
         if draft.name.contains("\n") || draft.name.contains("\r") {
             return "The name must be a single line."
@@ -394,7 +416,10 @@ struct TaskEditorView: View {
         if hasDueDate, selectedDueDate == nil {
             return "Choose a valid due date."
         }
-        if draft.preservedTask?.recurrence != nil, !hasDueDate {
+        if draft.preservedTask?.recurrence != nil,
+           !hasDueDate,
+           detectedDueDatePhrase == nil
+        {
             return "Recurring todos require a due date."
         }
         return nil
@@ -404,9 +429,10 @@ struct TaskEditorView: View {
         guard validationMessage == nil, !hasPendingRelativeDueDate else { return }
 
         var value = draft
+        value.name = detectedDueDatePhrase?.nameWithoutPhrase ?? draft.name
         value.projectSlugs = TaskEditorDraft.parseCommaSeparated(projectsText)
         value.tags = TaskEditorDraft.parseCommaSeparated(tagsText)
-        value.dueDate = selectedDueDate
+        value.dueDate = detectedDueDatePhrase?.dueDate ?? selectedDueDate
         value.dueTime = selectedDueTime
         isSaving = true
         saveError = nil
@@ -433,6 +459,9 @@ struct TaskEditorView: View {
     }
 
     private var dueDateHelpText: String {
+        if let detectedDueDatePhrase {
+            return "The highlighted phrase sets \(detectedDueDatePhrase.dueDate.rawValue) when saved."
+        }
         guard hasDueDate else {
             return "This todo has no due date."
         }
@@ -440,6 +469,13 @@ struct TaskEditorView: View {
             return "Choose the calendar date and exact due time."
         }
         return "Choose a calendar date. Date-only reminders arrive at 9:00 AM."
+    }
+
+    private static func detectDueDatePhrase(in name: String) -> DetectedDueDatePhrase? {
+        try? DueDatePhraseDetector.detect(
+            in: name,
+            calendar: TaskSchedule.calendar
+        )
     }
 
     private static func isValidProjectSlug(_ value: String) -> Bool {

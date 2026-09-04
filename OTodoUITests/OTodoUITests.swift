@@ -171,6 +171,113 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testNameDueDateIsHighlightedStrippedAndPersisted() {
+        continueAfterFailure = false
+
+        let app = XCUIApplication()
+        app.launchArguments.append(contentsOf: ["-ui-testing", "-ui-testing-reset-workspace"])
+        app.launch()
+
+        guard selectFilter("Active", in: app) else { return }
+
+        let taskList = app.descendants(matching: .any)
+            .matching(identifier: "task-list")
+            .firstMatch
+        guard require(
+            taskList,
+            in: app,
+            description: "the seeded task list"
+        ) else { return }
+
+        let addButton = app.buttons["task-add"]
+        guard require(
+            addButton,
+            in: app,
+            description: "the Add Todo button"
+        ) else { return }
+        addButton.tap()
+
+        let editor = app.descendants(matching: .any)
+            .matching(identifier: "task-editor")
+            .firstMatch
+        guard require(
+            editor,
+            in: app,
+            description: "the new todo editor"
+        ) else { return }
+
+        let nameField = app.textFields["task-editor-name"]
+        guard require(
+            nameField,
+            in: app,
+            description: "the highlighted todo name field"
+        ) else { return }
+        nameField.tap()
+        nameField.typeText("Call mum tomorrow")
+
+        let detection = app.descendants(matching: .any)
+            .matching(identifier: "task-editor-detected-due-date")
+            .firstMatch
+        guard require(
+            detection,
+            in: app,
+            description: "the detected due-date explanation"
+        ) else { return }
+        XCTAssertTrue(
+            detection.label.localizedCaseInsensitiveContains("tomorrow"),
+            "The detected phrase should remain identifiable while editing"
+        )
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Detected due date in todo name"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        let saveButton = app.buttons["task-editor-save"]
+        guard require(
+            saveButton,
+            in: app,
+            description: "the editor Save button"
+        ) else { return }
+        XCTAssertTrue(saveButton.isEnabled, "A name plus detected due date should be valid")
+        saveButton.tap()
+        guard requireEditorDismissed(
+            editor,
+            after: "creating a todo with a due date in its name",
+            in: app
+        ) else { return }
+
+        guard let savedTask = requireTaskRow(
+            named: "Call mum",
+            state: "Pending",
+            in: app,
+            taskList: taskList,
+            description: "the todo with its detected due date"
+        ) else { return }
+        XCTAssertTrue(
+            savedTask.label.contains("Due:"),
+            "The detected phrase should become a persisted due date"
+        )
+        XCTAssertFalse(
+            savedTask.label.localizedCaseInsensitiveContains("tomorrow"),
+            "The detected phrase should be stripped from the saved name"
+        )
+
+        savedTask.tap()
+        guard require(
+            editor,
+            in: app,
+            description: "the editor for the detected-date todo"
+        ) else { return }
+        XCTAssertEqual(
+            nameField.value as? String,
+            "Call mum",
+            "Reopening the todo should load the stripped name"
+        )
+        app.buttons["Cancel"].tap()
+    }
+
+    @MainActor
     func testDueDateAndTimeControlsPersistExactTime() {
         continueAfterFailure = false
 
