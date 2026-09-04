@@ -199,6 +199,7 @@ jobs:
             -authenticationKeyIssuerID "$ISSUER_ID" \
             CODE_SIGN_STYLE=Automatic \
             DEVELOPMENT_TEAM=9492A97LWY \
+            REGISTER_APP_GROUPS=YES \
             "GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID" \
             "${version_settings[@]}" 2>&1 | tee "$log"
           status="${PIPESTATUS[0]}"
@@ -206,7 +207,7 @@ jobs:
 
           if [ "$status" -ne 0 ]; then
             if grep -qiE "cloud signing|no profiles for|provisioning profile|maximum number of certificates" "$log"; then
-              echo "::error::Cloud signing failed. Confirm the App Store Connect API key has the Admin role, belongs to team 9492A97LWY, and can provision bundle ID plastickarma.otodo."
+              echo "::error::Cloud signing failed. Confirm the Admin App Store Connect API key belongs to team 9492A97LWY and can provision plastickarma.otodo plus plastickarma.otodo.widget with App Group group.plastickarma.otodo."
             else
               echo "::error::Release archive failed; see the xcodebuild output above."
             fi
@@ -230,6 +231,26 @@ jobs:
           fi
           if [ -n "$MARKETING_VERSION" ] && [ "$archived_version" != "$MARKETING_VERSION" ]; then
             echo "::error::Archived marketing version '$archived_version' does not match requested version '$MARKETING_VERSION'."
+            exit 1
+          fi
+
+          widget_info="$ARCHIVE_PATH/Products/Applications/OTodo.app/PlugIns/OTodoWidget.appex/Info.plist"
+          if [ ! -f "$widget_info" ]; then
+            echo "::error::Archive is missing the embedded OTodo Today widget."
+            exit 1
+          fi
+          archived_app_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_info")"
+          archived_widget_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$widget_info")"
+          archived_widget_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$widget_info")"
+          archived_widget_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$widget_info")"
+          if [ "$archived_app_identifier" != "plastickarma.otodo" ] \
+            || [ "$archived_widget_identifier" != "plastickarma.otodo.widget" ]; then
+            echo "::error::Archive contains an unexpected application or widget bundle identifier."
+            exit 1
+          fi
+          if [ "$archived_widget_build" != "$archived_build" ] \
+            || [ "$archived_widget_version" != "$archived_version" ]; then
+            echo "::error::Embedded widget version $archived_widget_version ($archived_widget_build) does not match the application."
             exit 1
           fi
           echo "ARCHIVED_MARKETING_VERSION=$archived_version" >> "$GITHUB_ENV"
@@ -276,7 +297,7 @@ jobs:
             if grep -qi "Cloud signing permission error" "$log"; then
               echo "::error::Export failed with a cloud-signing permission error. The App Store Connect API key must have the Admin role so Xcode can create an Apple Distribution certificate."
             elif grep -qiE "cloud signing|no profiles for|provisioning profile" "$log"; then
-              echo "::error::Cloud signing failed during export. Confirm the Admin API key and team 9492A97LWY can provision plastickarma.otodo for App Store distribution."
+              echo "::error::Cloud signing failed during export. Confirm team 9492A97LWY can provision plastickarma.otodo plus plastickarma.otodo.widget with App Group group.plastickarma.otodo for App Store distribution."
             else
               echo "::error::IPA export failed with both 'app-store-connect' and legacy 'app-store' methods; see the xcodebuild output above."
             fi

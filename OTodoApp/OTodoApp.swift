@@ -16,27 +16,26 @@ struct OTodoApp: App {
                 .tint(OTodoTheme.accent)
                 .task {
                     await model.start()
-                    await synchronizeNotifications()
+                    await synchronizeSystemSurfaces()
                 }
                 .onChange(of: scenePhase) { _, phase in
                     guard phase == .active else { return }
                     Task { @MainActor in
                         await model.sceneDidBecomeActive()
-                        await synchronizeNotifications()
+                        await synchronizeSystemSurfaces()
                     }
                 }
                 .onChange(of: model.tasks) { _, _ in
                     Task { @MainActor in
-                        await synchronizeNotifications()
+                        await synchronizeSystemSurfaces()
                     }
                 }
         }
     }
 
-    private func synchronizeNotifications() async {
-        await notifications.synchronize(
-            tasks: model.tasks,
-            states: model.configuration?.states ?? []
-        )
+    private func synchronizeSystemSurfaces() async {
+        let states = model.configuration?.states ?? []
+        TodayWidgetCoordinator.synchronize(tasks: model.tasks, states: states)
+        await notifications.synchronize(tasks: model.tasks, states: states)
     }
 }

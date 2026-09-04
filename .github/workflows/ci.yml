@@ -121,6 +121,34 @@ jobs:
 
           if not isinstance(info.get("UILaunchScreen"), dict):
               raise SystemExit("UILaunchScreen must be a dictionary")
+
+          with open("OTodoWidget/Info.plist", "rb") as source:
+              widget_info = plistlib.load(source)
+
+          expected_widget_metadata = {
+              "CFBundleDisplayName": "OTodo",
+              "CFBundleShortVersionString": "$(MARKETING_VERSION)",
+              "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
+          }
+          for key, expected in expected_widget_metadata.items():
+              if widget_info.get(key) != expected:
+                  raise SystemExit(f"Widget {key} must be {expected}")
+
+          extension = widget_info.get("NSExtension")
+          if not isinstance(extension, dict) or extension.get("NSExtensionPointIdentifier") != "com.apple.widgetkit-extension":
+              raise SystemExit("Widget NSExtensionPointIdentifier must be com.apple.widgetkit-extension")
+
+          expected_groups = ["group.plastickarma.otodo"]
+          for entitlements_path in (
+              "OTodoApp/OTodo.entitlements",
+              "OTodoWidget/OTodoWidget.entitlements",
+          ):
+              with open(entitlements_path, "rb") as source:
+                  entitlements = plistlib.load(source)
+              if entitlements.get("com.apple.security.application-groups") != expected_groups:
+                  raise SystemExit(
+                      f"{entitlements_path} must contain only the shared OTodo App Group"
+                  )
           PY
 
       - name: Select available iPhone simulator

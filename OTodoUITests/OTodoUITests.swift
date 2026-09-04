@@ -336,6 +336,97 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testTodayWidgetRendersInWidgetGallery() {
+        continueAfterFailure = false
+
+        let app = XCUIApplication()
+        app.launchArguments.append(contentsOf: ["-ui-testing", "-ui-testing-reset-workspace"])
+        app.launch()
+
+        let taskList = app.descendants(matching: .any)
+            .matching(identifier: "task-list")
+            .firstMatch
+        guard require(
+            taskList,
+            in: app,
+            description: "the seeded task list before opening the widget gallery"
+        ) else { return }
+
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        springboard.activate()
+
+        let appIcon = springboard.icons["OTodo"]
+        guard require(
+            appIcon,
+            in: springboard,
+            description: "the OTodo Home Screen icon"
+        ) else { return }
+        appIcon.press(forDuration: 1.2)
+
+        let editHomeScreen = springboard.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Edit Home Screen"))
+            .firstMatch
+        guard require(
+            editHomeScreen,
+            in: springboard,
+            description: "the Edit Home Screen menu action"
+        ) else { return }
+        editHomeScreen.tap()
+
+        let addWidget = springboard.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS[c] %@", "Add Widget"))
+            .firstMatch
+        if !addWidget.waitForExistence(timeout: 2) {
+            let editButton = springboard.buttons.matching(
+                NSPredicate(format: "label ==[c] %@", "Edit")
+            ).firstMatch
+            guard require(
+                editButton,
+                in: springboard,
+                description: "the Home Screen Edit button"
+            ) else { return }
+            editButton.tap()
+        }
+        guard require(
+            addWidget,
+            in: springboard,
+            description: "the Home Screen Add Widget action"
+        ) else { return }
+        addWidget.tap()
+
+        let searchField = springboard.searchFields.firstMatch
+        guard require(
+            searchField,
+            in: springboard,
+            description: "the widget gallery search field"
+        ) else { return }
+        searchField.tap()
+        searchField.typeText("OTodo")
+
+        let widgetProvider = springboard.staticTexts["OTodo"].firstMatch
+        guard require(
+            widgetProvider,
+            in: springboard,
+            description: "the OTodo widget provider"
+        ) else { return }
+        widgetProvider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+
+        let addWidgetConfirmation = springboard.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "Add Widget")
+        ).firstMatch
+        guard require(
+            addWidgetConfirmation,
+            in: springboard,
+            description: "the Add Widget button on the OTodo widget preview"
+        ) else { return }
+
+        let widgetScreenshot = XCTAttachment(screenshot: springboard.screenshot())
+        widgetScreenshot.name = "OTodo Today widget"
+        widgetScreenshot.lifetime = .keepAlways
+        add(widgetScreenshot)
+    }
+
+    @MainActor
     func testDueDateAndTimeControlsPersistExactTime() {
         continueAfterFailure = false
 
