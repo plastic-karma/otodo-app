@@ -217,6 +217,71 @@ final class SyncEngineTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(calls.commits[0].changes, [try RemoteChange(path: f.aPath, content: v1)])
         XCTAssertEqual(calls.updates, [.init(commit: "c1", expected: "h1")])
     }
+
+    func testLocalDeletionPushesAndConfirms() async throws {
+        let f = try Fixture()
+        let initial = try await f.engine.initialPull(selection: f.selection)
+        let pending = try f.deletion()
+        try await f.store.save(
+            try f.deleting(initial, pending: pending),
+            expectedRevision: initial.revision
+        )
+
+        let report = try await f.engine.sync(selection: f.selection)
+
+        XCTAssertEqual(report.pulledCount, 0)
+        XCTAssertEqual(report.pushedCount, 1)
+        XCTAssertTrue(report.conflicts.isEmpty)
+        let saved = await f.store.current()
+        let durable = try XCTUnwrap(saved)
+        XCTAssertEqual(durable.revision, 3)
+        XCTAssertTrue(durable.tasks.isEmpty)
+        XCTAssertTrue(durable.pendingChanges.isEmpty)
+        XCTAssertTrue(durable.conflicts.isEmpty)
+        let calls = await f.gitHub.calls()
+        XCTAssertEqual(calls.commits.count, 1)
+        XCTAssertEqual(
+            calls.commits[0].changes,
+            [try RemoteChange(path: f.aPath, content: nil)]
+        )
+        XCTAssertEqual(calls.updates, [.init(commit: "c1", expected: "h1")])
+        let branch = await f.gitHub.branch()
+        XCTAssertFalse(branch.files.contains(where: { $0.path == f.aPath }))
+    }
+
+    func testRemoteEditConflictsWithLocalDeletionWithoutRestoringTask() async throws {
+        let f = try Fixture()
+        let initial = try await f.engine.initialPull(selection: f.selection)
+        let pending = try f.deletion()
+        try await f.store.save(
+            try f.deleting(initial, pending: pending),
+            expectedRevision: initial.revision
+        )
+        let remoteContent = Fixture.record("A remote", body: "remote\n")
+        await f.gitHub.replace(
+            try f.snapshot(head: "h2", tree: "t2", a: remoteContent, aSHA: "a2")
+        )
+
+        let report = try await f.engine.sync(selection: f.selection)
+
+        XCTAssertEqual(report.pulledCount, 0)
+        XCTAssertEqual(report.pushedCount, 0)
+        let conflict = try XCTUnwrap(report.conflicts.first)
+        XCTAssertEqual(conflict.path, f.aPath)
+        XCTAssertEqual(conflict.baseBlobSHA, "a1")
+        XCTAssertEqual(conflict.remoteBlobSHA, "a2")
+        XCTAssertNil(conflict.localContent)
+        XCTAssertEqual(conflict.remoteContent, remoteContent)
+        let saved = await f.store.current()
+        let durable = try XCTUnwrap(saved)
+        XCTAssertEqual(durable.revision, 2)
+        XCTAssertTrue(durable.tasks.isEmpty)
+        XCTAssertEqual(durable.pendingChanges, [pending])
+        XCTAssertEqual(durable.conflicts, [conflict])
+        let calls = await f.gitHub.calls()
+        XCTAssertTrue(calls.commits.isEmpty)
+        XCTAssertTrue(calls.updates.isEmpty)
+    }
 }
 
 private struct Fixture {
@@ -296,11 +361,38 @@ private struct Fixture {
         try PendingChange(id: id, path: aPath, baseBlobSHA: "a1", content: content, createdAt: Date(timeIntervalSince1970: 1_700_000_000))
     }
 
+    func deletion(
+        id: UUID = UUID(uuidString: "44444444-4444-4444-4444-444444444444")!
+    ) throws -> PendingChange {
+        try PendingChange(
+            id: id,
+            path: aPath,
+            baseBlobSHA: "a1",
+            content: nil,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+    }
+
+    func deleting(_ base: WorkspaceState, pending: PendingChange) throws -> WorkspaceState {
+        try WorkspaceState(
+            selection: selection,
+            configuration: base.configuration,
+            knownProjectSlugs: base.knownProjectSlugs,
+            tasks: base.tasks.filter { $0.task.relativePath != Self.aRelative },
+            baseHeadCommitSHA: base.baseHeadCommitSHA,
+            baseRootTreeSHA: base.baseRootTreeSHA,
+            pendingChanges: [pending],
+            conflicts: [],
+            revision: base.revision + 1
+        )
+    }
+
     func edit(_ base: WorkspaceState, pending: PendingChange, revision: UInt64? = nil) throws -> WorkspaceState {
         var tasks = base.tasks
         let index = try XCTUnwrap(tasks.firstIndex { $0.task.relativePath == Self.aRelative })
-        let task = try ObsidianTaskCodec().parseTask(id: tasks[index].task.id, relativePath: Self.aRelative, text: pending.content, configuration: base.configuration)
-        tasks[index] = TaskDocument(task: task, content: pending.content, blobSHA: pending.baseBlobSHA)
+        let content = try XCTUnwrap(pending.content)
+        let task = try ObsidianTaskCodec().parseTask(id: tasks[index].task.id, relativePath: Self.aRelative, text: content, configuration: base.configuration)
+        tasks[index] = TaskDocument(task: task, content: content, blobSHA: pending.baseBlobSHA)
         return try WorkspaceState(selection: selection, configuration: base.configuration, knownProjectSlugs: base.knownProjectSlugs, tasks: tasks, baseHeadCommitSHA: base.baseHeadCommitSHA, baseRootTreeSHA: base.baseRootTreeSHA, pendingChanges: [pending], conflicts: [], revision: revision ?? base.revision + 1)
     }
 }

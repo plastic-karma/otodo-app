@@ -483,10 +483,11 @@ public struct PendingChange: Sendable, Codable, Equatable {
     public let id: UUID
     public let path: String
     public let baseBlobSHA: String?
-    public let content: String
+    /// UTF-8 file content, or `nil` to delete the path.
+    public let content: String?
     public let createdAt: Date
 
-    public init(id: UUID, path: String, baseBlobSHA: String?, content: String, createdAt: Date) throws {
+    public init(id: UUID, path: String, baseBlobSHA: String?, content: String?, createdAt: Date) throws {
         try DomainValidation.validateRelativePath(path, field: "path")
         self.id = id
         self.path = path
@@ -503,7 +504,7 @@ public struct PendingChange: Sendable, Codable, Equatable {
             id: container.decode(UUID.self, forKey: .id),
             path: container.decode(String.self, forKey: .path),
             baseBlobSHA: container.decodeIfPresent(String.self, forKey: .baseBlobSHA),
-            content: container.decode(String.self, forKey: .content),
+            content: container.decodeIfPresent(String.self, forKey: .content),
             createdAt: container.decode(Date.self, forKey: .createdAt)
         )
     }
@@ -513,14 +514,15 @@ public struct SyncConflict: Sendable, Codable, Equatable {
     public let path: String
     public let baseBlobSHA: String?
     public let remoteBlobSHA: String?
-    public let localContent: String
+    /// This device's UTF-8 file content, or `nil` when this device deleted the path.
+    public let localContent: String?
     public let remoteContent: String?
 
     public init(
         path: String,
         baseBlobSHA: String?,
         remoteBlobSHA: String?,
-        localContent: String,
+        localContent: String?,
         remoteContent: String?
     ) throws {
         try DomainValidation.validateRelativePath(path, field: "path")
@@ -541,7 +543,7 @@ public struct SyncConflict: Sendable, Codable, Equatable {
             path: container.decode(String.self, forKey: .path),
             baseBlobSHA: container.decodeIfPresent(String.self, forKey: .baseBlobSHA),
             remoteBlobSHA: container.decodeIfPresent(String.self, forKey: .remoteBlobSHA),
-            localContent: container.decode(String.self, forKey: .localContent),
+            localContent: container.decodeIfPresent(String.self, forKey: .localContent),
             remoteContent: container.decodeIfPresent(String.self, forKey: .remoteContent)
         )
     }

@@ -263,7 +263,7 @@ public actor SyncEngine {
             }
 
             remainingPending.append(reconciledPending)
-            try overlayTask(
+            try overlayChange(
                 content: reconciledPending.content,
                 fullPath: reconciledPending.path,
                 blobSHA: reconciledPending.baseBlobSHA,
@@ -289,7 +289,7 @@ public actor SyncEngine {
                 remoteContent: remote?.content
             )
             reconciledConflicts.append(refreshed)
-            try overlayTask(
+            try overlayChange(
                 content: existing.localContent,
                 fullPath: existing.path,
                 blobSHA: existing.baseBlobSHA,
@@ -420,8 +420,8 @@ public actor SyncEngine {
         )
     }
 
-    private func overlayTask(
-        content: String,
+    private func overlayChange(
+        content: String?,
         fullPath: String,
         blobSHA: String?,
         selection: RepositorySelection,
@@ -432,6 +432,11 @@ public actor SyncEngine {
               relativePath.hasPrefix(configuration.tasksDirectory + "/"),
               relativePath.hasSuffix(".md")
         else {
+            return
+        }
+
+        guard let content else {
+            tasksByPath.removeValue(forKey: relativePath)
             return
         }
 

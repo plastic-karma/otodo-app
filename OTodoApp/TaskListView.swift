@@ -54,6 +54,31 @@ struct TaskListView: View {
                             .buttonStyle(.plain)
                             .accessibilityHint("Opens the todo editor")
                             .accessibilityIdentifier("task-row-\(task.id.rawValue)")
+                            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                                if state(for: task.state)?.isTerminal != true,
+                                   completionState != nil
+                                {
+                                    Button {
+                                        complete(task)
+                                    } label: {
+                                        Label("Done", systemImage: "checkmark")
+                                    }
+                                    .tint(.green)
+                                    .disabled(model.isBusy)
+                                    .accessibilityIdentifier("task-complete-\(task.id.rawValue)")
+                                }
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    Task { @MainActor in
+                                        await model.deleteTask(task)
+                                    }
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                                .disabled(model.isBusy)
+                                .accessibilityIdentifier("task-delete-\(task.id.rawValue)")
+                            }
                         }
                     }
                 } header: {
@@ -200,6 +225,12 @@ struct TaskListView: View {
             }
     }
 
+    private var completionState: WorkflowState? {
+        let states = model.configuration?.states ?? []
+        return states.first(where: { $0.id == "done" && $0.isTerminal })
+            ?? states.first(where: \.isTerminal)
+    }
+
     private var currentDateKey: String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .autoupdatingCurrent
@@ -210,6 +241,15 @@ struct TaskListView: View {
             components.month!,
             components.day!
         )
+    }
+
+    private func complete(_ task: TodoTask) {
+        guard let completionState else { return }
+        var draft = TaskEditorDraft(task: task)
+        draft.state = completionState.id
+        Task { @MainActor in
+            await model.updateTask(id: task.id, draft: draft)
+        }
     }
 
     private func state(for id: String) -> WorkflowState? {

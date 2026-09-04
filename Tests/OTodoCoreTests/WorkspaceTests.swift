@@ -346,7 +346,107 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         XCTAssertNotEqual(coalesced.content, firstPending.content)
     }
 
-    func testEditRejectsStaleExpectedTaskWithoutMutationAndAcceptsCurrentTask() async throws {
+    func testDeletingSyncedTaskCoalescesPendingEditIntoDurableDeletion() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let id = taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV")
+        let original = try makeDocument(
+            id: id,
+            name: "Original",
+            blobSHA: "original-blob",
+            configuration: configuration
+        )
+        let initial = try makeWorkspace(
+            selection: selection,
+            configuration: configuration,
+            tasks: [original]
+        )
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+
+        let pendingID = UUID(uuidString: "12121212-1212-1212-1212-121212121212")!
+        let mutationTime = Date(timeIntervalSince1970: 1_700_001_500)
+        let service = makeService(
+            store: store,
+            id: id,
+            now: mutationTime,
+            uuid: pendingID
+        )
+        let edited = try await service.editTask(
+            selection: selection,
+            id: id,
+            expectedTask: original.task,
+            update: TaskUpdate(
+                name: "Edited before deletion",
+                state: "doing",
+                projectSlugs: ["alpha"],
+                tags: ["edited"],
+                dueDate: nil,
+                body: "Edited body\n"
+            )
+        )
+
+        try await service.deleteTask(
+            selection: selection,
+            id: id,
+            expectedTask: edited
+        )
+
+        let durable = try await loadRequired(
+            FileWorkspaceStore(rootURL: directory),
+            selection: selection
+        )
+        XCTAssertEqual(durable.revision, 2)
+        XCTAssertTrue(durable.tasks.isEmpty)
+        let deletion = try XCTUnwrap(durable.pendingChanges.first)
+        XCTAssertEqual(durable.pendingChanges.count, 1)
+        XCTAssertEqual(deletion.id, pendingID)
+        XCTAssertEqual(deletion.path, repositoryPath(selection, original.task.relativePath))
+        XCTAssertEqual(deletion.baseBlobSHA, "original-blob")
+        XCTAssertNil(deletion.content)
+        XCTAssertEqual(deletion.createdAt, mutationTime)
+    }
+
+    func testDeletingUnsyncedTaskCancelsCreateOutboxEntry() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let initial = try makeWorkspace(selection: selection, configuration: configuration)
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+
+        let id = taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV")
+        let service = makeService(
+            store: store,
+            id: id,
+            now: Date(timeIntervalSince1970: 1_700_001_600),
+            uuid: UUID(uuidString: "13131313-1313-1313-1313-131313131313")!
+        )
+        let added = try await service.addTask(
+            selection: selection,
+            name: "Never synchronized"
+        )
+        try await service.deleteTask(
+            selection: selection,
+            id: id,
+            expectedTask: added
+        )
+
+        let durable = try await loadRequired(
+            FileWorkspaceStore(rootURL: directory),
+            selection: selection
+        )
+        XCTAssertEqual(durable.revision, 2)
+        XCTAssertTrue(durable.tasks.isEmpty)
+        XCTAssertTrue(durable.pendingChanges.isEmpty)
+    }
+
+    func testEditAndDeleteRejectStaleExpectedTaskWithoutMutation() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
@@ -408,12 +508,19 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
                 update: update
             )
         }
+        await assertConflict {
+            try await service.deleteTask(
+                selection: selection,
+                id: id,
+                expectedTask: staleDocument.task
+            )
+        }
 
-        let afterStaleEdit = try await loadRequired(store, selection: selection)
-        XCTAssertEqual(afterStaleEdit, beforeStaleEdit)
-        XCTAssertEqual(afterStaleEdit.revision, beforeStaleEdit.revision)
-        XCTAssertEqual(afterStaleEdit.tasks[0].content, beforeStaleEdit.tasks[0].content)
-        XCTAssertEqual(afterStaleEdit.pendingChanges, beforeStaleEdit.pendingChanges)
+        let afterStaleMutations = try await loadRequired(store, selection: selection)
+        XCTAssertEqual(afterStaleMutations, beforeStaleEdit)
+        XCTAssertEqual(afterStaleMutations.revision, beforeStaleEdit.revision)
+        XCTAssertEqual(afterStaleMutations.tasks[0].content, beforeStaleEdit.tasks[0].content)
+        XCTAssertEqual(afterStaleMutations.pendingChanges, beforeStaleEdit.pendingChanges)
 
         let edited = try await service.editTask(
             selection: selection,
@@ -770,6 +877,66 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(rebased.createdAt, pendingTime)
         XCTAssertEqual(rebased.content, canonicalContent)
         let durable = try await store.load(selection: selection)
+        XCTAssertEqual(durable, resolved)
+    }
+
+    func testKeepLocalDeletionConflictRebasesDurableDeleteOutbox() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let id = taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV")
+        let relativePath = "\(configuration.tasksDirectory)/\(id.rawValue).md"
+        let path = repositoryPath(selection, relativePath)
+        let pendingID = UUID(uuidString: "14141414-1414-1414-1414-141414141414")!
+        let pendingTime = Date(timeIntervalSince1970: 1_700_007_500)
+        let pending = try PendingChange(
+            id: pendingID,
+            path: path,
+            baseBlobSHA: "base-blob",
+            content: nil,
+            createdAt: pendingTime
+        )
+        let conflict = try SyncConflict(
+            path: path,
+            baseBlobSHA: "base-blob",
+            remoteBlobSHA: "remote-blob",
+            localContent: nil,
+            remoteContent: "remote replacement"
+        )
+        let initial = try makeWorkspace(
+            selection: selection,
+            configuration: configuration,
+            tasks: [],
+            pendingChanges: [pending],
+            conflicts: [conflict]
+        )
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = makeService(
+            store: store,
+            id: id,
+            now: Date(timeIntervalSince1970: 1_800_007_500),
+            uuid: UUID(uuidString: "15151515-1515-1515-1515-151515151515")!
+        )
+
+        let resolved = try await service.resolveConflict(
+            selection: selection,
+            path: path,
+            resolution: .keepLocal
+        )
+
+        XCTAssertTrue(resolved.tasks.isEmpty)
+        XCTAssertTrue(resolved.conflicts.isEmpty)
+        let rebased = try XCTUnwrap(resolved.pendingChanges.first)
+        XCTAssertEqual(resolved.pendingChanges.count, 1)
+        XCTAssertEqual(rebased.id, pendingID)
+        XCTAssertEqual(rebased.path, path)
+        XCTAssertEqual(rebased.baseBlobSHA, "remote-blob")
+        XCTAssertNil(rebased.content)
+        XCTAssertEqual(rebased.createdAt, pendingTime)
+        let durable = try await FileWorkspaceStore(rootURL: directory).load(selection: selection)
         XCTAssertEqual(durable, resolved)
     }
 

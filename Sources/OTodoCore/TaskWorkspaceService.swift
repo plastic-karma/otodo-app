@@ -41,7 +41,7 @@ public enum WorkspaceConflictResolution: Sendable, Equatable {
     case useRemote
 }
 
-/// Offline-first task operations. Every mutation is canonicalized, added to the
+/// Offline-first task operations. Every mutation is validated, reflected in the
 /// durable outbox, and saved before its result is returned.
 public actor TaskWorkspaceService {
     private let persistence: any WorkspacePersisting
@@ -297,6 +297,56 @@ public actor TaskWorkspaceService {
         )
     }
 
+    public func deleteTask(
+        selection: RepositorySelection,
+        id: TaskID,
+        expectedTask: TodoTask
+    ) async throws {
+        let workspace = try await requireWorkspace(selection: selection)
+        guard let taskIndex = workspace.tasks.firstIndex(where: { $0.task.id == id }) else {
+            throw OTodoError.notFound(resource: "task \(id.rawValue)")
+        }
+        guard workspace.tasks[taskIndex].task == expectedTask else {
+            throw OTodoError.conflict(
+                message: "Task \(id.rawValue) changed since deletion began"
+            )
+        }
+
+        let original = workspace.tasks[taskIndex]
+        let repositoryPath = Self.repositoryPath(
+            selection: workspace.selection,
+            storeRelativePath: original.task.relativePath
+        )
+        guard !workspace.conflicts.contains(where: { $0.path == repositoryPath }) else {
+            throw OTodoError.conflict(message: "Resolve the conflict at \(repositoryPath) before deleting")
+        }
+
+        var tasks = workspace.tasks
+        tasks.remove(at: taskIndex)
+
+        let existingPending = workspace.pendingChanges.first(where: { $0.path == repositoryPath })
+        let remoteBaseBlobSHA = existingPending?.baseBlobSHA ?? original.blobSHA
+        let pendingChanges: [PendingChange]
+        if remoteBaseBlobSHA == nil {
+            pendingChanges = workspace.pendingChanges.filter { $0.path != repositoryPath }
+        } else {
+            pendingChanges = try upsertingPendingChange(
+                path: repositoryPath,
+                content: nil,
+                baseBlobSHA: remoteBaseBlobSHA,
+                in: workspace.pendingChanges,
+                at: now()
+            )
+        }
+        let updatedWorkspace = try Self.replacing(
+            workspace,
+            tasks: tasks,
+            pendingChanges: pendingChanges,
+            conflicts: workspace.conflicts
+        )
+        try await persistence.save(updatedWorkspace, expectedRevision: workspace.revision)
+    }
+
     public func resolveConflict(
         selection: RepositorySelection,
         path: String,
@@ -313,46 +363,57 @@ public actor TaskWorkspaceService {
         var pendingChanges = workspace.pendingChanges
         switch resolution {
         case .keepLocal:
-            let id = try Self.taskIDFromBasename(for: relativePath)
-            let destinationRelativePath =
-                "\(workspace.configuration.tasksDirectory)/\(id.rawValue).md"
-            let destinationPath = Self.repositoryPath(
-                selection: workspace.selection,
-                storeRelativePath: destinationRelativePath
-            )
-            if destinationPath != path {
-                guard !workspace.pendingChanges.contains(where: { $0.path == destinationPath }),
-                      !workspace.conflicts.contains(where: { $0.path == destinationPath })
-                else {
-                    throw OTodoError.conflict(
-                        message: "Cannot move local task to occupied path \(destinationPath)"
-                    )
+            if let localContent = conflict.localContent {
+                let id = try Self.taskIDFromBasename(for: relativePath)
+                let destinationRelativePath =
+                    "\(workspace.configuration.tasksDirectory)/\(id.rawValue).md"
+                let destinationPath = Self.repositoryPath(
+                    selection: workspace.selection,
+                    storeRelativePath: destinationRelativePath
+                )
+                if destinationPath != path {
+                    guard !workspace.pendingChanges.contains(where: { $0.path == destinationPath }),
+                          !workspace.conflicts.contains(where: { $0.path == destinationPath })
+                    else {
+                        throw OTodoError.conflict(
+                            message: "Cannot move local task to occupied path \(destinationPath)"
+                        )
+                    }
                 }
-            }
 
-            let destinationBlobSHA = tasks.first(where: {
-                $0.task.relativePath == destinationRelativePath
-            })?.blobSHA
-            let parsed = try taskCodec.parseTask(
-                id: id,
-                relativePath: destinationRelativePath,
-                text: conflict.localContent,
-                configuration: workspace.configuration
-            )
-            try Self.validate(state: parsed.state, projects: parsed.projectSlugs, in: workspace)
-            let document = try canonicalDocument(
-                for: parsed,
-                configuration: workspace.configuration,
-                blobSHA: destinationPath == path ? conflict.remoteBlobSHA : destinationBlobSHA
-            )
-            try Self.replaceOrRemap(document, in: &tasks)
-            pendingChanges = try replacingConflictPendingChange(
-                conflict: conflict,
-                destinationPath: destinationPath,
-                baseBlobSHA: document.blobSHA,
-                content: document.content,
-                pendingChanges: pendingChanges
-            )
+                let destinationBlobSHA = tasks.first(where: {
+                    $0.task.relativePath == destinationRelativePath
+                })?.blobSHA
+                let parsed = try taskCodec.parseTask(
+                    id: id,
+                    relativePath: destinationRelativePath,
+                    text: localContent,
+                    configuration: workspace.configuration
+                )
+                try Self.validate(state: parsed.state, projects: parsed.projectSlugs, in: workspace)
+                let document = try canonicalDocument(
+                    for: parsed,
+                    configuration: workspace.configuration,
+                    blobSHA: destinationPath == path ? conflict.remoteBlobSHA : destinationBlobSHA
+                )
+                try Self.replaceOrRemap(document, in: &tasks)
+                pendingChanges = try replacingConflictPendingChange(
+                    conflict: conflict,
+                    destinationPath: destinationPath,
+                    baseBlobSHA: document.blobSHA,
+                    content: document.content,
+                    pendingChanges: pendingChanges
+                )
+            } else {
+                tasks.removeAll(where: { $0.task.relativePath == relativePath })
+                pendingChanges = try replacingConflictPendingChange(
+                    conflict: conflict,
+                    destinationPath: path,
+                    baseBlobSHA: conflict.remoteBlobSHA,
+                    content: nil,
+                    pendingChanges: pendingChanges
+                )
+            }
 
         case .useRemote:
             pendingChanges.removeAll(where: { $0.path == path })
@@ -477,7 +538,7 @@ public actor TaskWorkspaceService {
 
     private func upsertingPendingChange(
         path: String,
-        content: String,
+        content: String?,
         baseBlobSHA: String?,
         in pendingChanges: [PendingChange],
         at date: Date
@@ -508,7 +569,7 @@ public actor TaskWorkspaceService {
         conflict: SyncConflict,
         destinationPath: String,
         baseBlobSHA: String?,
-        content: String,
+        content: String?,
         pendingChanges: [PendingChange]
     ) throws -> [PendingChange] {
         let source = pendingChanges.first(where: { $0.path == conflict.path })

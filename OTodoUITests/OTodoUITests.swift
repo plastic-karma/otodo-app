@@ -237,6 +237,102 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testSwipeActionsCompleteAndDeleteDurably() {
+        continueAfterFailure = false
+
+        let app = XCUIApplication()
+        let resetWorkspaceArgument = "-ui-testing-reset-workspace"
+        app.launchArguments.append(contentsOf: ["-ui-testing", resetWorkspaceArgument])
+        app.launch()
+
+        let taskList = app.descendants(matching: .any)
+            .matching(identifier: "task-list")
+            .firstMatch
+        guard require(
+            taskList,
+            in: app,
+            description: "the seeded task list"
+        ) else { return }
+
+        let taskToComplete = taskRow(named: "Seed todo", state: "Pending", in: app)
+        guard require(
+            taskToComplete,
+            in: app,
+            description: "the todo to complete"
+        ) else { return }
+        taskToComplete.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)
+        ).press(
+            forDuration: 0.1,
+            thenDragTo: taskToComplete.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.6, dy: 0.5)
+            )
+        )
+
+        let doneButton = app.buttons["task-complete-01ARZ3NDEKTSV4RRFFQ69G5FAV"]
+        guard require(
+            doneButton,
+            in: app,
+            description: "the revealed Done swipe action"
+        ) else { return }
+        doneButton.tap()
+        XCTAssertTrue(
+            taskToComplete.waitForNonExistence(timeout: 8),
+            "Completing a todo should remove it from Today"
+        )
+
+        let taskToDelete = taskRow(named: "Overdue todo", state: "Pending", in: app)
+        guard require(
+            taskToDelete,
+            in: app,
+            description: "the todo to delete"
+        ) else { return }
+        taskToDelete.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)
+        ).press(
+            forDuration: 0.1,
+            thenDragTo: taskToDelete.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)
+            )
+        )
+
+        let deleteButton = app.buttons["task-delete-01ARZ3NDEKTSV4RRFFQ69G5FAW"]
+        guard require(
+            deleteButton,
+            in: app,
+            description: "the revealed Delete swipe action"
+        ) else { return }
+        deleteButton.tap()
+        XCTAssertTrue(
+            taskToDelete.waitForNonExistence(timeout: 8),
+            "Deleting a todo should remove it from the list"
+        )
+
+        app.terminate()
+        app.launchArguments = app.launchArguments.filter { $0 != resetWorkspaceArgument }
+        app.launch()
+
+        let relaunchedTaskList = app.descendants(matching: .any)
+            .matching(identifier: "task-list")
+            .firstMatch
+        guard require(
+            relaunchedTaskList,
+            in: app,
+            description: "the task list after relaunch"
+        ) else { return }
+        guard selectFilter("All", in: app) else { return }
+        guard require(
+            taskRow(named: "Seed todo", state: "Done", in: app),
+            in: app,
+            description: "the durably completed todo after relaunch"
+        ) else { return }
+        XCTAssertFalse(
+            taskRow(named: "Overdue todo", state: "Pending", in: app).exists,
+            "The deleted todo should remain absent after relaunch"
+        )
+    }
+
+    @MainActor
     private func selectFilter(
         _ name: String,
         in app: XCUIApplication,

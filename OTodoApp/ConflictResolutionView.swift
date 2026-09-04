@@ -16,7 +16,7 @@ struct ConflictResolutionView: View {
         NavigationStack {
             List {
                 Section {
-                    Text("Both this device and GitHub changed each task below. Choose which complete version to keep for every task.")
+                    Text("Both this device and GitHub changed each item below. Choose which complete version to keep for every path.")
                 } footer: {
                     Text("Review the affected path before choosing. OTodo cannot undo a resolution.")
                 }
@@ -102,7 +102,7 @@ struct ConflictResolutionView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Keep My Version")
                     .font(.headline)
-                Text("Keeps this device’s task and queues it to replace the GitHub version during sync.")
+                Text("Keeps this device’s version and queues it to replace GitHub during sync. If you deleted the todo here, it will also be deleted from GitHub.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 Button("Keep My Version") {
@@ -196,7 +196,7 @@ private struct ResolutionConfirmation {
     var message: String {
         switch resolution {
         case .keepLocal:
-            return "For \(path), your version will be queued to replace GitHub’s current version during sync."
+            return "For \(path), your version will replace GitHub’s current version during sync. If your version is a deletion, the GitHub todo will be deleted."
         case .useRemote:
             return "For \(path), your pending changes will be discarded and GitHub’s current version will be used. If GitHub deleted the task, it will be removed from this device."
         }

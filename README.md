@@ -1,8 +1,8 @@
 # OTodo
 
-OTodo is an offline-first iOS client for an Obsidian Todo v1 store kept in a GitHub repository. It signs in through GitHub's OAuth Device Flow, discovers stores on a selected branch, and lets you create and edit todos without making a local Git checkout.
+OTodo is an offline-first iOS client for an Obsidian Todo v1 store kept in a GitHub repository. It signs in through GitHub's OAuth Device Flow, discovers stores on a selected branch, and lets you create, edit, complete, and delete todos without making a local Git checkout.
 
-The app displays active todos due today or overdue by default, with filters for every active todo or all todos including terminal states. Todos are ordered by due date, configured workflow-state order, name, and ULID. The editor supports the name, state, projects, tags, due date, and Markdown body. GitHub tokens are stored in the device Keychain; repository workspaces and their pending changes are stored on the device.
+The app displays active todos due today or overdue by default, with filters for every active todo or all todos including terminal states. Todos are ordered by due date, configured workflow-state order, name, and ULID. Swipe right on a todo to reveal Done; swipe left to reveal Delete. The editor supports the name, state, projects, tags, due date, and Markdown body. GitHub tokens are stored in the device Keychain; repository workspaces and their pending changes are stored on the device.
 
 ## Requirements
 
@@ -72,12 +72,12 @@ The exact record contract is:
 
 The first connection to a store requires GitHub access so OTodo can validate and save a complete snapshot. After that:
 
-1. Every create or edit is canonicalized and atomically saved to the durable local workspace and outbox before the operation reports success.
-2. Repeated local edits to the same path coalesce into one pending change while retaining the original remote base.
+1. Every create, edit, completion, or deletion is atomically saved to the durable local workspace and outbox before the operation reports success.
+2. Repeated local changes to the same path coalesce into one pending change while retaining the original remote base. Deleting a never-synchronized todo cancels its pending creation.
 3. OTodo synchronizes after a local save when online, when connectivity returns, on launch with a saved workspace, and on pull-to-refresh. Failed pushes remain pending for a later attempt.
 4. Sync first pulls the current branch snapshot, applies unrelated remote changes, and sends safe pending paths together in one `Sync OTodo changes` commit. The branch ref is updated with compare-and-swap semantics; OTodo never force-pushes.
-5. If GitHub and this device changed the same path from the same base, OTodo preserves the local version and durable outbox entry, records a conflict, and does not push that path. Unrelated safe paths can still synchronize.
-6. **Keep My Version** rebases and queues the complete device version to replace GitHub on the next sync. **Use GitHub Version** discards the device's pending version and adopts GitHub's file; if GitHub deleted it, the local task is removed. Resolution is explicit and cannot be undone in the app.
+5. If GitHub and this device changed the same path from the same base, OTodo preserves the local version—including a local deletion—and durable outbox entry, records a conflict, and does not push that path. Unrelated safe paths can still synchronize.
+6. **Keep My Version** rebases and queues the device's content or deletion to replace GitHub on the next sync. **Use GitHub Version** discards the device's pending version and adopts GitHub's file; if GitHub deleted it, the local task is removed. Resolution is explicit and cannot be undone in the app.
 
 Losing connectivity, a failed API request, or expired authorization does not discard saved todos or pending changes. Reauthorize to resume synchronization.
 

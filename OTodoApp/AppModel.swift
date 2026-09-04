@@ -551,6 +551,44 @@ final class AppModel {
             statusMessage = nil
         }
     }
+
+    func deleteTask(_ task: TodoTask) async {
+        guard rootState == .workspace, let selection = workspaceSelection else {
+            errorMessage = "No todo workspace is selected."
+            return
+        }
+        let operationSession = sessionID
+
+        beginLocalMutation()
+        defer { finishLocalMutation() }
+        errorMessage = nil
+        statusMessage = "Deleting todo on this device…"
+        isBusy = true
+        do {
+            try await taskService.deleteTask(
+                selection: selection,
+                id: task.id,
+                expectedTask: task
+            )
+            guard sessionID == operationSession else { return }
+            syncFollowUpRequested = true
+            let workspace = try await taskService.loadWorkspace(selection: selection)
+            guard sessionID == operationSession else { return }
+            apply(workspace)
+            errorMessage = nil
+            publishLocalSaveStatus(
+                onlineMessage: "Deleted on this device; waiting to sync.",
+                offlineMessage: "Deleted on this device while offline."
+            )
+            isBusy = false
+        } catch {
+            guard sessionID == operationSession else { return }
+            isBusy = false
+            errorMessage = Self.message(for: error)
+            statusMessage = nil
+        }
+    }
+
     func resolveConflict(
         path: String,
         resolution: WorkspaceConflictResolution
