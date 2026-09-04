@@ -25,6 +25,7 @@ final class AppModel {
     private(set) var tasks: [TodoTask] = []
     private(set) var configuration: StoreConfiguration?
     private(set) var projectChoices: [String] = []
+    private(set) var tagChoices: [String] = []
 
     private(set) var pendingChangeCount = 0
     private(set) var conflictCount = 0
@@ -267,6 +268,7 @@ final class AppModel {
         tasks = []
         configuration = nil
         projectChoices = []
+        tagChoices = []
         pendingChangeCount = 0
         conflictCount = 0
         conflicts = []
@@ -698,6 +700,7 @@ final class AppModel {
         tasks = []
         configuration = nil
         projectChoices = []
+        tagChoices = []
         pendingChangeCount = 0
         conflictCount = 0
         conflicts = []
@@ -774,6 +777,7 @@ final class AppModel {
         configuration = workspace.configuration
         projectChoices = workspace.knownProjectSlugs.sorted()
         tasks = workspace.tasks.map(\.task)
+        tagChoices = Set(tasks.lazy.flatMap(\.tags)).sorted()
         conflicts = workspace.conflicts
         pendingChangeCount = workspace.pendingChanges.count
         conflictCount = workspace.conflicts.count
@@ -1015,7 +1019,7 @@ final class AppModel {
                         name: seed.name,
                         state: seed.state,
                         projectSlugs: [seed.project],
-                        tags: [],
+                        tags: seed.project == "work" ? ["focus"] : ["home"],
                         dueDate: seed.dueDate,
                         recurrence: nil,
                         recurrenceFrom: nil,

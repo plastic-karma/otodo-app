@@ -49,6 +49,7 @@ struct TaskEditorView: View {
 
     private let configuration: StoreConfiguration
     private let projectChoices: [String]
+    private let tagChoices: [String]
     private let onSave: @MainActor (TaskEditorDraft) async -> String?
 
     @State private var draft: TaskEditorDraft
@@ -63,10 +64,12 @@ struct TaskEditorView: View {
         draft: TaskEditorDraft,
         configuration: StoreConfiguration,
         projectChoices: [String],
+        tagChoices: [String],
         onSave: @escaping @MainActor (TaskEditorDraft) async -> String?
     ) {
         self.configuration = configuration
         self.projectChoices = projectChoices
+        self.tagChoices = tagChoices
         self.onSave = onSave
         _draft = State(initialValue: draft)
         _projectsText = State(initialValue: draft.projectSlugs.joined(separator: ", "))
@@ -119,10 +122,30 @@ struct TaskEditorView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .accessibilityLabel("Tags, separated by commas")
+                        .accessibilityIdentifier("task-editor-tags")
+
+                    if !matchingTagChoices.isEmpty {
+                        ScrollView(.horizontal) {
+                            HStack(spacing: 8) {
+                                ForEach(matchingTagChoices, id: \.self) { tag in
+                                    Button {
+                                        completeTag(with: tag)
+                                    } label: {
+                                        Label(tag, systemImage: "tag.fill")
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .accessibilityIdentifier("tag-suggestion-\(tag)")
+                                }
+                            }
+                        }
+                        .scrollIndicators(.hidden)
+                        .accessibilityLabel("Matching existing tags")
+                    }
                 } header: {
                     Text("Tags")
                 } footer: {
-                    Text("Enter tags without #, separated by commas.")
+                    Text("Type to match existing tags, or enter new tags without #, separated by commas.")
                 }
 
                 Section {
@@ -206,6 +229,46 @@ struct TaskEditorView: View {
         .buttonStyle(.bordered)
         .accessibilityLabel("\(project) project")
         .accessibilityValue(isSelected ? "Selected" : "Not selected")
+    }
+
+    private var matchingTagChoices: [String] {
+        let selected = Set(TaskEditorDraft.parseCommaSeparated(tagsText))
+        let fragment = currentTagFragment
+        var matches: [String] = []
+        matches.reserveCapacity(min(8, tagChoices.count))
+
+        for tag in tagChoices where !selected.contains(tag) {
+            guard fragment.isEmpty
+                    || tag.range(
+                        of: fragment,
+                        options: [.caseInsensitive, .anchored]
+                    ) != nil
+            else {
+                continue
+            }
+            matches.append(tag)
+            if matches.count == 8 {
+                break
+            }
+        }
+        return matches
+    }
+
+    private var currentTagFragment: String {
+        let fragment = tagsText
+            .split(separator: ",", omittingEmptySubsequences: false)
+            .last
+            .map(String.init) ?? ""
+        return fragment.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func completeTag(with tag: String) {
+        var tags = TaskEditorDraft.parseCommaSeparated(tagsText)
+        if !currentTagFragment.isEmpty, !tags.isEmpty {
+            tags.removeLast()
+        }
+        tags.append(tag)
+        tagsText = tags.joined(separator: ", ") + ", "
     }
 
     private var validationMessage: String? {

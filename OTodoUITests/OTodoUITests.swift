@@ -362,6 +362,55 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testTagInputAutocompletesExistingTags() {
+        continueAfterFailure = false
+
+        let app = XCUIApplication()
+        app.launchArguments.append(contentsOf: ["-ui-testing", "-ui-testing-reset-workspace"])
+        app.launch()
+
+        let addButton = app.buttons["task-add"]
+        guard require(
+            addButton,
+            in: app,
+            description: "the Add Todo button"
+        ) else { return }
+        addButton.tap()
+
+        let editor = app.descendants(matching: .any)
+            .matching(identifier: "task-editor")
+            .firstMatch
+        guard require(
+            editor,
+            in: app,
+            description: "the new todo editor"
+        ) else { return }
+
+        let tagsField = app.textFields["task-editor-tags"]
+        guard require(
+            tagsField,
+            in: app,
+            description: "the tag input"
+        ) else { return }
+        tagsField.tap()
+        tagsField.typeText("fo")
+
+        let suggestion = app.buttons["tag-suggestion-focus"]
+        guard require(
+            suggestion,
+            in: app,
+            description: "the matching Focus tag suggestion"
+        ) else { return }
+        suggestion.tap()
+
+        XCTAssertEqual(
+            tagsField.value as? String,
+            "focus, ",
+            "Choosing a suggestion should complete the current tag"
+        )
+    }
+
+    @MainActor
     func testSwipeActionsCompleteAndDeleteDurably() {
         continueAfterFailure = false
 

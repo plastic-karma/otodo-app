@@ -115,7 +115,8 @@ struct TaskListView: View {
                     TaskEditorView(
                         draft: presentation.draft(configuration: configuration),
                         configuration: configuration,
-                        projectChoices: model.projectChoices
+                        projectChoices: model.projectChoices,
+                        tagChoices: model.tagChoices
                     ) { value in
                         switch presentation {
                         case .create:
