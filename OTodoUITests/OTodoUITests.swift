@@ -278,6 +278,64 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testHomeScreenQuickActionOpensNewTodoEditor() {
+        continueAfterFailure = false
+
+        let app = XCUIApplication()
+        app.launchArguments.append(contentsOf: ["-ui-testing", "-ui-testing-reset-workspace"])
+        app.launch()
+
+        let taskList = app.descendants(matching: .any)
+            .matching(identifier: "task-list")
+            .firstMatch
+        guard require(
+            taskList,
+            in: app,
+            description: "the seeded task list before using the Home Screen shortcut"
+        ) else { return }
+
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        springboard.activate()
+
+        let appIcon = springboard.icons["OTodo"]
+        guard require(
+            appIcon,
+            in: springboard,
+            description: "the OTodo Home Screen icon"
+        ) else { return }
+        appIcon.press(forDuration: 1.2)
+
+        let newTodoAction = springboard.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "New Todo"))
+            .firstMatch
+        guard require(
+            newTodoAction,
+            in: springboard,
+            description: "the New Todo Home Screen quick action"
+        ) else { return }
+
+        let menuScreenshot = XCTAttachment(screenshot: springboard.screenshot())
+        menuScreenshot.name = "New Todo Home Screen quick action"
+        menuScreenshot.lifetime = .keepAlways
+        add(menuScreenshot)
+
+        newTodoAction.tap()
+
+        let editor = app.descendants(matching: .any)
+            .matching(identifier: "task-editor")
+            .firstMatch
+        guard require(
+            editor,
+            in: app,
+            description: "the todo editor opened by the Home Screen quick action"
+        ) else { return }
+        XCTAssertTrue(
+            app.textFields["task-editor-name"].exists,
+            "The quick action should open a blank task creation editor"
+        )
+    }
+
+    @MainActor
     func testDueDateAndTimeControlsPersistExactTime() {
         continueAfterFailure = false
 

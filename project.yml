@@ -28,6 +28,10 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         ITSAppUsesNonExemptEncryption: false
         GitHubClientID: "$(GITHUB_CLIENT_ID)"
+        UIApplicationShortcutItems:
+          - UIApplicationShortcutItemType: plastickarma.otodo.new-todo
+            UIApplicationShortcutItemTitle: New Todo
+            UIApplicationShortcutItemIconSymbolName: plus.circle.fill
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait

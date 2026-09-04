@@ -4,6 +4,8 @@ import SwiftUI
 import UIKit
 
 struct TaskListView: View {
+    @EnvironmentObject private var quickActions: QuickActionSceneDelegate
+
     @Bindable private var model: AppModel
     private let notifications: TaskNotificationManager
     @State private var editorPresentation: EditorPresentation?
@@ -319,6 +321,14 @@ struct TaskListView: View {
                 )
             }
         }
+        .onAppear(perform: presentPendingNewTodoRequest)
+        .onChange(of: quickActions.pendingNewTodoRequestID) { _, _ in
+            presentPendingNewTodoRequest()
+        }
+        .onChange(of: model.configuration) { _, _ in
+            presentPendingNewTodoRequest()
+        }
+
     }
 
     private func workspaceHero(taskCount: Int) -> some View {
@@ -401,6 +411,18 @@ struct TaskListView: View {
         .accessibilityLabel("Add Todo")
         .accessibilityIdentifier("task-add")
     }
+    private func presentPendingNewTodoRequest() {
+        guard model.configuration != nil,
+              quickActions.consumePendingNewTodoRequest()
+        else {
+            return
+        }
+        isProjectSidebarPresented = false
+        isProjectEditorPresented = false
+        reschedulePresentation = nil
+        editorPresentation = .create
+    }
+
 
     private var heroTitle: String {
         if let selectedProject {

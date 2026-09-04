@@ -3,6 +3,9 @@ import SwiftUI
 @main
 @MainActor
 struct OTodoApp: App {
+    @UIApplicationDelegateAdaptor(OTodoApplicationDelegate.self)
+    private var applicationDelegate
+
     @Environment(\.scenePhase) private var scenePhase
     @State private var model = AppModel()
     @State private var notifications = TaskNotificationManager()
