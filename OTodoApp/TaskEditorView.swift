@@ -42,10 +42,6 @@ struct TaskEditorDraft: Equatable, Sendable {
             .filter { !$0.isEmpty }
     }
 
-    static func parseCivilDate(_ value: String) throws -> CivilDate? {
-        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedValue.isEmpty ? nil : try CivilDate(rawValue: trimmedValue)
-    }
 }
 
 struct TaskEditorView: View {
@@ -58,7 +54,8 @@ struct TaskEditorView: View {
     @State private var draft: TaskEditorDraft
     @State private var projectsText: String
     @State private var tagsText: String
-    @State private var dueDateText: String
+    @State private var hasDueDate: Bool
+    @State private var dueDate: Date
     @State private var isSaving = false
     @State private var saveError: String?
 
@@ -74,7 +71,8 @@ struct TaskEditorView: View {
         _draft = State(initialValue: draft)
         _projectsText = State(initialValue: draft.projectSlugs.joined(separator: ", "))
         _tagsText = State(initialValue: draft.tags.joined(separator: ", "))
-        _dueDateText = State(initialValue: draft.dueDate?.rawValue ?? "")
+        _hasDueDate = State(initialValue: draft.dueDate != nil)
+        _dueDate = State(initialValue: Self.date(from: draft.dueDate))
     }
 
     var body: some View {
@@ -128,15 +126,23 @@ struct TaskEditorView: View {
                 }
 
                 Section {
-                    TextField("YYYY-MM-DD", text: $dueDateText)
-                        .keyboardType(.numbersAndPunctuation)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .accessibilityLabel("Due date")
+                    Toggle("Set due date", isOn: $hasDueDate)
+                        .accessibilityIdentifier("task-editor-due-date-toggle")
+
+                    if hasDueDate {
+                        DatePicker(
+                            "Date",
+                            selection: $dueDate,
+                            displayedComponents: .date
+                        )
+                        .datePickerStyle(.graphical)
+                        .environment(\.calendar, Self.gregorianCalendar)
+                        .accessibilityIdentifier("task-editor-due-date-picker")
+                    }
                 } header: {
                     Text("Due date")
                 } footer: {
-                    Text("Leave blank for no due date. Calendar dates are saved exactly as entered.")
+                    Text(hasDueDate ? "Choose a calendar date." : "This todo has no due date.")
                 }
 
                 Section("Notes") {
@@ -233,13 +239,11 @@ struct TaskEditorView: View {
             return "Tags cannot contain spaces, #, commas, or brackets."
         }
 
-        do {
-            let dueDate = try TaskEditorDraft.parseCivilDate(dueDateText)
-            if draft.preservedTask?.recurrence != nil, dueDate == nil {
-                return "Recurring todos require a due date."
-            }
-        } catch {
-            return "Enter the due date as a valid YYYY-MM-DD calendar date."
+        if hasDueDate, selectedDueDate == nil {
+            return "Choose a valid due date."
+        }
+        if draft.preservedTask?.recurrence != nil, !hasDueDate {
+            return "Recurring todos require a due date."
         }
         return nil
     }
@@ -247,26 +251,64 @@ struct TaskEditorView: View {
     private func save() {
         guard validationMessage == nil else { return }
 
-        do {
-            var value = draft
-            value.projectSlugs = TaskEditorDraft.parseCommaSeparated(projectsText)
-            value.tags = TaskEditorDraft.parseCommaSeparated(tagsText)
-            value.dueDate = try TaskEditorDraft.parseCivilDate(dueDateText)
-            isSaving = true
-            saveError = nil
+        var value = draft
+        value.projectSlugs = TaskEditorDraft.parseCommaSeparated(projectsText)
+        value.tags = TaskEditorDraft.parseCommaSeparated(tagsText)
+        value.dueDate = selectedDueDate
+        isSaving = true
+        saveError = nil
 
-            Task { @MainActor in
-                let errorMessage = await onSave(value)
-                isSaving = false
-                if let errorMessage {
-                    saveError = errorMessage
-                } else {
-                    dismiss()
-                }
+        Task { @MainActor in
+            let errorMessage = await onSave(value)
+            isSaving = false
+            if let errorMessage {
+                saveError = errorMessage
+            } else {
+                dismiss()
             }
-        } catch {
-            saveError = error.localizedDescription
         }
+    }
+
+    private var selectedDueDate: CivilDate? {
+        guard hasDueDate else { return nil }
+
+        let components = Self.gregorianCalendar.dateComponents(
+            [.year, .month, .day],
+            from: dueDate
+        )
+        guard let year = components.year,
+              let month = components.month,
+              let day = components.day
+        else {
+            return nil
+        }
+        return try? CivilDate(
+            rawValue: String(format: "%04d-%02d-%02d", year, month, day)
+        )
+    }
+
+    private static var gregorianCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        return calendar
+    }
+
+    private static func date(from civilDate: CivilDate?) -> Date {
+        guard let civilDate else { return .now }
+
+        let parts = civilDate.rawValue.split(separator: "-").compactMap {
+            Int($0)
+        }
+        guard parts.count == 3 else { return .now }
+
+        var components = DateComponents()
+        components.calendar = Self.gregorianCalendar
+        components.timeZone = .autoupdatingCurrent
+        components.year = parts[0]
+        components.month = parts[1]
+        components.day = parts[2]
+        components.hour = 12
+        return Self.gregorianCalendar.date(from: components) ?? .now
     }
 
     private static func isValidProjectSlug(_ value: String) -> Bool {

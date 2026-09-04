@@ -165,6 +165,47 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testDueDateUsesNativePicker() {
+        continueAfterFailure = false
+
+        let app = XCUIApplication()
+        app.launchArguments.append(contentsOf: ["-ui-testing", "-ui-testing-reset-workspace"])
+        app.launch()
+
+        let seededTask = taskRow(named: "Seed todo", state: "Pending", in: app)
+        guard require(
+            seededTask,
+            in: app,
+            description: "the seeded todo with a due date"
+        ) else { return }
+        seededTask.tap()
+
+        let editor = app.descendants(matching: .any)
+            .matching(identifier: "task-editor")
+            .firstMatch
+        guard require(
+            editor,
+            in: app,
+            description: "the todo editor"
+        ) else { return }
+
+        guard require(
+            app.switches["task-editor-due-date-toggle"],
+            in: app,
+            description: "the optional due-date control"
+        ) else { return }
+        guard require(
+            app.datePickers["task-editor-due-date-picker"],
+            in: app,
+            description: "the native due-date picker"
+        ) else { return }
+        XCTAssertFalse(
+            app.textFields["Due date"].exists,
+            "Due dates should not use a text input"
+        )
+    }
+
+    @MainActor
     func testTodayFilterIncludesOverdueAndIsDefault() {
         continueAfterFailure = false
 
