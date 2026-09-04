@@ -345,6 +345,151 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testTaskCanBeRescheduledFromContextMenu() {
+        continueAfterFailure = false
+
+        let app = XCUIApplication()
+        let resetWorkspaceArgument = "-ui-testing-reset-workspace"
+        app.launchArguments.append(contentsOf: ["-ui-testing", resetWorkspaceArgument])
+        app.launch()
+
+        guard selectFilter("Active", in: app) else { return }
+
+        let taskList = app.descendants(matching: .any)
+            .matching(identifier: "task-list")
+            .firstMatch
+        guard require(
+            taskList,
+            in: app,
+            description: "the seeded task list"
+        ) else { return }
+
+        let task = taskRow(named: "Seed todo", state: "Pending", in: app)
+        guard require(
+            task,
+            in: app,
+            description: "the todo to reschedule"
+        ) else { return }
+        let originalLabel = task.label
+        task.press(forDuration: 1.2)
+
+        let rescheduleAction = app.buttons[
+            "task-context-reschedule-01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        ]
+        guard require(
+            rescheduleAction,
+            in: app,
+            description: "the Reschedule context-menu action"
+        ) else { return }
+        rescheduleAction.tap()
+
+        let rescheduler = app.descendants(matching: .any)
+            .matching(identifier: "task-reschedule")
+            .firstMatch
+        guard require(
+            rescheduler,
+            in: app,
+            description: "the reschedule sheet"
+        ) else { return }
+
+        let relativeField = app.textFields["task-reschedule-relative-due-date"]
+        guard require(
+            relativeField,
+            in: app,
+            description: "the reschedule relative-date field"
+        ) else { return }
+        relativeField.tap()
+        relativeField.typeText("in 2 days")
+
+        let applyButton = app.buttons["task-reschedule-relative-due-apply"]
+        guard require(
+            applyButton,
+            in: app,
+            description: "the reschedule Apply button"
+        ) else { return }
+        XCTAssertTrue(applyButton.isEnabled, "A valid relative schedule should be applicable")
+        applyButton.tap()
+        XCTAssertTrue(
+            app.keyboards.element.waitForNonExistence(timeout: 3),
+            "Applying a relative schedule should dismiss the keyboard"
+        )
+
+        rescheduler.swipeUp()
+        guard require(
+            app.datePickers["task-reschedule-date-picker"],
+            in: app,
+            description: "the reschedule calendar picker"
+        ) else { return }
+        let timeToggle = app.switches["task-reschedule-time-toggle"]
+        guard require(
+            timeToggle,
+            in: app,
+            description: "the reschedule exact-time control"
+        ) else { return }
+        XCTAssertEqual(
+            timeToggle.value as? String,
+            "1",
+            "A relative schedule should preserve exact minute precision"
+        )
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Todo reschedule sheet"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        app.buttons["task-reschedule-save"].tap()
+        guard requireEditorDismissed(
+            rescheduler,
+            after: "rescheduling the todo",
+            in: app
+        ) else { return }
+
+        guard let rescheduledTask = requireTaskRow(
+            named: "Seed todo",
+            state: "Pending",
+            in: app,
+            taskList: taskList,
+            description: "the rescheduled todo"
+        ) else { return }
+        let rescheduledLabel = rescheduledTask.label
+        XCTAssertNotEqual(
+            rescheduledLabel,
+            originalLabel,
+            "Rescheduling should replace the prior due date"
+        )
+        XCTAssertTrue(
+            rescheduledLabel.contains(" at "),
+            "A relative reschedule should persist its exact time"
+        )
+
+        app.terminate()
+        app.launchArguments = app.launchArguments.filter { $0 != resetWorkspaceArgument }
+        app.launch()
+
+        guard selectFilter("Active", in: app) else { return }
+        let relaunchedTaskList = app.descendants(matching: .any)
+            .matching(identifier: "task-list")
+            .firstMatch
+        guard require(
+            relaunchedTaskList,
+            in: app,
+            description: "the task list after relaunch"
+        ) else { return }
+        guard let persistedTask = requireTaskRow(
+            named: "Seed todo",
+            state: "Pending",
+            in: app,
+            taskList: relaunchedTaskList,
+            description: "the durably rescheduled todo"
+        ) else { return }
+        XCTAssertEqual(
+            persistedTask.label,
+            rescheduledLabel,
+            "The rescheduled due date and time should survive relaunch"
+        )
+    }
+
+    @MainActor
     func testTodayFilterIncludesOverdueAndIsDefault() {
         continueAfterFailure = false
 

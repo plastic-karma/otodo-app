@@ -593,6 +593,17 @@ final class AppModel {
         }
     }
 
+    func rescheduleTask(
+        _ task: TodoTask,
+        dueDate: CivilDate,
+        dueTime: CivilTime?
+    ) async {
+        var draft = TaskEditorDraft(task: task)
+        draft.dueDate = dueDate
+        draft.dueTime = dueTime
+        await updateTask(id: task.id, draft: draft)
+    }
+
     func deleteTask(_ task: TodoTask) async {
         guard rootState == .workspace, let selection = workspaceSelection else {
             errorMessage = "No todo workspace is selected."

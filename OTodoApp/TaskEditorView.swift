@@ -81,7 +81,7 @@ struct TaskEditorView: View {
         _tagsText = State(initialValue: draft.tags.joined(separator: ", "))
         _hasDueDate = State(initialValue: draft.dueDate != nil)
         _hasDueTime = State(initialValue: draft.dueTime != nil)
-        _dueDate = State(initialValue: Self.date(from: draft.dueDate, time: draft.dueTime))
+        _dueDate = State(initialValue: TaskSchedule.date(from: draft.dueDate, time: draft.dueTime))
         _relativeDueDateText = State(initialValue: "")
     }
 
@@ -198,7 +198,7 @@ struct TaskEditorView: View {
                             displayedComponents: .date
                         )
                         .datePickerStyle(.graphical)
-                        .environment(\.calendar, Self.gregorianCalendar)
+                        .environment(\.calendar, TaskSchedule.calendar)
                         .accessibilityIdentifier("task-editor-due-date-picker")
 
                         Toggle("Include time", isOn: $hasDueTime)
@@ -210,7 +210,7 @@ struct TaskEditorView: View {
                                 selection: $dueDate,
                                 displayedComponents: .hourAndMinute
                             )
-                            .environment(\.calendar, Self.gregorianCalendar)
+                            .environment(\.calendar, TaskSchedule.calendar)
                             .accessibilityIdentifier("task-editor-due-time-picker")
                         }
                     }
@@ -349,8 +349,8 @@ struct TaskEditorView: View {
     private func applyRelativeDueDate() {
         guard let expression = parsedRelativeDueDateExpression else { return }
         do {
-            let resolved = try expression.resolve()
-            dueDate = Self.date(from: resolved.date, time: resolved.time)
+            let resolved = try expression.resolve(calendar: TaskSchedule.calendar)
+            dueDate = TaskSchedule.date(from: resolved.date, time: resolved.time)
             hasDueDate = true
             hasDueTime = true
             relativeDueDateText = ""
@@ -424,34 +424,12 @@ struct TaskEditorView: View {
 
     private var selectedDueDate: CivilDate? {
         guard hasDueDate else { return nil }
-
-        let components = Self.gregorianCalendar.dateComponents(
-            [.year, .month, .day],
-            from: dueDate
-        )
-        guard let year = components.year,
-              let month = components.month,
-              let day = components.day
-        else {
-            return nil
-        }
-        return try? CivilDate(
-            rawValue: String(format: "%04d-%02d-%02d", year, month, day)
-        )
+        return TaskSchedule.civilDate(from: dueDate)
     }
 
     private var selectedDueTime: CivilTime? {
         guard hasDueDate, hasDueTime else { return nil }
-        let components = Self.gregorianCalendar.dateComponents(
-            [.hour, .minute],
-            from: dueDate
-        )
-        guard let hour = components.hour, let minute = components.minute else {
-            return nil
-        }
-        return try? CivilTime(
-            rawValue: String(format: "%02d:%02d", hour, minute)
-        )
+        return TaskSchedule.civilTime(from: dueDate)
     }
 
     private var dueDateHelpText: String {
@@ -462,31 +440,6 @@ struct TaskEditorView: View {
             return "Choose the calendar date and exact due time."
         }
         return "Choose a calendar date. Date-only reminders arrive at 9:00 AM."
-    }
-
-    private static var gregorianCalendar: Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .autoupdatingCurrent
-        return calendar
-    }
-
-    private static func date(from civilDate: CivilDate?, time: CivilTime?) -> Date {
-        guard let civilDate else { return .now }
-
-        let parts = civilDate.rawValue.split(separator: "-").compactMap {
-            Int($0)
-        }
-        guard parts.count == 3 else { return .now }
-
-        var components = DateComponents()
-        components.calendar = Self.gregorianCalendar
-        components.timeZone = .autoupdatingCurrent
-        components.year = parts[0]
-        components.month = parts[1]
-        components.day = parts[2]
-        components.hour = time?.hour ?? 12
-        components.minute = time?.minute ?? 0
-        return Self.gregorianCalendar.date(from: components) ?? .now
     }
 
     private static func isValidProjectSlug(_ value: String) -> Bool {

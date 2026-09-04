@@ -11,6 +11,7 @@ struct TaskListView: View {
     @State private var selectedProject: String?
     @State private var isProjectSidebarPresented = false
     @State private var isProjectEditorPresented = false
+    @State private var reschedulePresentation: ReschedulePresentation?
 
     init(model: AppModel, notifications: TaskNotificationManager) {
         self.model = model
@@ -101,10 +102,26 @@ struct TaskListView: View {
                                         )
                                     }
                                     .buttonStyle(.plain)
-                                    .accessibilityHint("Opens the todo editor")
+                                    .accessibilityHint(
+                                        "Opens the todo editor; touch and hold for more actions"
+                                    )
                                     .accessibilityIdentifier(
                                         "task-row-\(task.id.rawValue)"
                                     )
+                                    .contextMenu {
+                                        Button {
+                                            reschedulePresentation = ReschedulePresentation(task: task)
+                                        } label: {
+                                            Label(
+                                                "Reschedule",
+                                                systemImage: "calendar.badge.clock"
+                                            )
+                                        }
+                                        .disabled(model.isBusy)
+                                        .accessibilityIdentifier(
+                                            "task-context-reschedule-\(task.id.rawValue)"
+                                        )
+                                    }
                                     .swipeActions(edge: .leading, allowsFullSwipe: true) {
                                         if state(for: task.state)?.isTerminal != true,
                                            completionState != nil
@@ -231,6 +248,17 @@ struct TaskListView: View {
                             description: Text("Close the editor and refresh the workspace.")
                         )
                     }
+                }
+                .sheet(item: $reschedulePresentation) { presentation in
+                    TaskRescheduleView(task: presentation.task) { date, time in
+                        await model.rescheduleTask(
+                            presentation.task,
+                            dueDate: date,
+                            dueTime: time
+                        )
+                        return model.errorMessage
+                    }
+                    .presentationDetents([.large])
                 }
             }
             .allowsHitTesting(!isProjectSidebarPresented)
@@ -924,5 +952,13 @@ private enum EditorPresentation: Identifiable {
         case let .edit(task):
             return TaskEditorDraft(task: task)
         }
+    }
+}
+
+private struct ReschedulePresentation: Identifiable {
+    let task: TodoTask
+
+    var id: TaskID {
+        task.id
     }
 }
