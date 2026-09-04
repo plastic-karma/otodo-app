@@ -282,6 +282,67 @@ final class SyncEngineTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(calls.commits.isEmpty)
         XCTAssertTrue(calls.updates.isEmpty)
     }
+
+    func testProjectCreationAndItsTaskReferenceSyncInOneCommit() async throws {
+        let f = try Fixture()
+        let initial = try await f.engine.initialPull(selection: f.selection)
+        let taskContent = Fixture.record(
+            "A local",
+            projects: ["side-project"],
+            body: "local\n"
+        )
+        let taskPending = try f.pending(
+            taskContent,
+            id: UUID(uuidString: "55555555-5555-5555-5555-555555555555")!
+        )
+        let edited = try f.edit(initial, pending: taskPending)
+        let projectPath = f.path("Projects/side-project.md")
+        let projectContent = "# Side Project\n"
+        let projectPending = try PendingChange(
+            id: UUID(uuidString: "66666666-6666-6666-6666-666666666666")!,
+            path: projectPath,
+            baseBlobSHA: nil,
+            content: projectContent,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_100)
+        )
+        let local = try WorkspaceState(
+            selection: f.selection,
+            configuration: initial.configuration,
+            knownProjectSlugs: ["alpha", "side-project"],
+            tasks: edited.tasks,
+            baseHeadCommitSHA: initial.baseHeadCommitSHA,
+            baseRootTreeSHA: initial.baseRootTreeSHA,
+            pendingChanges: [taskPending, projectPending],
+            conflicts: [],
+            revision: initial.revision + 1
+        )
+        try await f.store.save(local, expectedRevision: initial.revision)
+
+        let report = try await f.engine.sync(selection: f.selection)
+
+        XCTAssertEqual(report.pulledCount, 0)
+        XCTAssertEqual(report.pushedCount, 2)
+        XCTAssertTrue(report.conflicts.isEmpty)
+        let saved = await f.store.current()
+        let durable = try XCTUnwrap(saved)
+        XCTAssertEqual(durable.knownProjectSlugs, ["alpha", "side-project"])
+        XCTAssertEqual(durable.tasks[0].task.projectSlugs, ["side-project"])
+        XCTAssertTrue(durable.pendingChanges.isEmpty)
+        let calls = await f.gitHub.calls()
+        XCTAssertEqual(calls.commits.count, 1)
+        XCTAssertEqual(
+            calls.commits[0].changes,
+            [
+                try RemoteChange(path: projectPath, content: projectContent),
+                try RemoteChange(path: f.aPath, content: taskContent),
+            ]
+        )
+        let branch = await f.gitHub.branch()
+        XCTAssertEqual(
+            branch.files.first { $0.path == projectPath }?.content,
+            projectContent
+        )
+    }
 }
 
 private struct Fixture {

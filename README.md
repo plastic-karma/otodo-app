@@ -1,8 +1,8 @@
 # OTodo
 
-OTodo is an offline-first iOS client for an Obsidian Todo v1 store kept in a GitHub repository. It signs in through GitHub's OAuth Device Flow, discovers stores on a selected branch, and lets you create, edit, complete, and delete todos without making a local Git checkout.
+OTodo is an offline-first iOS client for an Obsidian Todo v1 store kept in a GitHub repository. It signs in through GitHub's OAuth Device Flow, discovers stores on a selected branch, and lets you create projects plus create, edit, complete, and delete todos without making a local Git checkout.
 
-The app displays active todos due today or overdue by default, with filters for every active todo or all todos including terminal states. Todos are ordered by due date, configured workflow-state order, name, and ULID. Swipe right on a todo to reveal Done; swipe left to reveal Delete. The editor supports the name, state, projects, tags, due date, and Markdown body. GitHub tokens are stored in the device Keychain; repository workspaces and their pending changes are stored on the device.
+The app displays active todos due today or overdue by default, with filters for every active todo or all todos including terminal states. The Projects sidebar creates and filters projects; project names become lowercase, hyphenated slugs and direct Markdown project records. Todos are ordered by due date, configured workflow-state order, name, and ULID. Swipe right on a todo to reveal Done; swipe left to reveal Delete. The editor supports the name, state, projects, tags, due date, and Markdown body. GitHub tokens are stored in the device Keychain; repository workspaces and their pending changes are stored on the device.
 
 ## Requirements
 
@@ -72,7 +72,7 @@ The exact record contract is:
 
 The first connection to a store requires GitHub access so OTodo can validate and save a complete snapshot. After that:
 
-1. Every create, edit, completion, or deletion is atomically saved to the durable local workspace and outbox before the operation reports success.
+1. Every project or todo creation, edit, completion, or deletion is atomically saved to the durable local workspace and outbox before the operation reports success.
 2. Repeated local changes to the same path coalesce into one pending change while retaining the original remote base. Deleting a never-synchronized todo cancels its pending creation.
 3. OTodo synchronizes after a local save when online, when connectivity returns, on launch with a saved workspace, and on pull-to-refresh. Failed pushes remain pending for a later attempt.
 4. Sync first pulls the current branch snapshot, applies unrelated remote changes, and sends safe pending paths together in one `Sync OTodo changes` commit. The branch ref is updated with compare-and-swap semantics; OTodo never force-pushes.

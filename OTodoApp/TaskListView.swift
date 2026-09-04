@@ -8,6 +8,7 @@ struct TaskListView: View {
     @State private var visibility = TaskVisibility.today
     @State private var selectedProject: String?
     @State private var isProjectSidebarPresented = false
+    @State private var isProjectEditorPresented = false
 
     init(model: AppModel) {
         self.model = model
@@ -159,6 +160,28 @@ struct TaskListView: View {
             }
         }
         .animation(.snappy(duration: 0.24), value: isProjectSidebarPresented)
+        .sheet(isPresented: $isProjectEditorPresented) {
+            if let configuration = model.configuration {
+                ProjectEditorView(
+                    existingSlugs: model.projectChoices,
+                    projectsDirectory: configuration.projectsDirectory
+                ) { title, slug in
+                    await model.createProject(title: title, slug: slug)
+                    guard model.errorMessage == nil else {
+                        return model.errorMessage
+                    }
+                    selectedProject = slug
+                    return nil
+                }
+                .presentationDetents([.medium])
+            } else {
+                ContentUnavailableView(
+                    "Todo configuration unavailable",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text("Close the editor and refresh the workspace.")
+                )
+            }
+        }
     }
 
     private var projectSidebar: some View {
@@ -197,6 +220,20 @@ struct TaskListView: View {
                 }
                 .padding(12)
             }
+
+            Divider()
+
+            Button {
+                dismissProjectSidebar()
+                isProjectEditorPresented = true
+            } label: {
+                Label("New Project", systemImage: "folder.badge.plus")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(model.configuration == nil || model.isBusy)
+            .accessibilityIdentifier("project-add")
+            .padding(20)
 
             Divider()
 

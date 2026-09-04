@@ -219,6 +219,7 @@ public actor SyncEngine {
     ) throws -> Reconciliation {
         let parsed = try parse(snapshot: snapshot, selection: selection)
         var tasksByPath = Dictionary(uniqueKeysWithValues: parsed.tasks.map { ($0.task.relativePath, $0) })
+        var knownProjectSlugs = Set(parsed.knownProjectSlugs)
         let existingConflictsByPath = Dictionary(uniqueKeysWithValues: existingConflicts.map { ($0.path, $0) })
         var reconciledConflicts: [SyncConflict] = []
         var safePendingChanges: [PendingChange] = []
@@ -269,7 +270,8 @@ public actor SyncEngine {
                 blobSHA: reconciledPending.baseBlobSHA,
                 selection: selection,
                 configuration: parsed.configuration,
-                tasksByPath: &tasksByPath
+                tasksByPath: &tasksByPath,
+                knownProjectSlugs: &knownProjectSlugs
             )
         }
 
@@ -295,14 +297,16 @@ public actor SyncEngine {
                 blobSHA: existing.baseBlobSHA,
                 selection: selection,
                 configuration: parsed.configuration,
-                tasksByPath: &tasksByPath
+                tasksByPath: &tasksByPath,
+                knownProjectSlugs: &knownProjectSlugs
             )
         }
 
         let tasks = tasksByPath.values.sorted { $0.task.relativePath < $1.task.relativePath }
+        let projects = knownProjectSlugs.sorted()
         try validateProjectReferences(
             tasks: tasks,
-            knownProjectSlugs: parsed.knownProjectSlugs
+            knownProjectSlugs: projects
         )
 
         let conflicts = reconciledConflicts.sorted { $0.path < $1.path }
@@ -320,7 +324,7 @@ public actor SyncEngine {
         let reconciledWorkspace = try WorkspaceState(
             selection: selection,
             configuration: parsed.configuration,
-            knownProjectSlugs: parsed.knownProjectSlugs,
+            knownProjectSlugs: projects,
             tasks: tasks,
             baseHeadCommitSHA: snapshot.headCommitSHA,
             baseRootTreeSHA: snapshot.rootTreeSHA,
@@ -426,29 +430,54 @@ public actor SyncEngine {
         blobSHA: String?,
         selection: RepositorySelection,
         configuration: StoreConfiguration,
-        tasksByPath: inout [String: TaskDocument]
+        tasksByPath: inout [String: TaskDocument],
+        knownProjectSlugs: inout Set<String>
     ) throws {
-        guard let relativePath = storeRelativePath(fullPath, storePath: selection.storePath),
-              relativePath.hasPrefix(configuration.tasksDirectory + "/"),
-              relativePath.hasSuffix(".md")
-        else {
+        guard let relativePath = storeRelativePath(fullPath, storePath: selection.storePath) else {
             return
         }
 
-        guard let content else {
-            tasksByPath.removeValue(forKey: relativePath)
+        if relativePath.hasPrefix(configuration.tasksDirectory + "/"),
+           relativePath.hasSuffix(".md")
+        {
+            guard let content else {
+                tasksByPath.removeValue(forKey: relativePath)
+                return
+            }
+
+            let filename = relativePath.split(separator: "/").last.map(String.init) ?? ""
+            let id = try TaskID(rawValue: String(filename.dropLast(3)))
+            let task = try taskCodec.parseTask(
+                id: id,
+                relativePath: relativePath,
+                text: content,
+                configuration: configuration
+            )
+            tasksByPath[relativePath] = TaskDocument(
+                task: task,
+                content: content,
+                blobSHA: blobSHA
+            )
             return
         }
 
-        let filename = relativePath.split(separator: "/").last.map(String.init) ?? ""
-        let id = try TaskID(rawValue: String(filename.dropLast(3)))
-        let task = try taskCodec.parseTask(
-            id: id,
-            relativePath: relativePath,
-            text: content,
-            configuration: configuration
-        )
-        tasksByPath[relativePath] = TaskDocument(task: task, content: content, blobSHA: blobSHA)
+        let projectPrefix = configuration.projectsDirectory + "/"
+        guard relativePath.hasPrefix(projectPrefix), relativePath.hasSuffix(".md") else {
+            return
+        }
+        let projectRelativePath = String(relativePath.dropFirst(projectPrefix.count))
+        guard !projectRelativePath.contains("/") else {
+            throw OTodoError.validation(
+                field: "project.path",
+                message: "Nested project record is not supported: \(relativePath)"
+            )
+        }
+        let slug = String(projectRelativePath.dropLast(3))
+        if content == nil {
+            knownProjectSlugs.remove(slug)
+        } else {
+            knownProjectSlugs.insert(slug)
+        }
     }
 
     private func validateProjectReferences(

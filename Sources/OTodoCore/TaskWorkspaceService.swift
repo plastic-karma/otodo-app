@@ -136,6 +136,64 @@ public actor TaskWorkspaceService {
         return tasks
     }
 
+    /// Creates a direct Markdown project record and adds it to the durable outbox.
+    @discardableResult
+    public func addProject(
+        selection: RepositorySelection,
+        slug: String,
+        title: String
+    ) async throws -> String {
+        let workspace = try await requireWorkspace(selection: selection)
+        _ = try workspace.configuration.projectLink(slug: slug)
+
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty,
+              !trimmedTitle.contains("\n"),
+              !trimmedTitle.contains("\r")
+        else {
+            throw OTodoError.validation(
+                field: "project.title",
+                message: "Project title must be nonempty and single-line"
+            )
+        }
+        guard !workspace.knownProjectSlugs.contains(slug) else {
+            throw OTodoError.validation(
+                field: "projects",
+                message: "Project \(slug) already exists"
+            )
+        }
+
+        let relativePath = "\(workspace.configuration.projectsDirectory)/\(slug).md"
+        let repositoryPath = Self.repositoryPath(
+            selection: workspace.selection,
+            storeRelativePath: relativePath
+        )
+        guard !workspace.conflicts.contains(where: { $0.path == repositoryPath }) else {
+            throw OTodoError.conflict(
+                message: "Resolve the conflict at \(repositoryPath) before creating this project"
+            )
+        }
+
+        let content = "# \(trimmedTitle)\n"
+        let pendingChanges = try upsertingPendingChange(
+            path: repositoryPath,
+            content: content,
+            baseBlobSHA: nil,
+            in: workspace.pendingChanges,
+            at: now()
+        )
+        let knownProjectSlugs = (workspace.knownProjectSlugs + [slug]).sorted()
+        let updatedWorkspace = try Self.replacing(
+            workspace,
+            knownProjectSlugs: knownProjectSlugs,
+            tasks: workspace.tasks,
+            pendingChanges: pendingChanges,
+            conflicts: workspace.conflicts
+        )
+        try await persistence.save(updatedWorkspace, expectedRevision: workspace.revision)
+        return slug
+    }
+
     public func addTask(
         selection: RepositorySelection,
         name: String,
@@ -618,6 +676,7 @@ public actor TaskWorkspaceService {
 
     private static func replacing(
         _ workspace: WorkspaceState,
+        knownProjectSlugs: [String]? = nil,
         tasks: [TaskDocument],
         pendingChanges: [PendingChange],
         conflicts: [SyncConflict]
@@ -628,7 +687,7 @@ public actor TaskWorkspaceService {
         return try WorkspaceState(
             selection: workspace.selection,
             configuration: workspace.configuration,
-            knownProjectSlugs: workspace.knownProjectSlugs,
+            knownProjectSlugs: knownProjectSlugs ?? workspace.knownProjectSlugs,
             tasks: tasks,
             baseHeadCommitSHA: workspace.baseHeadCommitSHA,
             baseRootTreeSHA: workspace.baseRootTreeSHA,

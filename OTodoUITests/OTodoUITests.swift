@@ -411,6 +411,111 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testCreateProjectPersistsAfterRelaunch() {
+        continueAfterFailure = false
+
+        let app = XCUIApplication()
+        let resetWorkspaceArgument = "-ui-testing-reset-workspace"
+        app.launchArguments.append(contentsOf: ["-ui-testing", resetWorkspaceArgument])
+        app.launch()
+
+        let sidebarButton = app.buttons["project-sidebar-toggle"]
+        guard require(
+            sidebarButton,
+            in: app,
+            description: "the project sidebar button"
+        ) else { return }
+        sidebarButton.tap()
+
+        let addProjectButton = app.buttons["project-add"]
+        guard require(
+            addProjectButton,
+            in: app,
+            description: "the New Project button"
+        ) else { return }
+        addProjectButton.tap()
+
+        let editor = app.descendants(matching: .any)
+            .matching(identifier: "project-editor")
+            .firstMatch
+        guard require(
+            editor,
+            in: app,
+            description: "the project editor"
+        ) else { return }
+
+        let nameField = app.textFields["project-editor-name"]
+        guard require(
+            nameField,
+            in: app,
+            description: "the project name field"
+        ) else { return }
+        nameField.tap()
+        nameField.typeText("Side Project")
+
+        let slugLabel = app.staticTexts["project-editor-slug"]
+        guard require(
+            slugLabel,
+            in: app,
+            description: "the generated project slug"
+        ) else { return }
+        XCTAssertTrue(
+            slugLabel.label.hasSuffix("side-project"),
+            "The project name should generate the side-project slug"
+        )
+
+        let saveButton = app.buttons["project-editor-save"]
+        guard require(
+            saveButton,
+            in: app,
+            description: "the project Save button"
+        ) else { return }
+        XCTAssertTrue(saveButton.isEnabled, "A valid generated slug should enable Save")
+        saveButton.tap()
+        guard requireEditorDismissed(
+            editor,
+            after: "creating the project",
+            in: app
+        ) else { return }
+
+        guard require(
+            app.navigationBars["Side Project"],
+            in: app,
+            description: "the newly selected project"
+        ) else { return }
+
+        sidebarButton.tap()
+        let createdProject = app.buttons["project-filter-side-project"]
+        guard require(
+            createdProject,
+            in: app,
+            description: "the new project in the sidebar"
+        ) else { return }
+        XCTAssertEqual(
+            createdProject.value as? String,
+            "Selected",
+            "The new project should become the active filter"
+        )
+
+        app.terminate()
+        app.launchArguments = app.launchArguments.filter { $0 != resetWorkspaceArgument }
+        app.launch()
+
+        let relaunchedSidebarButton = app.buttons["project-sidebar-toggle"]
+        guard require(
+            relaunchedSidebarButton,
+            in: app,
+            description: "the project sidebar button after relaunch"
+        ) else { return }
+        relaunchedSidebarButton.tap()
+        _ = require(
+            app.buttons["project-filter-side-project"],
+            in: app,
+            description: "the durably saved project after relaunch"
+        )
+    }
+
+    @MainActor
     func testSwipeActionsCompleteAndDeleteDurably() {
         continueAfterFailure = false
 

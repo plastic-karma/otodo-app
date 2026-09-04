@@ -261,6 +261,71 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(afterEdit.pendingChanges[0].content, afterEdit.tasks[0].content)
     }
 
+    func testAddProjectCreatesCanonicalDurableRecordAndRejectsDuplicates() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let initial = try makeWorkspace(
+            selection: selection,
+            configuration: configuration,
+            knownProjectSlugs: ["alpha"]
+        )
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+
+        let createdAt = Date(timeIntervalSince1970: 1_700_000_300)
+        let pendingID = UUID(uuidString: "12121212-1212-1212-1212-121212121212")!
+        let service = makeService(
+            store: store,
+            id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            now: createdAt,
+            uuid: pendingID
+        )
+
+        let slug = try await service.addProject(
+            selection: selection,
+            slug: "side-project",
+            title: "  Side Project  "
+        )
+        XCTAssertEqual(slug, "side-project")
+
+        let durable = try await loadRequired(
+            FileWorkspaceStore(rootURL: directory),
+            selection: selection
+        )
+        XCTAssertEqual(durable.revision, 1)
+        XCTAssertEqual(durable.knownProjectSlugs, ["alpha", "side-project"])
+        let pending = try XCTUnwrap(durable.pendingChanges.first)
+        XCTAssertEqual(durable.pendingChanges.count, 1)
+        XCTAssertEqual(pending.id, pendingID)
+        XCTAssertEqual(pending.path, repositoryPath(selection, "Projects/side-project.md"))
+        XCTAssertNil(pending.baseBlobSHA)
+        XCTAssertEqual(pending.content, "# Side Project\n")
+        XCTAssertEqual(pending.createdAt, createdAt)
+
+        do {
+            _ = try await service.addProject(
+                selection: selection,
+                slug: "side-project",
+                title: "Duplicate"
+            )
+            XCTFail("Expected duplicate project creation to fail")
+        } catch {
+            XCTAssertEqual(
+                error as? OTodoError,
+                .validation(
+                    field: "projects",
+                    message: "Project side-project already exists"
+                )
+            )
+        }
+
+        let unchanged = try await loadRequired(store, selection: selection)
+        XCTAssertEqual(unchanged, durable)
+    }
+
     func testRepeatedEditsCoalesceOutboxAndRetainOriginalBaseIDAndTime() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
