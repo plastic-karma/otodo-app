@@ -103,7 +103,7 @@ struct TaskListView: View {
                                     }
                                     .buttonStyle(.plain)
                                     .accessibilityHint(
-                                        "Opens the todo editor; touch and hold for more actions"
+                                        "Opens the todo editor; swipe right or touch and hold for task actions"
                                     )
                                     .accessibilityIdentifier(
                                         "task-row-\(task.id.rawValue)"
@@ -137,6 +137,19 @@ struct TaskListView: View {
                                                 "task-complete-\(task.id.rawValue)"
                                             )
                                         }
+                                        Button {
+                                            reschedulePresentation = ReschedulePresentation(task: task)
+                                        } label: {
+                                            Label(
+                                                "Reschedule",
+                                                systemImage: "calendar.badge.clock"
+                                            )
+                                        }
+                                        .tint(OTodoTheme.violet)
+                                        .disabled(model.isBusy)
+                                        .accessibilityIdentifier(
+                                            "task-reschedule-\(task.id.rawValue)"
+                                        )
                                     }
                                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                         Button(role: .destructive) {

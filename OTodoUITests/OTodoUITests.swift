@@ -490,6 +490,74 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testLeadingSwipeOffersCompleteAndReschedule() {
+        continueAfterFailure = false
+
+        let app = XCUIApplication()
+        app.launchArguments.append(contentsOf: ["-ui-testing", "-ui-testing-reset-workspace"])
+        app.launch()
+
+        let taskList = app.descendants(matching: .any)
+            .matching(identifier: "task-list")
+            .firstMatch
+        guard require(
+            taskList,
+            in: app,
+            description: "the seeded task list"
+        ) else { return }
+
+        let task = taskRow(named: "Seed todo", state: "Pending", in: app)
+        guard require(
+            task,
+            in: app,
+            description: "the todo with leading swipe actions"
+        ) else { return }
+        task.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)
+        ).press(
+            forDuration: 0.1,
+            thenDragTo: task.coordinate(
+                withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5)
+            )
+        )
+
+        guard require(
+            app.buttons["task-complete-01ARZ3NDEKTSV4RRFFQ69G5FAV"],
+            in: app,
+            description: "the revealed Done swipe action"
+        ) else { return }
+        let rescheduleAction = app.buttons[
+            "task-reschedule-01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        ]
+        guard require(
+            rescheduleAction,
+            in: app,
+            description: "the revealed Reschedule swipe action"
+        ) else { return }
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Right swipe task actions"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        rescheduleAction.tap()
+        let rescheduler = app.descendants(matching: .any)
+            .matching(identifier: "task-reschedule")
+            .firstMatch
+        guard require(
+            rescheduler,
+            in: app,
+            description: "the reschedule sheet from the leading swipe"
+        ) else { return }
+
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(
+            rescheduler.waitForNonExistence(timeout: 3),
+            "Cancel should dismiss the reschedule sheet"
+        )
+    }
+
+    @MainActor
     func testTodayFilterIncludesOverdueAndIsDefault() {
         continueAfterFailure = false
 
