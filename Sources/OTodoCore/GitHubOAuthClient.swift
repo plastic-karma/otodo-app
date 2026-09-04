@@ -117,14 +117,24 @@ public final class GitHubOAuthClient: Sendable {
                 throw OTodoError.authentication(message: "The GitHub device authorization expired")
             }
 
-            let response = try await sendForm(
-                endpoint: "login/oauth/access_token",
-                fields: [
-                    "client_id": clientID,
-                    "device_code": deviceCode.deviceCode,
-                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-                ]
-            )
+            let response: HTTPResponse
+            do {
+                response = try await sendForm(
+                    endpoint: "login/oauth/access_token",
+                    fields: [
+                        "client_id": clientID,
+                        "device_code": deviceCode.deviceCode,
+                        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                    ]
+                )
+            } catch let error as OTodoError {
+                guard case .transport(nil, _) = error else {
+                    throw error
+                }
+                // Opening GitHub backgrounds the app and can interrupt an in-flight
+                // poll. The device code remains valid, so retry after the next interval.
+                continue
+            }
             guard (200..<300).contains(response.statusCode) else {
                 throw oauthHTTPError(response, context: "polling device authorization")
             }

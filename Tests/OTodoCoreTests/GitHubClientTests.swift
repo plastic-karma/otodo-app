@@ -99,6 +99,38 @@ final class GitHubClientTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testPollingRetriesConnectionLossUntilTokenArrives() async throws {
+        let instant = instant
+        let transport = ConnectionLossThenResponseTransport(response: try jsonResponse([
+            "access_token": "access-after-reconnect",
+            "token_type": "bearer",
+            "scope": "repo",
+        ]))
+        let sleeps = SleepRecorder()
+        let client = GitHubOAuthClient(
+            clientID: "client-id",
+            transport: transport,
+            baseURL: oauthBaseURL,
+            now: { instant },
+            sleep: { seconds in await sleeps.record(seconds) }
+        )
+        let device = OAuthDeviceCode(
+            deviceCode: "device-123",
+            userCode: "ABCD-EFGH",
+            verificationURI: URL(string: "https://github.test/login/device")!,
+            expiresAt: instant.addingTimeInterval(600),
+            pollingInterval: 2
+        )
+
+        let token = try await client.pollForToken(deviceCode: device)
+
+        let requestCount = await transport.requestsSent()
+        let intervals = await sleeps.intervals()
+        XCTAssertEqual(token.accessToken, "access-after-reconnect")
+        XCTAssertEqual(requestCount, 2)
+        XCTAssertEqual(intervals, [2, 2])
+    }
+
     func testPollingReportsDenialAndExpiresBeforeSleepingOrSending() async throws {
         let instant = instant
         let denialTransport = ScriptedHTTPTransport(responses: [
@@ -970,6 +1002,30 @@ private actor ScriptedHTTPTransport: HTTPTransport {
 
     func requests() -> [CapturedRequest] {
         capturedRequests
+    }
+}
+
+private actor ConnectionLossThenResponseTransport: HTTPTransport {
+    private let response: HTTPResponse
+    private var requestCount = 0
+
+    init(response: HTTPResponse) {
+        self.response = response
+    }
+
+    func send(_ request: URLRequest) async throws -> HTTPResponse {
+        requestCount += 1
+        if requestCount == 1 {
+            throw OTodoError.transport(
+                statusCode: nil,
+                message: "The network connection was lost."
+            )
+        }
+        return response
+    }
+
+    func requestsSent() -> Int {
+        requestCount
     }
 }
 
