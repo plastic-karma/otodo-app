@@ -102,15 +102,28 @@ struct TaskListView: View {
                                 emptyRow
                             } else {
                                 ForEach(displayedTasks, id: \.id) { task in
+                                    let workflowState = state(for: task.state)
+                                    let canComplete = workflowState?.isTerminal != true && completionState != nil
                                     TaskRowView(
                                         task: task,
-                                        workflowState: state(for: task.state),
+                                        workflowState: workflowState,
                                         today: today,
                                         isCompletionDisabled: model.isBusy || completionTarget(for: task) == nil,
                                         onOpen: { editorPresentation = .edit(task) },
                                         onToggleCompletion: { toggleCompletion(task) }
                                     )
                                     .contextMenu {
+                                        if canComplete {
+                                            Button {
+                                                toggleCompletion(task)
+                                            } label: {
+                                                Label("Done", systemImage: "checkmark")
+                                            }
+                                            .disabled(model.isBusy)
+                                            .accessibilityIdentifier(
+                                                "task-context-complete-\(task.id.rawValue)"
+                                            )
+                                        }
                                         Button {
                                             reschedulePresentation = ReschedulePresentation(task: task)
                                         } label: {
@@ -123,11 +136,23 @@ struct TaskListView: View {
                                         .accessibilityIdentifier(
                                             "task-context-reschedule-\(task.id.rawValue)"
                                         )
+
+                                        Divider()
+
+                                        Button(role: .destructive) {
+                                            Task { @MainActor in
+                                                await model.deleteTask(task)
+                                            }
+                                        } label: {
+                                            Label("Delete", systemImage: "trash")
+                                        }
+                                        .disabled(model.isBusy)
+                                        .accessibilityIdentifier(
+                                            "task-context-delete-\(task.id.rawValue)"
+                                        )
                                     }
                                     .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                                        if state(for: task.state)?.isTerminal != true,
-                                           completionState != nil
-                                        {
+                                        if canComplete {
                                             Button {
                                                 toggleCompletion(task)
                                             } label: {

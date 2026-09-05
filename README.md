@@ -8,6 +8,8 @@ Tap a todo's circle to complete it without opening the editor. Completed todos r
 
 Project sidebar badges count only open todos across all dates, independent of the selected filter. Configured terminal states are excluded from both individual project counts and the **All Todos** sidebar count.
 
+Touch and hold a todo for **Done**, **Reschedule**, and **Delete**. Done is available only for open todos; Delete is available for both open and completed todos.
+
 Touch and hold OTodo's Home Screen icon and choose **New Todo** to open task creation directly.
 Tap **+** to add a todo. Touch and hold **+** to choose **New Todo**, **Bulk Add**, or **New Project**.
 

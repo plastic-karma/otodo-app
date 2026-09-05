@@ -604,6 +604,55 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testContextMenuCompletesAndDeletesTodoDurably() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        let resetWorkspaceArgument = "-ui-testing-reset-workspace"
+        app.launchArguments.append(contentsOf: ["-ui-testing", resetWorkspaceArgument])
+        app.launch()
+
+        let pending = taskRow(named: "Seed todo", state: "Pending", in: app)
+        guard require(pending, in: app, description: "the open todo for context actions") else { return }
+        pending.press(forDuration: 1.2)
+        let complete = app.buttons["task-context-complete-01ARZ3NDEKTSV4RRFFQ69G5FAV"]
+        let reschedule = app.buttons["task-context-reschedule-01ARZ3NDEKTSV4RRFFQ69G5FAV"]
+        let delete = app.buttons["task-context-delete-01ARZ3NDEKTSV4RRFFQ69G5FAV"]
+        guard require(complete, in: app, description: "Done in the long-press menu"),
+              require(reschedule, in: app, description: "Reschedule in the long-press menu"),
+              require(delete, in: app, description: "Delete in the long-press menu")
+        else { return }
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Todo long-press menu with Done Reschedule and Delete"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        complete.tap()
+        XCTAssertTrue(pending.waitForNonExistence(timeout: 8))
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch.exists)
+
+        app.terminate()
+        app.launchArguments.removeAll { $0 == resetWorkspaceArgument }
+        app.launch()
+        guard selectFilter("All", in: app) else { return }
+        let completed = taskRow(named: "Seed todo", state: "Done", in: app)
+        guard require(completed, in: app, description: "the durably completed todo") else { return }
+        completed.press(forDuration: 1.2)
+        guard require(delete, in: app, description: "Delete for an already completed todo") else { return }
+        XCTAssertFalse(complete.exists, "Done should not reopen an already terminal todo")
+        delete.tap()
+        XCTAssertTrue(completed.waitForNonExistence(timeout: 8))
+
+        app.terminate()
+        app.launch()
+        guard selectFilter("All", in: app) else { return }
+        guard require(
+            taskRow(named: "Completed overdue todo", state: "Done", in: app),
+            in: app,
+            description: "an unrelated completed todo retained after relaunch"
+        ) else { return }
+        XCTAssertFalse(app.buttons["task-row-01ARZ3NDEKTSV4RRFFQ69G5FAV"].exists)
+    }
+
+    @MainActor
     func testTaskCanBeRescheduledFromContextMenu() {
         continueAfterFailure = false
 
