@@ -210,7 +210,7 @@ public actor FileWorkspaceStore: WorkspacePersisting {
         }
     }
 
-    private nonisolated static func atomicallyReplaceItem(
+    nonisolated static func atomicallyReplaceItem(
         at destinationURL: URL,
         withItemAt temporaryURL: URL,
         fileManager: FileManager
@@ -266,7 +266,7 @@ public actor FileWorkspaceStore: WorkspacePersisting {
         JSONDecoder()
     }
 
-    private nonisolated static func setPermissions(_ permissions: Int, at url: URL) throws {
+    nonisolated static func setPermissions(_ permissions: Int, at url: URL) throws {
         #if os(Windows)
         _ = permissions
         _ = url

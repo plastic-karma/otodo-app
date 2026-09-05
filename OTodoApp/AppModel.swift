@@ -39,6 +39,7 @@ final class AppModel {
     @ObservationIgnored private let resetsUITestingWorkspace: Bool
     @ObservationIgnored private let workspaceRootURL: URL
     @ObservationIgnored private let workspaceStore: FileWorkspaceStore
+    @ObservationIgnored let filterStore: FileTaskFilterStore
     @ObservationIgnored private let taskService: TaskWorkspaceService
     @ObservationIgnored private let credentialStore: (any CredentialStoring)?
     @ObservationIgnored private let repositorySelectionStore: RepositorySelectionStore?
@@ -47,7 +48,7 @@ final class AppModel {
 
     @ObservationIgnored private var authenticatedGitHub: AuthenticatedGitHubService?
     @ObservationIgnored private var syncEngine: SyncEngine?
-    @ObservationIgnored private var workspaceSelection: RepositorySelection?
+    private(set) var workspaceSelection: RepositorySelection?
     @ObservationIgnored private var didStart = false
     @ObservationIgnored private var sessionID = UUID()
     @ObservationIgnored private var authorizationID: UUID?
@@ -94,6 +95,9 @@ final class AppModel {
             .appendingPathComponent("workspaces", isDirectory: true)
 #endif
         workspaceRootURL = rootURL
+        filterStore = FileTaskFilterStore(
+            rootURL: rootURL.appendingPathComponent("filters", isDirectory: true)
+        )
 
         let store = FileWorkspaceStore(rootURL: rootURL)
         workspaceStore = store
@@ -1074,7 +1078,7 @@ final class AppModel {
                         recurrence: nil,
                         recurrenceFrom: nil,
                         lastCompletedDate: nil,
-                        body: "",
+                        body: seed.name == "Future todo" ? "Review invoice 123\nSend receipt" : "",
                         extraProperties: [
                             YAMLProperty(name: "base", value: .string(configuration.todosBaseLink)),
                         ]

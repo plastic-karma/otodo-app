@@ -820,6 +820,112 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testSavedFiltersPersistEditsAndHomeStars() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace"]
+        app.launch()
+
+        let openFilters = app.buttons["filters-open"]
+        guard require(openFilters, in: app, description: "the filter library entry") else { return }
+        openFilters.tap()
+        let addFilterButton = app.buttons["filter-add"]
+        guard require(addFilterButton, in: app, description: "the New Filter button") else { return }
+        addFilterButton.tap()
+        let name = app.textFields["filter-editor-name"]
+        guard require(name, in: app, description: "the filter name field") else { return }
+        name.tap()
+        name.typeText("Work invoices")
+        let query = app.descendants(matching: .any)
+            .matching(identifier: "filter-editor-query").firstMatch
+        guard require(query, in: app, description: "the text query editor") else { return }
+        query.tap()
+        query.typeText("active AND")
+        let save = app.buttons["filter-editor-save"]
+        XCTAssertFalse(save.isEnabled, "An unfinished boolean expression must not be saved")
+        query.typeText(" project:work AND tag:focus AND name:/future/i AND description:/invoice/i")
+        app.buttons["filter-editor-star"].tap()
+        XCTAssertTrue(save.isEnabled, "A complete query can be saved")
+        let editorScreenshot = XCTAttachment(screenshot: app.screenshot())
+        editorScreenshot.name = "Saved filter text editor"
+        editorScreenshot.lifetime = .keepAlways
+        add(editorScreenshot)
+        save.tap()
+        let editor = app.descendants(matching: .any)
+            .matching(identifier: "filter-editor").firstMatch
+        guard requireEditorDismissed(editor, after: "saving a filter", in: app) else { return }
+
+        let saved = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "filter-open-", "Work invoices")
+        ).firstMatch
+        guard require(saved, in: app, description: "the saved custom filter") else { return }
+        let id = String(saved.identifier.dropFirst("filter-open-".count))
+        saved.tap()
+        let library = app.descendants(matching: .any)
+            .matching(identifier: "filter-library").firstMatch
+        XCTAssertTrue(library.waitForNonExistence(timeout: 8))
+        let future = taskRow(named: "Future todo", state: "Pending", in: app)
+        guard require(future, in: app, description: "the matching invoice todo") else { return }
+        XCTAssertFalse(taskRow(named: "Seed todo", state: "Pending", in: app).exists)
+        XCTAssertFalse(taskRow(named: "Undated todo", state: "Pending", in: app).exists)
+
+        app.terminate()
+        app.launchArguments = ["-ui-testing"]
+        app.launch()
+        let favorite = app.buttons["task-filter-\(id)"]
+        guard require(favorite, in: app, description: "the saved star on Home after relaunch") else { return }
+        app.scrollViews["task-filters"].swipeLeft()
+        favorite.tap()
+        guard require(future, in: app, description: "the persisted query result") else { return }
+        let homeScreenshot = XCTAttachment(screenshot: app.screenshot())
+        homeScreenshot.name = "Starred custom filter on Home"
+        homeScreenshot.lifetime = .keepAlways
+        add(homeScreenshot)
+
+        openFilters.tap()
+        guard require(saved, in: app, description: "the filter to edit") else { return }
+        saved.press(forDuration: 1.2)
+        let edit = app.buttons["filter-edit-\(id)"]
+        guard require(edit, in: app, description: "the Edit Filter action") else { return }
+        edit.tap()
+        guard require(query, in: app, description: "the saved query for editing") else { return }
+        query.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.95)).tap()
+        query.typeText(" AND NOT name:/future/i")
+        save.tap()
+        guard requireEditorDismissed(editor, after: "editing a filter", in: app) else { return }
+        saved.tap()
+        XCTAssertTrue(library.waitForNonExistence(timeout: 8))
+        XCTAssertTrue(future.waitForNonExistence(timeout: 8), "Editing must invalidate the compiled query")
+
+        openFilters.tap()
+        let star = app.buttons["filter-star-\(id)"]
+        guard require(star, in: app, description: "the saved filter's Home star") else { return }
+        star.tap()
+        let unstarred = expectation(
+            for: NSPredicate(format: "value == %@", "Off"),
+            evaluatedWith: star
+        )
+        wait(for: [unstarred], timeout: 8)
+        app.buttons["filters-done"].tap()
+        XCTAssertTrue(favorite.waitForNonExistence(timeout: 8))
+        app.terminate()
+        app.launch()
+        XCTAssertFalse(favorite.exists, "Removing a Home star must persist")
+        openFilters.tap()
+        guard require(saved, in: app, description: "the unstarred filter retained in the library") else { return }
+        saved.press(forDuration: 1.2)
+        let delete = app.buttons["filter-delete-\(id)"]
+        guard require(delete, in: app, description: "the Delete Filter action") else { return }
+        delete.tap()
+        XCTAssertTrue(saved.waitForNonExistence(timeout: 8))
+        app.terminate()
+        app.launch()
+        openFilters.tap()
+        guard require(addFilterButton, in: app, description: "the library after deleting a filter") else { return }
+        XCTAssertFalse(saved.exists, "Deleted filters must not return after relaunch")
+    }
+
+    @MainActor
     func testTodayFilterIncludesOverdueAndIsDefault() {
         continueAfterFailure = false
         verifyTodayFilters(appearance: "light")
@@ -845,13 +951,13 @@ final class OTodoUITests: XCTestCase {
             description: "the seeded task list"
         ) else { return }
 
-        let filter = app.segmentedControls["task-filter"]
+        let filter = app.buttons["task-filter-today"]
         guard require(
             filter,
             in: app,
             description: "the todo visibility filter"
         ) else { return }
-        XCTAssertTrue(filter.buttons["Today"].isSelected, "Today should be selected by default")
+        XCTAssertTrue(filter.isSelected, "Today should be selected by default")
 
         guard require(
             taskRow(named: "Overdue todo", state: "Pending", in: app),
@@ -1302,7 +1408,7 @@ final class OTodoUITests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) -> Bool {
-        let button = app.segmentedControls["task-filter"].buttons[name]
+        let button = app.buttons["task-filter-\(name.lowercased())"]
         guard require(
             button,
             in: app,

@@ -9,7 +9,12 @@ struct TaskListView: View {
     @Bindable private var model: AppModel
     private let notifications: TaskNotificationManager
     @State private var editorPresentation: EditorPresentation?
-    @State private var visibility = TaskVisibility.today
+    @State private var filterLibrary: TaskFilterLibrary
+    @State private var selectedFilterID = "today"
+    @State private var isFilterLibraryPresented = false
+    @State private var displayedTasks: [TodoTask] = []
+    @State private var isFiltering = false
+    @State private var filterError: String?
     @State private var selectedProject: String?
     @State private var isProjectSidebarPresented = false
     @State private var isProjectEditorPresented = false
@@ -18,11 +23,12 @@ struct TaskListView: View {
     init(model: AppModel, notifications: TaskNotificationManager) {
         self.model = model
         self.notifications = notifications
+        _filterLibrary = State(initialValue: TaskFilterLibrary(store: model.filterStore))
     }
 
     var body: some View {
-        let displayedTasks = visibleTasks
         let today = currentDateKey
+        let input = filterInput
 
         return ZStack(alignment: .leading) {
             NavigationStack {
@@ -39,19 +45,24 @@ struct TaskListView: View {
                                 .listRowBackground(Color.clear)
                         }
 
-                        Section {
-                            Picker("Todo visibility", selection: $visibility) {
-                                ForEach(TaskVisibility.allCases, id: \.self) { option in
-                                    Text(option.rawValue).tag(option)
-                                }
+                        if filterLibrary.filters.contains(where: \.isStarred) {
+                            Section {
+                                favoriteFilters
+                                    .listRowInsets(
+                                        EdgeInsets(top: 0, leading: 20, bottom: 8, trailing: 20)
+                                    )
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
                             }
-                            .pickerStyle(.segmented)
-                            .accessibilityIdentifier("task-filter")
-                            .listRowInsets(
-                                EdgeInsets(top: 0, leading: 20, bottom: 8, trailing: 20)
-                            )
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
+                        }
+
+                        if let message = filterError ?? filterLibrary.errorMessage {
+                            Section {
+                                Label(message, systemImage: "exclamationmark.triangle")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.red)
+                                    .accessibilityIdentifier("filter-error")
+                            }
                         }
 
                         if let errorMessage = model.errorMessage, !errorMessage.isEmpty {
@@ -223,6 +234,13 @@ struct TaskListView: View {
                         .accessibilityHint("Shows project filters")
                         .accessibilityIdentifier("project-sidebar-toggle")
                     }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Filters", systemImage: "line.3.horizontal.decrease") {
+                            isFilterLibraryPresented = true
+                        }
+                        .labelStyle(.iconOnly)
+                        .accessibilityIdentifier("filters-open")
+                    }
                 }
                 .sheet(item: $editorPresentation) { presentation in
                     if let configuration = model.configuration {
@@ -306,6 +324,24 @@ struct TaskListView: View {
                 )
             }
         }
+        .sheet(isPresented: $isFilterLibraryPresented) {
+            TaskFiltersView(library: filterLibrary) { filter in
+                selectedFilterID = filter.id
+                selectedProject = nil
+            }
+        }
+        .task(id: model.workspaceSelection.map(FileWorkspaceStore.selectionKey(for:))) {
+            selectedFilterID = "today"
+            await filterLibrary.load(selection: model.workspaceSelection)
+        }
+        .task(id: input) {
+            await updateVisibleTasks(input: input)
+        }
+        .onChange(of: filterLibrary.filters) { _, filters in
+            if !filters.contains(where: { $0.id == selectedFilterID }) {
+                selectedFilterID = "today"
+            }
+        }
         .onAppear(perform: presentPendingNewTodoRequest)
         .onChange(of: quickActions.pendingNewTodoRequestID) { _, _ in
             presentPendingNewTodoRequest()
@@ -314,6 +350,43 @@ struct TaskListView: View {
             presentPendingNewTodoRequest()
         }
 
+    }
+
+    private var selectedFilter: SavedTaskFilter {
+        filterLibrary.filters.first(where: { $0.id == selectedFilterID })
+            ?? SavedTaskFilter.defaults[0]
+    }
+
+    private var favoriteFilters: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 8) {
+                ForEach(filterLibrary.filters.filter(\.isStarred)) { filter in
+                    Button {
+                        selectedFilterID = filter.id
+                    } label: {
+                        Text(filter.name)
+                            .font(.subheadline.weight(
+                                selectedFilterID == filter.id ? .semibold : .regular
+                            ))
+                            .foregroundStyle(
+                                selectedFilterID == filter.id ? OTodoTheme.accent : .secondary
+                            )
+                            .padding(.horizontal, 14)
+                            .frame(minHeight: 44)
+                            .background(
+                                selectedFilterID == filter.id
+                                    ? OTodoTheme.accent.opacity(0.08) : Color.clear,
+                                in: Capsule()
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("task-filter-\(filter.id)")
+                    .accessibilityAddTraits(selectedFilterID == filter.id ? .isSelected : [])
+                }
+            }
+        }
+        .scrollIndicators(.hidden)
+        .accessibilityIdentifier("task-filters")
     }
 
     private func workspaceHeader(taskCount: Int) -> some View {
@@ -375,6 +448,7 @@ struct TaskListView: View {
         }
         isProjectSidebarPresented = false
         isProjectEditorPresented = false
+        isFilterLibraryPresented = false
         reschedulePresentation = nil
         editorPresentation = .create
     }
@@ -384,31 +458,24 @@ struct TaskListView: View {
         if let selectedProject {
             return projectDisplayName(selectedProject)
         }
-        switch visibility {
-        case .today:
-            return "Today"
-        case .active:
-            return "Active"
-        case .all:
-            return "All Todos"
-        }
+        return selectedFilter.name
     }
 
 
 
     private var workspaceSubtitle: String {
         if selectedProject != nil {
-            return "\(visibility.rawValue) todos"
+            return "\(selectedFilter.name) todos"
         }
-        switch visibility {
-        case .today:
-            return Date.now.formatted(
-                .dateTime.weekday(.wide).month(.wide).day()
-            )
-        case .active:
+        switch selectedFilter.id {
+        case "today":
+            return Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day())
+        case "active":
             return "Todos still to do"
-        case .all:
+        case "all":
             return "Including completed todos"
+        default:
+            return selectedFilter.query
         }
     }
 
@@ -707,33 +774,38 @@ struct TaskListView: View {
         .listRowBackground(Color.clear)
     }
 
+    @ViewBuilder
     private var emptyRow: some View {
-        VStack(spacing: 12) {
-            Image(systemName: visibility == .all ? "checklist" : "checkmark.circle")
-                .font(.system(size: 32, weight: .light))
-                .foregroundStyle(OTodoTheme.accent)
+        if isFiltering {
+            loadingRow
+        } else if filterError == nil {
+            VStack(spacing: 12) {
+                Image(systemName: selectedFilterID == "all" ? "checklist" : "checkmark.circle")
+                    .font(.system(size: 32, weight: .light))
+                    .foregroundStyle(OTodoTheme.accent)
 
-            Text("No \(visibility.rawValue) Todos")
-                .font(.title3.bold())
+                Text("No matching todos")
+                    .font(.title3.bold())
 
-            Text(emptyDescription)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+                Text(emptyDescription)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
 
-            if model.configuration != nil {
-                Button("Add a Todo") {
-                    editorPresentation = .create
+                if model.configuration != nil {
+                    Button("Add a Todo") {
+                        editorPresentation = .create
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
             }
+            .padding(28)
+            .frame(maxWidth: .infinity)
+            .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
         }
-        .padding(28)
-        .frame(maxWidth: .infinity)
-        .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
     }
 
     private var emptyDescription: String {
@@ -743,77 +815,116 @@ struct TaskListView: View {
         let projectScope = selectedProject.map {
             " in \(projectDisplayName($0))"
         } ?? ""
-        switch visibility {
-        case .today:
+        switch selectedFilter.id {
+        case "today":
             return "No active todos\(projectScope) are due today or overdue."
-        case .active:
+        case "active":
             return "No active todos\(projectScope). Choose All to see terminal todos."
-        case .all:
+        case "all":
             return selectedProject.map {
                 "No todos in \(projectDisplayName($0)) yet."
             } ?? "Add a todo to get started."
+        default:
+            return "No todos\(projectScope) match this filter. Edit its query from Filters."
         }
     }
 
-    private var visibleTasks: [TodoTask] {
-        let states = model.configuration?.states ?? []
+    private var filterInput: TaskFilterInput {
+        TaskFilterInput(
+            tasks: model.tasks,
+            states: model.configuration?.states ?? [],
+            filterID: selectedFilter.id,
+            query: selectedFilter.query,
+            selectedProject: selectedProject,
+            today: currentDateKey,
+            workspaceKey: model.workspaceSelection.map(FileWorkspaceStore.selectionKey(for:)),
+            isLibraryLoaded: filterLibrary.isLoaded
+        )
+    }
+
+    private func updateVisibleTasks(input: TaskFilterInput) async {
+        isFiltering = true
+        filterError = nil
+        displayedTasks = []
+        guard let query = filterLibrary.query(for: input.filterID) else {
+            isFiltering = false
+            filterError = "This filter could not be loaded. Open Filters to review it."
+            return
+        }
+        let worker = Task.detached(priority: .userInitiated) {
+            try Self.filteredTasks(input: input, query: query)
+        }
+        do {
+            let result = try await withTaskCancellationHandler {
+                try await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+            try Task.checkCancellation()
+            displayedTasks = result
+            isFiltering = false
+        } catch is CancellationError {
+            // A newer input owns the next result and loading state.
+        } catch {
+            guard !Task.isCancelled else { return }
+            isFiltering = false
+            filterError = error.localizedDescription
+        }
+    }
+
+    private nonisolated static func filteredTasks(
+        input: TaskFilterInput,
+        query: TaskFilterQuery
+    ) throws -> [TodoTask] {
+        let states = input.states
         let stateOrder = Dictionary(uniqueKeysWithValues: states.enumerated().map { ($0.element.id, $0.offset) })
         let terminalStates = Set(states.lazy.filter(\.isTerminal).map(\.id))
-        let today = currentDateKey
-
-        return model.tasks
-            .filter { task in
-                if let selectedProject,
-                   !task.projectSlugs.contains(selectedProject)
-                {
-                    return false
-                }
-                let isTerminal = terminalStates.contains(task.state)
-                switch visibility {
-                case .today:
-                    return !isTerminal && task.dueDate.map { $0.rawValue <= today } == true
-                case .active:
-                    return !isTerminal
-                case .all:
-                    return true
-                }
+        var result = try input.tasks.filter { task in
+            try Task.checkCancellation()
+            if let selectedProject = input.selectedProject,
+               !task.projectSlugs.contains(selectedProject)
+            {
+                return false
             }
-            .sorted { lhs, rhs in
-                switch (lhs.dueDate, rhs.dueDate) {
-                case let (left?, right?) where left != right:
-                    return left < right
-                case (_?, nil):
-                    return true
-                case (nil, _?):
-                    return false
-                default:
-                    break
-                }
-
-                switch (lhs.dueTime, rhs.dueTime) {
-                case let (left?, right?) where left != right:
-                    return left < right
-                case (nil, _?):
-                    return true
-                case (_?, nil):
-                    return false
-                default:
-                    break
-                }
-
-                let lhsStateIndex = stateOrder[lhs.state] ?? Int.max
-                let rhsStateIndex = stateOrder[rhs.state] ?? Int.max
-                if lhsStateIndex != rhsStateIndex {
-                    return lhsStateIndex < rhsStateIndex
-                }
-
-                let lhsName = lhs.name.utf8
-                let rhsName = rhs.name.utf8
-                if !lhsName.elementsEqual(rhsName) {
-                    return lhsName.lexicographicallyPrecedes(rhsName)
-                }
-                return lhs.id < rhs.id
+            return try query.matches(task, terminalStateIDs: terminalStates, today: input.today)
+        }
+        result.sort { lhs, rhs in
+            switch (lhs.dueDate, rhs.dueDate) {
+            case let (left?, right?) where left != right:
+                return left < right
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            default:
+                break
             }
+
+            switch (lhs.dueTime, rhs.dueTime) {
+            case let (left?, right?) where left != right:
+                return left < right
+            case (nil, _?):
+                return true
+            case (_?, nil):
+                return false
+            default:
+                break
+            }
+
+            let lhsStateIndex = stateOrder[lhs.state] ?? Int.max
+            let rhsStateIndex = stateOrder[rhs.state] ?? Int.max
+            if lhsStateIndex != rhsStateIndex {
+                return lhsStateIndex < rhsStateIndex
+            }
+
+            let lhsName = lhs.name.utf8
+            let rhsName = rhs.name.utf8
+            if !lhsName.elementsEqual(rhsName) {
+                return lhsName.lexicographicallyPrecedes(rhsName)
+            }
+            return lhs.id < rhs.id
+        }
+        return result
     }
 
     private var completionState: WorkflowState? {
@@ -848,10 +959,15 @@ struct TaskListView: View {
     }
 }
 
-private enum TaskVisibility: String, CaseIterable, Hashable {
-    case today = "Today"
-    case active = "Active"
-    case all = "All"
+private struct TaskFilterInput: Equatable, Sendable {
+    let tasks: [TodoTask]
+    let states: [WorkflowState]
+    let filterID: String
+    let query: String
+    let selectedProject: String?
+    let today: String
+    let workspaceKey: String?
+    let isLibraryLoaded: Bool
 }
 
 private enum EditorPresentation: Identifiable {

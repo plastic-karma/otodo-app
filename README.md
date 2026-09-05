@@ -14,6 +14,29 @@ Task names recognize full weekday names, `tomorrow`, `in N days`, `in N weeks`, 
 
 Due reminders are opt-in from the Projects sidebar. When enabled, active dated todos schedule local iOS notifications at their exact due time, or at 9:00 AM in the device time zone for date-only todos; an already-due todo gets a near-term reminder, and completing, deleting, or rescheduling a todo reconciles its pending alert. If notification access was denied, the control opens the app's iOS Settings page.
 
+## Saved filters
+
+Open **Filters** from the top-right of the workspace, then **+** to save a name and text query. Tap a filter to open it; star it to put it on the app's Home filter strip. Touch and hold a saved filter (or swipe left) to edit or delete it. **Today**, **Active**, and **All** are predefined queries: their definitions cannot change, but their Home stars can.
+
+Filters are saved offline on this device, separately for each repository, branch, and store path. They do not alter the Obsidian store or sync through GitHub. Selecting a filter from the library clears the sidebar's project scope; selecting a Home filter retains that scope.
+
+The language uses explicit boolean operators, inspired by [Todoist's text filters](https://www.todoist.com/help/articles/introduction-to-filters-V98wIH):
+
+| Query | Matches |
+| --- | --- |
+| `all` | Every todo, including terminal states |
+| `active` | Todos outside the configured terminal states |
+| `today` | Active todos due today or overdue |
+| `project:work AND tag:focus` | Exact project slug and tag |
+| `active AND NOT tag:waiting` | Active todos without the tag |
+| `(project:home OR project:work) AND today` | Today's focus in either project |
+| `name:/report/i` | Case-insensitive name regex |
+| `description:/invoice\|receipt/i` | Regex against the Markdown body |
+
+`AND`, `OR`, and `NOT` are case-insensitive; `&`, `|`, and `!` are equivalent. `NOT` binds first, then `AND`, then `OR`; parentheses override this order. Atoms and field names are lowercase. Tag/project values follow the colon immediately and match exactly, including case. Double-quote values containing operators, for example `tag:"a|b"`; inside quotes, `\"` and `\\` escape a quote and backslash.
+
+Name and description patterns use ICU regular expressions between `/` delimiters. Escape a literal slash as `\/`. Optional flags are `i` (ignore case), `m` (line anchors), and `s` (dot matches newlines); omit them for case-sensitive matching. Invalid syntax is shown in the editor and cannot be saved. Compiled queries are cached; matching runs off the UI thread and is cancelled when the selected query or tasks change.
+
 ## Requirements
 
 - Swift 6.1 for the Swift package and Linux development
