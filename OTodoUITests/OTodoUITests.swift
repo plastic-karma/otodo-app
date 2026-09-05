@@ -1059,12 +1059,13 @@ final class OTodoUITests: XCTestCase {
         app.launch()
 
         let sidebarButton = app.buttons["project-sidebar-toggle"]
+        let addButton = app.buttons["task-add"]
         guard require(
-            sidebarButton,
+            addButton,
             in: app,
-            description: "the project sidebar button"
+            description: "the quick-add button"
         ) else { return }
-        sidebarButton.tap()
+        addButton.press(forDuration: 1.2)
 
         let addProjectButton = app.buttons["project-add"]
         guard require(
@@ -1072,6 +1073,14 @@ final class OTodoUITests: XCTestCase {
             in: app,
             description: "the New Project button"
         ) else { return }
+        XCTAssertFalse(
+            app.textFields["task-editor-name"].exists,
+            "Holding plus must open the menu, not create a todo"
+        )
+        let menuScreenshot = XCTAttachment(screenshot: app.screenshot())
+        menuScreenshot.name = "Quick-add todo and project menu"
+        menuScreenshot.lifetime = .keepAlways
+        add(menuScreenshot)
         addProjectButton.tap()
 
         let editor = app.descendants(matching: .any)

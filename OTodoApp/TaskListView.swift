@@ -339,9 +339,17 @@ struct TaskListView: View {
 
 
     private var addTodoButton: some View {
-        Button {
-            guard model.configuration != nil else { return }
-            editorPresentation = .create
+        Menu {
+            Button("New Todo", systemImage: "plus") {
+                editorPresentation = .create
+            }
+            .accessibilityIdentifier("task-add-menu-todo")
+
+            Button("New Project", systemImage: "folder.badge.plus") {
+                isProjectEditorPresented = true
+            }
+            .disabled(model.isBusy)
+            .accessibilityIdentifier("project-add")
         } label: {
             Image(systemName: "plus")
                 .font(.title2.weight(.medium))
@@ -349,10 +357,14 @@ struct TaskListView: View {
                 .frame(width: 54, height: 54)
                 .background(OTodoTheme.filledAccent, in: Circle())
                 .shadow(color: .black.opacity(0.12), radius: 5, y: 3)
+        } primaryAction: {
+            editorPresentation = .create
         }
+        .menuOrder(.fixed)
         .disabled(model.configuration == nil)
         .opacity(model.configuration == nil ? 0.45 : 1)
         .accessibilityLabel("Add Todo")
+        .accessibilityHint("Tap to add a todo; touch and hold to add a todo or project")
         .accessibilityIdentifier("task-add")
     }
     private func presentPendingNewTodoRequest() {
@@ -435,24 +447,6 @@ struct TaskListView: View {
             }
 
             Divider()
-
-            Button {
-                dismissProjectSidebar()
-                isProjectEditorPresented = true
-            } label: {
-                Label("New Project", systemImage: "folder.badge.plus")
-                    .font(.body.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(OTodoTheme.filledAccent)
-            .controlSize(.large)
-            .disabled(model.configuration == nil || model.isBusy)
-            .accessibilityIdentifier("project-add")
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            Divider()
-                .padding(.horizontal, 16)
 
             notificationControl
 
