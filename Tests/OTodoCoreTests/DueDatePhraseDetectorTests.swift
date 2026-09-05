@@ -30,27 +30,46 @@ final class DueDatePhraseDetectorTests: XCTestCase {
 
     func testDetectsEveryWeekdayAsItsNextOccurrence() throws {
         let cases = [
-            ("Sunday", "2026-09-06"),
-            ("Monday", "2026-09-07"),
-            ("Tuesday", "2026-09-08"),
-            ("Wednesday", "2026-09-09"),
-            ("Thursday", "2026-09-10"),
-            ("Friday", "2026-09-11"),
-            ("Saturday", "2026-09-05"),
+            (["Sunday", "Sun"], "2026-09-06"),
+            (["Monday", "Mon"], "2026-09-07"),
+            (["Tuesday", "Tue", "Tues"], "2026-09-08"),
+            (["Wednesday", "Wed"], "2026-09-09"),
+            (["Thursday", "Thu", "Thur", "Thurs"], "2026-09-10"),
+            (["Friday", "Fri"], "2026-09-11"),
+            (["Saturday", "Sat"], "2026-09-05"),
         ]
 
-        for (weekday, expectedDate) in cases {
-            let input = "Finish report \(weekday.uppercased())"
-            let detection = try XCTUnwrap(
-                DueDatePhraseDetector.detect(
-                    in: input,
-                    from: referenceDate,
-                    calendar: calendar
+        for (weekdays, expectedDate) in cases {
+            for weekday in weekdays {
+                let input = "Finish report \(weekday.uppercased())"
+                let detection = try XCTUnwrap(
+                    DueDatePhraseDetector.detect(
+                        in: input,
+                        from: referenceDate,
+                        calendar: calendar
+                    ),
+                    weekday
                 )
-            )
-            XCTAssertEqual(detection.dueDate.rawValue, expectedDate, weekday)
-            XCTAssertEqual(detection.nameWithoutPhrase, "Finish report", weekday)
+                XCTAssertEqual(detection.dueDate.rawValue, expectedDate, weekday)
+                XCTAssertEqual(detection.nameWithoutPhrase, "Finish report", weekday)
+            }
         }
+    }
+
+    func testAbbreviationInSentenceKeepsAnExactHighlightAndCleanName() throws {
+        let input = "📌 Call mum, Wed., after lunch"
+        let detection = try XCTUnwrap(
+            DueDatePhraseDetector.detect(
+                in: input,
+                from: referenceDate,
+                calendar: calendar
+            )
+        )
+
+        XCTAssertEqual(detection.phrase, "Wed")
+        XCTAssertEqual(detection.dueDate.rawValue, "2026-09-09")
+        XCTAssertEqual(detection.nameWithoutPhrase, "📌 Call mum after lunch")
+        XCTAssertEqual((input as NSString).substring(with: detection.utf16Range), "Wed")
     }
 
     func testDetectsRelativeDaysWeeksAndMonths() throws {
@@ -96,6 +115,8 @@ final class DueDatePhraseDetectorTests: XCTestCase {
     func testRejectsUnsupportedOrEmbeddedPhrases() throws {
         for input in [
             "Visit Tomorrowland",
+            "Plan wedding",
+            "Check Mon2 schedule",
             "Wait in 3 hours",
             "Wait in 0 days",
             "Someday maybe",

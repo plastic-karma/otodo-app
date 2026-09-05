@@ -10,7 +10,7 @@ Add OTodo's **Today** widget to the Home Screen to see active todos due today or
 
 The shared palette follows the system appearance: light mode uses indigo accents, while dark mode uses legible lavender foregrounds, neutral raised surfaces, and subdued dark fills behind white labels.
 
-Task names recognize full weekday names, `tomorrow`, `in N days`, `in N weeks`, `in N months`, `next week`, and `next month`. The editor highlights the detected phrase; saving removes it from the name and stores the resolved calendar date as `due_date`.
+Task names recognize full weekday names and common abbreviations (`Sun`, `Mon`, `Tue`/`Tues`, `Wed`, `Thu`/`Thur`/`Thurs`, `Fri`, `Sat`), plus `tomorrow`, `in N days`, `in N weeks`, `in N months`, `next week`, and `next month`. Matching is case-insensitive and uses whole words; abbreviations can have a trailing period. A weekday means its next occurrence, including next week when entered on that weekday. The editor highlights the detected phrase; saving removes it from the name and stores the resolved calendar date as `due_date`.
 
 Due reminders are opt-in from the Projects sidebar. When enabled, active dated todos schedule local iOS notifications at their exact due time, or at 9:00 AM in the device time zone for date-only todos; an already-due todo gets a near-term reminder, and completing, deleting, or rescheduling a todo reconciles its pending alert. If notification access was denied, the control opens the app's iOS Settings page.
 

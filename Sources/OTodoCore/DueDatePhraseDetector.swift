@@ -180,19 +180,19 @@ public enum DueDatePhraseDetector {
 
     private static func weekdayNumber(for value: String) -> Int? {
         switch value {
-        case "sunday":
+        case "sunday", "sun":
             1
-        case "monday":
+        case "monday", "mon":
             2
-        case "tuesday":
+        case "tuesday", "tue", "tues":
             3
-        case "wednesday":
+        case "wednesday", "wed":
             4
-        case "thursday":
+        case "thursday", "thu", "thur", "thurs":
             5
-        case "friday":
+        case "friday", "fri":
             6
-        case "saturday":
+        case "saturday", "sat":
             7
         default:
             nil

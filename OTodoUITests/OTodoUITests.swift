@@ -213,7 +213,7 @@ final class OTodoUITests: XCTestCase {
             description: "the highlighted todo name field"
         ) else { return }
         nameField.tap()
-        nameField.typeText("Call mum tomorrow")
+        nameField.typeText("Call mum Wed")
 
         let detection = app.descendants(matching: .any)
             .matching(identifier: "task-editor-detected-due-date")
@@ -224,12 +224,12 @@ final class OTodoUITests: XCTestCase {
             description: "the detected due-date explanation"
         ) else { return }
         XCTAssertTrue(
-            detection.label.localizedCaseInsensitiveContains("tomorrow"),
+            detection.label.localizedCaseInsensitiveContains("Wed"),
             "The detected phrase should remain identifiable while editing"
         )
 
         let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "Detected due date in todo name"
+        screenshot.name = "Detected abbreviated weekday in todo name"
         screenshot.lifetime = .keepAlways
         add(screenshot)
 
@@ -254,14 +254,6 @@ final class OTodoUITests: XCTestCase {
             taskList: taskList,
             description: "the todo with its detected due date"
         ) else { return }
-        XCTAssertTrue(
-            savedTask.label.contains("Due:"),
-            "The detected phrase should become a persisted due date"
-        )
-        XCTAssertFalse(
-            savedTask.label.localizedCaseInsensitiveContains("tomorrow"),
-            "The detected phrase should be stripped from the saved name"
-        )
 
         savedTask.tap()
         guard require(
@@ -273,6 +265,11 @@ final class OTodoUITests: XCTestCase {
             nameField.value as? String,
             "Call mum",
             "Reopening the todo should load the stripped name"
+        )
+        XCTAssertEqual(
+            app.switches["task-editor-due-date-toggle"].value as? String,
+            "1",
+            "Reopening the todo should load the detected due date"
         )
         app.buttons["Cancel"].tap()
     }
