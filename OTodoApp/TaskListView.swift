@@ -18,6 +18,7 @@ struct TaskListView: View {
     @State private var selectedProject: String?
     @State private var isProjectSidebarPresented = false
     @State private var isProjectEditorPresented = false
+    @State private var isChangelogPresented = false
     @State private var isBulkEditorPresented = false
     @State private var reschedulePresentation: ReschedulePresentation?
 
@@ -224,7 +225,7 @@ struct TaskListView: View {
                                 .font(.body.weight(.semibold))
                         }
                         .accessibilityLabel("Projects")
-                        .accessibilityHint("Shows project filters")
+                        .accessibilityHint("Shows project filters and changelog")
                         .accessibilityIdentifier("project-sidebar-toggle")
                     }
                     ToolbarItem(placement: .topBarTrailing) {
@@ -329,6 +330,9 @@ struct TaskListView: View {
                 selectedFilterID = filter.id
                 selectedProject = nil
             }
+        }
+        .sheet(isPresented: $isChangelogPresented) {
+            ChangelogView()
         }
         .task(id: model.workspaceSelection.map(FileWorkspaceStore.selectionKey(for:))) {
             selectedFilterID = "today"
@@ -455,6 +459,7 @@ struct TaskListView: View {
         isProjectSidebarPresented = false
         isProjectEditorPresented = false
         isFilterLibraryPresented = false
+        isChangelogPresented = false
         isBulkEditorPresented = false
         reschedulePresentation = nil
         editorPresentation = .create
@@ -523,6 +528,24 @@ struct TaskListView: View {
             Divider()
 
             notificationControl
+
+            Divider()
+                .padding(.horizontal, 16)
+
+            Button {
+                dismissProjectSidebar()
+                isChangelogPresented = true
+            } label: {
+                Label("Changelog", systemImage: "clock.arrow.circlepath")
+                    .font(.subheadline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("changelog-open")
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
 
             Divider()
                 .padding(.horizontal, 16)

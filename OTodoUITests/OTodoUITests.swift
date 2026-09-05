@@ -1313,6 +1313,67 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testSidebarChangelogShowsNewestCommitTimesOfflineAndPreservesScope() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments.append(contentsOf: ["-ui-testing", "-ui-testing-reset-workspace"])
+        app.launch()
+        guard selectFilter("Active", in: app) else { return }
+        let sidebarButton = app.buttons["project-sidebar-toggle"]
+        sidebarButton.tap()
+        let workProject = app.buttons["project-filter-work"]
+        guard require(workProject, in: app, description: "the Work project scope") else { return }
+        workProject.tap()
+        guard require(
+            taskRow(named: "Future todo", state: "Pending", in: app),
+            in: app,
+            description: "the active Work todo before opening the changelog"
+        ) else { return }
+
+        sidebarButton.tap()
+        let openChangelog = app.buttons["changelog-open"]
+        guard require(openChangelog, in: app, description: "the sidebar changelog action") else { return }
+        openChangelog.tap()
+        let changelog = app.descendants(matching: .any).matching(identifier: "changelog-list").firstMatch
+        guard require(changelog, in: app, description: "the offline bundled changelog") else { return }
+        let timestampQuery = app.staticTexts.matching(identifier: "changelog-timestamp")
+        guard require(timestampQuery.firstMatch, in: app, description: "the loaded commit timestamps") else { return }
+        let timestamps = timestampQuery
+            .allElementsBoundByIndex
+            .filter(\.isHittable)
+            .sorted { $0.frame.minY < $1.frame.minY }
+        guard timestamps.count >= 2 else {
+            XCTFail("The changelog must show multiple commit timestamps to verify their visual order")
+            return
+        }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withSpaceBetweenDateAndTime]
+        let dates = try timestamps.map {
+            try XCTUnwrap(formatter.date(from: $0.label), "The displayed commit timestamp must include seconds and timezone")
+        }
+        for (newer, older) in zip(dates, dates.dropFirst()) {
+            XCTAssertGreaterThanOrEqual(newer, older, "Commit timestamps must be newest first on screen")
+        }
+        XCTAssertGreaterThan(dates[0], dates[dates.count - 1], "Distinct commits must retain their own timestamps")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Offline changelog with exact newest-first commit timestamps"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        let closeChangelog = app.buttons["changelog-close"]
+        guard require(closeChangelog, in: app, description: "the changelog Done action") else { return }
+        closeChangelog.tap()
+        XCTAssertTrue(changelog.waitForNonExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["task-filter-active"].isSelected)
+        guard require(
+            taskRow(named: "Future todo", state: "Pending", in: app),
+            in: app,
+            description: "the unchanged Work scope after closing the changelog"
+        ) else { return }
+        XCTAssertFalse(taskRow(named: "Seed todo", state: "Pending", in: app).exists)
+    }
+
+    @MainActor
     func testSwipeActionsCompleteAndDeleteDurably() {
         continueAfterFailure = false
 

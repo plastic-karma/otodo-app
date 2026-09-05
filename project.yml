@@ -23,6 +23,18 @@ targets:
         product: OTodoCore
       - target: OTodoWidget
         embed: true
+    postBuildScripts:
+      - name: Generate bundled changelog
+        script: |
+          set -eu
+          python3 "$SRCROOT/.github/scripts/generate_changelog.py" \
+            "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Changelog.json"
+        inputFiles:
+          - $(SRCROOT)/.github/scripts/generate_changelog.py
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Changelog.json
+        # HEAD may be symbolic, detached, or in an external worktree Git directory.
+        basedOnDependencyAnalysis: false
     info:
       path: OTodoApp/Info.plist
       properties:
@@ -57,6 +69,8 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ""
         GITHUB_CLIENT_ID: ""
+        # Git reads refs, objects, and worktree metadata beyond fixed script inputs.
+        ENABLE_USER_SCRIPT_SANDBOXING: "NO"
         "CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]": "NO"
 
   OTodoWidget:

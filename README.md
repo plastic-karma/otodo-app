@@ -21,6 +21,8 @@ Task names recognize full weekday names and common abbreviations (`Sun`, `Mon`, 
 
 Due reminders are opt-in from the Projects sidebar. When enabled, active dated todos schedule local iOS notifications at their exact due time, or at 9:00 AM in the device time zone for date-only todos; an already-due todo gets a near-term reminder, and completing, deleting, or rescheduling a todo reconciles its pending alert. If notification access was denied, the control opens the app's iOS Settings page.
 
+Open **Changelog** from the sidebar to review product features and visible improvements, newest first. Each entry shows its commit's exact UTC timestamp. The history is bundled with the app and available offline; CI and repository-maintenance changes are excluded.
+
 ## Saved filters
 
 Open **Filters** from the top-right of the workspace, then **+** to save a name and text query. Tap a filter to open it; star it to put it on the app's Home filter strip. Touch and hold a saved filter (or swipe left) to edit or delete it. **Today**, **Active**, and **All** are predefined queries: their definitions cannot change, but their Home stars can.
@@ -49,6 +51,7 @@ Name and description patterns use ICU regular expressions between `/` delimiters
 - Swift 6.1 for the Swift package and Linux development
 - macOS with Xcode and an installed iOS 17-or-newer simulator for the app
 - XcodeGen **2.46.0** to generate `OTodo.xcodeproj` from `project.yml`
+- Python 3.9 or newer and Git with complete repository history for iOS app builds
 - iOS 17 or later to run OTodo
 
 The application scheme is `OTodo`, the generated project is `OTodo.xcodeproj`, and the application bundle identifier is `plastickarma.otodo`.
@@ -197,6 +200,16 @@ xcodebuild build \
 ```
 
 To run or test, open `OTodo.xcodeproj`, select scheme `OTodo` and any installed iOS 17-or-newer iPhone simulator, then Run/Test. Regenerate the project after changing `project.yml`; do not hand-edit generated project settings.
+
+### Product changelog entries
+
+Mark each new product-feature commit with a `Changelog: feature` trailer:
+
+```sh
+git commit -m "Add a product feature" -m "Changelog: feature"
+```
+
+The app build generates `Changelog.json` from those commits and a fixed historical feature backfill, using Git's subjects and committer timestamps. Do not add maintenance commits to the backfill. This generation runs locally without fetching history; shallow clones must run `git fetch --unshallow` before building. Simulator CI and release builds fetch complete history automatically.
 
 ## CI and releases
 
