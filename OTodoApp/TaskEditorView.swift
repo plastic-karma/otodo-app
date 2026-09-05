@@ -65,6 +65,9 @@ struct TaskEditorView: View {
     @State private var detectedDueDatePhrase: DetectedDueDatePhrase?
     @State private var isSaving = false
     @State private var saveError: String?
+    @State private var didSaveAndContinue = false
+    @State private var nameFocusRequest = 0
+    @State private var isNameFocused = false
 
     init(
         draft: TaskEditorDraft,
@@ -90,181 +93,204 @@ struct TaskEditorView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Todo") {
-                    HighlightedTaskNameField(
-                        text: $draft.name,
-                        highlightRange: detectedDueDatePhrase?.utf16Range,
-                        accessibilityIdentifier: "task-editor-name"
-                    )
-                    .onChange(of: draft.name) { _, name in
-                        detectedDueDatePhrase = Self.detectDueDatePhrase(in: name)
-                    }
-
-                    if let detectedDueDatePhrase {
-                        let explanation = "Due \(detectedDueDatePhrase.dueDate.rawValue) · “\(detectedDueDatePhrase.phrase)” will be removed when saved"
-                        Label(explanation, systemImage: "calendar.badge.checkmark")
-                            .font(.footnote)
-                            .foregroundStyle(OTodoTheme.accent)
-                            .accessibilityElement(children: .ignore)
-                            .accessibilityLabel(explanation)
-                            .accessibilityIdentifier("task-editor-detected-due-date")
-                    }
-
-                    Picker("State", selection: $draft.state) {
-                        ForEach(configuration.states, id: \.id) { state in
-                            Text(state.name).tag(state.id)
+            ScrollViewReader { proxy in
+                Form {
+                    Section("Todo") {
+                        if didSaveAndContinue {
+                            Label("Todo saved. Create another.", systemImage: "checkmark.circle.fill")
+                                .font(.footnote)
+                                .foregroundStyle(OTodoTheme.accent)
+                                .accessibilityIdentifier("task-editor-saved-confirmation")
                         }
-                    }
-                    .accessibilityIdentifier("task-editor-state")
-                }
 
-                Section {
-                    TextField("work, personal", text: $projectsText)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .accessibilityLabel("Projects, separated by commas")
-
-                    if !projectChoices.isEmpty {
-                        ScrollView(.horizontal) {
-                            HStack {
-                                ForEach(projectChoices, id: \.self) { project in
-                                    projectChoice(project)
-                                }
-                            }
-                        }
-                        .scrollIndicators(.hidden)
-                        .accessibilityLabel("Project choices")
-                    }
-                } header: {
-                    Text("Projects")
-                } footer: {
-                    Text("Enter project slugs separated by commas.")
-                }
-
-                Section {
-                    TextField("errands, next", text: $tagsText)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .accessibilityLabel("Tags, separated by commas")
-                        .accessibilityIdentifier("task-editor-tags")
-
-                    if !matchingTagChoices.isEmpty {
-                        ScrollView(.horizontal) {
-                            HStack(spacing: 8) {
-                                ForEach(matchingTagChoices, id: \.self) { tag in
-                                    Button {
-                                        completeTag(with: tag)
-                                    } label: {
-                                        Label(tag, systemImage: "tag.fill")
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                    .accessibilityIdentifier("tag-suggestion-\(tag)")
-                                }
-                            }
-                        }
-                        .scrollIndicators(.hidden)
-                        .accessibilityLabel("Matching existing tags")
-                    }
-                } header: {
-                    Text("Tags")
-                } footer: {
-                    Text("Type to match existing tags, or enter new tags without #, separated by commas.")
-                }
-
-                Section {
-                    if draft.preservedTask == nil {
-                        RelativeDueDateField(
-                            accessibilityIdentifierPrefix: "task-editor-relative-due",
-                            onPendingChange: { hasPendingRelativeDueDate = $0 },
-                            onApply: { resolvedDate in
-                                dueDate = resolvedDate
-                                hasDueDate = true
-                                hasDueTime = true
-                                saveError = nil
-                            }
+                        HighlightedTaskNameField(
+                            text: $draft.name,
+                            highlightRange: detectedDueDatePhrase?.utf16Range,
+                            accessibilityIdentifier: "task-editor-name",
+                            isFocused: $isNameFocused
                         )
-                    }
-
-                    Toggle("Set due date", isOn: $hasDueDate)
-                        .accessibilityIdentifier("task-editor-due-date-toggle")
-
-                    if hasDueDate {
-                        DatePicker(
-                            "Date",
-                            selection: $dueDate,
-                            displayedComponents: .date
-                        )
-                        .datePickerStyle(.graphical)
-                        .environment(\.calendar, TaskSchedule.calendar)
-                        .accessibilityIdentifier("task-editor-due-date-picker")
-
-                        Toggle("Include time", isOn: $hasDueTime)
-                            .accessibilityIdentifier("task-editor-due-time-toggle")
-
-                        if hasDueTime {
-                            DatePicker(
-                                "Time",
-                                selection: $dueDate,
-                                displayedComponents: .hourAndMinute
-                            )
-                            .environment(\.calendar, TaskSchedule.calendar)
-                            .accessibilityIdentifier("task-editor-due-time-picker")
+                        .onChange(of: draft.name) { _, name in
+                            detectedDueDatePhrase = Self.detectDueDatePhrase(in: name)
                         }
+
+                        if let detectedDueDatePhrase {
+                            let explanation =
+                                "Due \(detectedDueDatePhrase.dueDate.rawValue) · “\(detectedDueDatePhrase.phrase)” will be removed when saved"
+                            Label(explanation, systemImage: "calendar.badge.checkmark")
+                                .font(.footnote)
+                                .foregroundStyle(OTodoTheme.accent)
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel(explanation)
+                                .accessibilityIdentifier("task-editor-detected-due-date")
+                        }
+
+                        Picker("State", selection: $draft.state) {
+                            ForEach(configuration.states, id: \.id) { state in
+                                Text(state.name).tag(state.id)
+                            }
+                        }
+                        .accessibilityIdentifier("task-editor-state")
                     }
-                } header: {
-                    Text("Due date")
-                } footer: {
-                    Text(dueDateHelpText)
-                }
+                    .id("task-editor-top")
 
-                Section("Notes") {
-                    TextEditor(text: $draft.body)
-                        .frame(minHeight: 160)
-                        .accessibilityLabel("Todo notes")
-                }
-
-                if let message = validationMessage ?? saveError {
                     Section {
-                        Label(message, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
-                            .accessibilityLabel("Cannot save. \(message)")
-                    }
-                }
-            }
-            .accessibilityIdentifier("task-editor")
-            .scrollContentBackground(.hidden)
-            .background(OTodoCanvas())
-            .navigationTitle(draft.preservedTask == nil ? "New Todo" : "Edit Todo")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(.hidden, for: .navigationBar)
-            .interactiveDismissDisabled(isSaving)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", role: .cancel) {
-                        dismiss()
-                    }
-                    .disabled(isSaving)
-                }
+                        TextField("work, personal", text: $projectsText)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .accessibilityLabel("Projects, separated by commas")
 
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        save()
+                        if !projectChoices.isEmpty {
+                            ScrollView(.horizontal) {
+                                HStack {
+                                    ForEach(projectChoices, id: \.self) { project in
+                                        projectChoice(project)
+                                    }
+                                }
+                            }
+                            .scrollIndicators(.hidden)
+                            .accessibilityLabel("Project choices")
+                        }
+                    } header: {
+                        Text("Projects")
+                    } footer: {
+                        Text("Enter project slugs separated by commas.")
                     }
-                    .accessibilityIdentifier("task-editor-save")
-                    .disabled(
-                        validationMessage != nil
-                            || hasPendingRelativeDueDate
-                            || isSaving
-                    )
+
+                    Section {
+                        TextField("errands, next", text: $tagsText)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .accessibilityLabel("Tags, separated by commas")
+                            .accessibilityIdentifier("task-editor-tags")
+
+                        if !matchingTagChoices.isEmpty {
+                            ScrollView(.horizontal) {
+                                HStack(spacing: 8) {
+                                    ForEach(matchingTagChoices, id: \.self) { tag in
+                                        Button {
+                                            completeTag(with: tag)
+                                        } label: {
+                                            Label(tag, systemImage: "tag.fill")
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                        .accessibilityIdentifier("tag-suggestion-\(tag)")
+                                    }
+                                }
+                            }
+                            .scrollIndicators(.hidden)
+                            .accessibilityLabel("Matching existing tags")
+                        }
+                    } header: {
+                        Text("Tags")
+                    } footer: {
+                        Text("Type to match existing tags, or enter new tags without #, separated by commas.")
+                    }
+
+                    Section {
+                        if draft.preservedTask == nil {
+                            RelativeDueDateField(
+                                accessibilityIdentifierPrefix: "task-editor-relative-due",
+                                onPendingChange: { hasPendingRelativeDueDate = $0 },
+                                onApply: { resolvedDate in
+                                    dueDate = resolvedDate
+                                    hasDueDate = true
+                                    hasDueTime = true
+                                    saveError = nil
+                                }
+                            )
+                            .id(nameFocusRequest)
+                        }
+
+                        Toggle("Set due date", isOn: $hasDueDate)
+                            .accessibilityIdentifier("task-editor-due-date-toggle")
+
+                        if hasDueDate {
+                            DatePicker(
+                                "Date",
+                                selection: $dueDate,
+                                displayedComponents: .date
+                            )
+                            .datePickerStyle(.graphical)
+                            .environment(\.calendar, TaskSchedule.calendar)
+                            .accessibilityIdentifier("task-editor-due-date-picker")
+
+                            Toggle("Include time", isOn: $hasDueTime)
+                                .accessibilityIdentifier("task-editor-due-time-toggle")
+
+                            if hasDueTime {
+                                DatePicker(
+                                    "Time",
+                                    selection: $dueDate,
+                                    displayedComponents: .hourAndMinute
+                                )
+                                .environment(\.calendar, TaskSchedule.calendar)
+                                .accessibilityIdentifier("task-editor-due-time-picker")
+                            }
+                        }
+                    } header: {
+                        Text("Due date")
+                    } footer: {
+                        Text(dueDateHelpText)
+                    }
+
+                    Section("Notes") {
+                        TextEditor(text: $draft.body)
+                            .frame(minHeight: 160)
+                            .accessibilityLabel("Todo notes")
+                    }
+
+                    if let message = validationMessage ?? saveError {
+                        Section {
+                            Label(message, systemImage: "exclamationmark.triangle")
+                                .foregroundStyle(.red)
+                                .accessibilityLabel("Cannot save. \(message)")
+                        }
+                    }
                 }
-            }
-            .overlay {
-                if isSaving {
-                    ProgressView("Saving")
-                        .padding()
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                .disabled(isSaving)
+                .accessibilityIdentifier("task-editor")
+                .scrollContentBackground(.hidden)
+                .background(OTodoCanvas())
+                .navigationTitle(draft.preservedTask == nil ? "New Todo" : "Edit Todo")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbarBackground(.hidden, for: .navigationBar)
+                .interactiveDismissDisabled(isSaving)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel", role: .cancel) {
+                            dismiss()
+                        }
+                        .disabled(isSaving)
+                    }
+
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") {
+                            save()
+                        }
+                        .accessibilityIdentifier("task-editor-save")
+                        .disabled(isSaveDisabled)
+                    }
+
+                    if draft.preservedTask == nil {
+                        ToolbarItem(placement: .bottomBar) {
+                            Button("Save & Create Another") {
+                                save(createAnother: true)
+                            }
+                            .accessibilityIdentifier("task-editor-save-another")
+                            .disabled(isSaveDisabled)
+                        }
+                    }
+                }
+                .overlay {
+                    if isSaving {
+                        ProgressView("Saving")
+                            .padding()
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    }
+                }
+                .onChange(of: nameFocusRequest) { _, _ in
+                    proxy.scrollTo("task-editor-top", anchor: .top)
                 }
             }
         }
@@ -375,8 +401,12 @@ struct TaskEditorView: View {
         return nil
     }
 
-    private func save() {
-        guard validationMessage == nil, !hasPendingRelativeDueDate else { return }
+    private var isSaveDisabled: Bool {
+        validationMessage != nil || hasPendingRelativeDueDate || isSaving
+    }
+
+    private func save(createAnother: Bool = false) {
+        guard !isSaveDisabled else { return }
 
         var value = draft
         value.name = detectedDueDatePhrase?.nameWithoutPhrase ?? draft.name
@@ -384,14 +414,29 @@ struct TaskEditorView: View {
         value.tags = TaskEditorDraft.parseCommaSeparated(tagsText)
         value.dueDate = detectedDueDatePhrase?.dueDate ?? selectedDueDate
         value.dueTime = selectedDueTime
+        isNameFocused = false
         isSaving = true
         saveError = nil
+        didSaveAndContinue = false
 
         Task { @MainActor in
             let errorMessage = await onSave(value)
             isSaving = false
             if let errorMessage {
                 saveError = errorMessage
+            } else if createAnother {
+                draft.name = ""
+                draft.body = ""
+                draft.dueDate = nil
+                draft.dueTime = nil
+                hasDueDate = false
+                hasDueTime = false
+                dueDate = TaskSchedule.date(from: nil, time: nil)
+                detectedDueDatePhrase = nil
+                hasPendingRelativeDueDate = false
+                didSaveAndContinue = true
+                nameFocusRequest += 1
+                isNameFocused = true
             } else {
                 dismiss()
             }

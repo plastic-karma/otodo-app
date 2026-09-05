@@ -4,7 +4,11 @@ OTodo is an offline-first iOS client for an Obsidian Todo v1 store kept in a Git
 
 The workspace uses a compact typographic heading, a neutral canvas, quiet row dividers, and a floating quick-add control while retaining native iOS interactions and accessibility. It displays active todos due today or overdue by default, with filters for every active todo or all todos including terminal states. The Projects sidebar filters projects; project names become lowercase, hyphenated slugs and direct Markdown project records. Todos are ordered by due date and time, configured workflow-state order, name, and ULID. Swipe right on a todo to reveal Done and Reschedule; swipe left to reveal Delete. Touch and hold a todo and choose Reschedule to shift its due date with the calendar or a relative phrase while preserving every other field. The editor supports the name, state, projects, tags, due date with optional exact time, and Markdown body. New todos and the reschedule sheet calculate an exact due date and time from phrases such as `in 3 days`, `in 6 hours`, or `in 6 months`; supported units are minutes, hours, days, weeks, months, and years. GitHub tokens are stored in the device Keychain; repository workspaces and their pending changes are stored on the device.
 Touch and hold OTodo's Home Screen icon and choose **New Todo** to open task creation directly.
-Tap **+** to add a todo. Touch and hold **+** to choose **New Todo** or **New Project**.
+Tap **+** to add a todo. Touch and hold **+** to choose **New Todo**, **Bulk Add**, or **New Project**.
+
+**Bulk Add** accepts one todo per nonblank line. Due dates come only from phrases in each name; the detected phrase is removed on save. The entire batch is validated and saved together on the device, so an invalid line cannot leave a partially created batch.
+
+In the **New Todo** editor, **Save & Create Another** saves without closing, confirms the save, and returns focus to a fresh name. It keeps the selected state, projects, and tags, but clears notes and all date/time inputs. Normal **Save** still saves and closes; editing an existing todo does not offer repeated creation.
 
 Add OTodo's **Today** widget to the Home Screen to see active todos due today or overdue without opening the app. The widget refreshes when OTodo's tasks change and at the next local day boundary.
 

@@ -224,7 +224,8 @@ public actor TaskWorkspaceService {
         try Self.validate(state: selectedState, projects: projectSlugs, in: workspace)
 
         let timestamp = now()
-        let id = try generateUniqueID(in: workspace, at: timestamp)
+        var occupied = Self.occupiedTaskLocations(in: workspace)
+        let id = try generateUniqueID(in: workspace, at: timestamp, occupied: &occupied)
         let relativePath = "\(workspace.configuration.tasksDirectory)/\(id.rawValue).md"
         let task = try TodoTask(
             id: id,
@@ -276,6 +277,90 @@ public actor TaskWorkspaceService {
         )
         try await persistence.save(updatedWorkspace, expectedRevision: workspace.revision)
         return document.task
+    }
+
+    /// Creates default-state todos from raw names in one durable mutation.
+    /// Blank lines are ignored; due phrases are parsed before validating and saving the batch.
+    public func addTasks(
+        selection: RepositorySelection,
+        names: [String],
+        calendar: Calendar = .autoupdatingCurrent
+    ) async throws -> [TodoTask] {
+        let workspace = try await requireWorkspace(selection: selection)
+        let state = workspace.configuration.defaultState
+        try Self.validate(state: state, projects: [], in: workspace)
+
+        let timestamp = now()
+        var occupied = Self.occupiedTaskLocations(in: workspace)
+        var tasks = workspace.tasks
+        var pendingChanges = workspace.pendingChanges
+        var addedTasks: [TodoTask] = []
+        tasks.reserveCapacity(tasks.count + names.count)
+        pendingChanges.reserveCapacity(pendingChanges.count + names.count)
+        addedTasks.reserveCapacity(names.count)
+
+        for rawName in names {
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            let detected = try DueDatePhraseDetector.detect(
+                in: name,
+                from: timestamp,
+                calendar: calendar
+            )
+            let id = try generateUniqueID(in: workspace, at: timestamp, occupied: &occupied)
+            let relativePath = "\(workspace.configuration.tasksDirectory)/\(id.rawValue).md"
+            let task = try TodoTask(
+                id: id,
+                relativePath: relativePath,
+                name: detected?.nameWithoutPhrase ?? name,
+                state: state,
+                projectSlugs: [],
+                tags: [],
+                dueDate: detected?.dueDate,
+                dueTime: nil,
+                recurrence: nil,
+                recurrenceFrom: nil,
+                lastCompletedDate: nil,
+                body: "",
+                extraProperties: [
+                    YAMLProperty(
+                        name: "base",
+                        value: .string(workspace.configuration.todosBaseLink)
+                    ),
+                ]
+            )
+            let document = try canonicalDocument(
+                for: task,
+                configuration: workspace.configuration,
+                blobSHA: nil
+            )
+            let path = Self.repositoryPath(
+                selection: workspace.selection,
+                storeRelativePath: relativePath
+            )
+            // Allocation excludes existing outbox paths, so every change is a new insertion.
+            pendingChanges.append(try PendingChange(
+                id: makeUUID(),
+                path: path,
+                baseBlobSHA: nil,
+                content: document.content,
+                createdAt: timestamp
+            ))
+            tasks.append(document)
+            addedTasks.append(document.task)
+        }
+
+        guard !addedTasks.isEmpty else {
+            throw OTodoError.validation(field: "names", message: "Enter at least one task name")
+        }
+        let updatedWorkspace = try Self.replacing(
+            workspace,
+            tasks: tasks,
+            pendingChanges: pendingChanges,
+            conflicts: workspace.conflicts
+        )
+        try await persistence.save(updatedWorkspace, expectedRevision: workspace.revision)
+        return addedTasks
     }
 
     public func editTask(
@@ -557,7 +642,9 @@ public actor TaskWorkspaceService {
         return workspace
     }
 
-    private func generateUniqueID(in workspace: WorkspaceState, at date: Date) throws -> TaskID {
+    private static func occupiedTaskLocations(
+        in workspace: WorkspaceState
+    ) -> (ids: Set<TaskID>, paths: Set<String>) {
         var existingIDs = Set(workspace.tasks.map(\.task.id))
         var occupiedPaths = Set(workspace.pendingChanges.map(\.path))
         occupiedPaths.formUnion(workspace.conflicts.map(\.path))
@@ -572,6 +659,14 @@ public actor TaskWorkspaceService {
                 existingIDs.insert(occupiedID)
             }
         }
+        return (existingIDs, occupiedPaths)
+    }
+
+    private func generateUniqueID(
+        in workspace: WorkspaceState,
+        at date: Date,
+        occupied: inout (ids: Set<TaskID>, paths: Set<String>)
+    ) throws -> TaskID {
         for attempt in 0 ..< 128 {
             let candidate = try ulidGenerator.generate(
                 at: date.addingTimeInterval(Double(attempt) / 1_000)
@@ -581,7 +676,9 @@ public actor TaskWorkspaceService {
                 selection: workspace.selection,
                 storeRelativePath: relativePath
             )
-            if !existingIDs.contains(candidate), !occupiedPaths.contains(path) {
+            if !occupied.ids.contains(candidate), !occupied.paths.contains(path) {
+                occupied.ids.insert(candidate)
+                occupied.paths.insert(path)
                 return candidate
             }
         }

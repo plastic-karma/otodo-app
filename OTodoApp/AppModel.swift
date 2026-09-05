@@ -547,6 +547,43 @@ final class AppModel {
         }
     }
 
+    func createTasks(names: [String]) async {
+        guard rootState == .workspace, let selection = workspaceSelection else {
+            errorMessage = "No todo workspace is selected."
+            return
+        }
+        let operationSession = sessionID
+
+        beginLocalMutation()
+        defer { finishLocalMutation() }
+        errorMessage = nil
+        statusMessage = "Saving todos on this device…"
+        isBusy = true
+        do {
+            let created = try await taskService.addTasks(
+                selection: selection,
+                names: names,
+                calendar: TaskSchedule.calendar
+            )
+            guard sessionID == operationSession else { return }
+            syncFollowUpRequested = true
+            let workspace = try await taskService.loadWorkspace(selection: selection)
+            guard sessionID == operationSession else { return }
+            apply(workspace)
+            errorMessage = nil
+            publishLocalSaveStatus(
+                onlineMessage: "Saved \(created.count) todos on this device; waiting to sync.",
+                offlineMessage: "Saved \(created.count) todos on this device while offline."
+            )
+            isBusy = false
+        } catch {
+            guard sessionID == operationSession else { return }
+            isBusy = false
+            errorMessage = Self.message(for: error)
+            statusMessage = nil
+        }
+    }
+
     func updateTask(id: TaskID, draft: TaskEditorDraft) async {
         guard rootState == .workspace, let selection = workspaceSelection else {
             errorMessage = "No todo workspace is selected."

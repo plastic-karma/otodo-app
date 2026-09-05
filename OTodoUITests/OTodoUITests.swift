@@ -1398,6 +1398,142 @@ final class OTodoUITests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
     }
+
+    @MainActor
+    func testBulkTextCreatesDatedAndUndatedTodosDurably() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        let reset = "-ui-testing-reset-workspace"
+        app.launchArguments = ["-ui-testing", reset]
+        app.launch()
+        guard selectFilter("Active", in: app) else { return }
+
+        let addButton = app.buttons["task-add"]
+        guard require(addButton, in: app, description: "the quick-add button") else { return }
+        addButton.press(forDuration: 1.2)
+        let bulkButton = app.buttons["task-add-menu-bulk"]
+        guard require(bulkButton, in: app, description: "the Bulk Add action") else { return }
+        bulkButton.tap()
+
+        let bulkEditor = app.descendants(matching: .any)
+            .matching(identifier: "task-bulk-editor").firstMatch
+        let text = app.textViews["task-bulk-text"]
+        guard require(text, in: app, description: "the multiline todo input") else { return }
+        let create = app.buttons["task-bulk-save"]
+        XCTAssertFalse(create.isEnabled, "An empty batch cannot be created")
+        text.tap()
+        text.typeText("Bulk milk tomorrow\n\nBulk rent Mon\nBulk undated")
+        XCTAssertTrue(create.isEnabled)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Multiline bulk todo creation"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        create.tap()
+        guard requireEditorDismissed(
+            bulkEditor, after: "creating the bulk todos", in: app
+        ) else { return }
+
+        app.terminate()
+        app.launchArguments.removeAll { $0 == reset }
+        app.launch()
+        guard selectFilter("Active", in: app) else { return }
+        let taskList = app.descendants(matching: .any)
+            .matching(identifier: "task-list").firstMatch
+        let editor = app.descendants(matching: .any)
+            .matching(identifier: "task-editor").firstMatch
+        for (name, hasDate) in [
+            ("Bulk milk", true), ("Bulk rent", true), ("Bulk undated", false),
+        ] {
+            guard let task = requireTaskRow(
+                named: name, state: "Pending", in: app, taskList: taskList,
+                description: "the persisted \(name) todo"
+            ) else { return }
+            task.tap()
+            guard require(editor, in: app, description: "the persisted bulk todo editor") else { return }
+            XCTAssertEqual(app.textFields["task-editor-name"].value as? String, name)
+            XCTAssertEqual(
+                app.switches["task-editor-due-date-toggle"].value as? String,
+                hasDate ? "1" : "0",
+                "Only dates parsed from each line should be saved"
+            )
+            app.buttons["Cancel"].tap()
+        }
+    }
+
+    @MainActor
+    func testCreateAnotherResetsScheduleAndKeepsProjectAndTags() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        let reset = "-ui-testing-reset-workspace"
+        app.launchArguments = ["-ui-testing", reset]
+        app.launch()
+        guard selectFilter("Active", in: app) else { return }
+        app.buttons["task-add"].tap()
+
+        let editor = app.descendants(matching: .any)
+            .matching(identifier: "task-editor").firstMatch
+        let name = app.textFields["task-editor-name"]
+        guard require(name, in: app, description: "the new todo name") else { return }
+        name.tap()
+        name.typeText("Repeated first")
+        app.buttons["work project"].tap()
+        editor.swipeUp()
+        let tags = app.textFields["task-editor-tags"]
+        guard require(tags, in: app, description: "the shared tags input") else { return }
+        tags.tap()
+        tags.typeText("focus")
+        editor.swipeUp()
+        let relative = app.textFields["task-editor-relative-due-date"]
+        guard require(relative, in: app, description: "the first todo's relative schedule") else { return }
+        relative.tap()
+        relative.typeText("in 6 hours")
+        app.buttons["task-editor-relative-due-apply"].tap()
+
+        let createAnother = app.buttons["task-editor-save-another"]
+        guard require(createAnother, in: app, description: "Save & Create Another") else { return }
+        XCTAssertTrue(createAnother.isEnabled)
+        createAnother.tap()
+        let confirmation = app.descendants(matching: .any)
+            .matching(identifier: "task-editor-saved-confirmation").firstMatch
+        guard require(confirmation, in: app, description: "the saved confirmation") else { return }
+        XCTAssertTrue(editor.exists, "Repeated entry should keep the editor open")
+        XCTAssertFalse(createAnother.isEnabled, "The next todo needs its own name")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Create another after saving a scheduled todo"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        name.typeText("Repeated second")
+        let save = app.buttons["task-editor-save"]
+        XCTAssertTrue(save.isEnabled, "The previous relative expression must not block the next todo")
+        save.tap()
+        guard requireEditorDismissed(editor, after: "finishing repeated entry", in: app) else { return }
+
+        app.terminate()
+        app.launchArguments.removeAll { $0 == reset }
+        app.launch()
+        guard selectFilter("Active", in: app) else { return }
+        let taskList = app.descendants(matching: .any)
+            .matching(identifier: "task-list").firstMatch
+        for (taskName, hasDate) in [("Repeated first", true), ("Repeated second", false)] {
+            guard let task = requireTaskRow(
+                named: taskName, state: "Pending", in: app, taskList: taskList,
+                description: "the persisted \(taskName) todo"
+            ) else { return }
+            task.tap()
+            guard require(editor, in: app, description: "the saved repeated-entry todo") else { return }
+            XCTAssertEqual(app.textFields["task-editor-name"].value as? String, taskName)
+            XCTAssertEqual(app.textFields["task-editor-tags"].value as? String, "focus")
+            XCTAssertEqual(app.buttons["work project"].value as? String, "Selected")
+            XCTAssertEqual(
+                app.switches["task-editor-due-date-toggle"].value as? String,
+                hasDate ? "1" : "0",
+                "The next todo must not inherit the first todo's schedule"
+            )
+            XCTAssertFalse(app.buttons["task-editor-save-another"].exists)
+            app.buttons["Cancel"].tap()
+        }
+    }
     @MainActor
     private func selectFilter(
         _ name: String,

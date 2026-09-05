@@ -18,6 +18,7 @@ struct TaskListView: View {
     @State private var selectedProject: String?
     @State private var isProjectSidebarPresented = false
     @State private var isProjectEditorPresented = false
+    @State private var isBulkEditorPresented = false
     @State private var reschedulePresentation: ReschedulePresentation?
 
     init(model: AppModel, notifications: TaskNotificationManager) {
@@ -267,6 +268,13 @@ struct TaskListView: View {
                         )
                     }
                 }
+                .sheet(isPresented: $isBulkEditorPresented) {
+                    TaskBulkEditorView { names in
+                        await model.createTasks(names: names)
+                        return model.errorMessage
+                    }
+                    .presentationDetents([.large])
+                }
                 .sheet(item: $reschedulePresentation) { presentation in
                     TaskRescheduleView(task: presentation.task) { date, time in
                         await model.rescheduleTask(
@@ -418,6 +426,12 @@ struct TaskListView: View {
             }
             .accessibilityIdentifier("task-add-menu-todo")
 
+            Button("Bulk Add", systemImage: "text.badge.plus") {
+                isBulkEditorPresented = true
+            }
+            .disabled(model.isBusy)
+            .accessibilityIdentifier("task-add-menu-bulk")
+
             Button("New Project", systemImage: "folder.badge.plus") {
                 isProjectEditorPresented = true
             }
@@ -437,7 +451,7 @@ struct TaskListView: View {
         .disabled(model.configuration == nil)
         .opacity(model.configuration == nil ? 0.45 : 1)
         .accessibilityLabel("Add Todo")
-        .accessibilityHint("Tap to add a todo; touch and hold to add a todo or project")
+        .accessibilityHint("Tap to add a todo; touch and hold for bulk entry or a project")
         .accessibilityIdentifier("task-add")
     }
     private func presentPendingNewTodoRequest() {
@@ -449,6 +463,7 @@ struct TaskListView: View {
         isProjectSidebarPresented = false
         isProjectEditorPresented = false
         isFilterLibraryPresented = false
+        isBulkEditorPresented = false
         reschedulePresentation = nil
         editorPresentation = .create
     }

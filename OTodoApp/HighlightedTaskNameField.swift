@@ -5,6 +5,7 @@ struct HighlightedTaskNameField: UIViewRepresentable {
     @Binding var text: String
     let highlightRange: NSRange?
     let accessibilityIdentifier: String
+    @Binding var isFocused: Bool
 
     @MainActor
     func makeCoordinator() -> Coordinator {
@@ -12,8 +13,8 @@ struct HighlightedTaskNameField: UIViewRepresentable {
     }
 
     @MainActor
-    func makeUIView(context: Context) -> UITextField {
-        let textField = UITextField()
+    func makeUIView(context: Context) -> NameTextField {
+        let textField = NameTextField()
         textField.borderStyle = .none
         textField.placeholder = "Name"
         textField.backgroundColor = .clear
@@ -34,8 +35,17 @@ struct HighlightedTaskNameField: UIViewRepresentable {
     }
 
     @MainActor
-    func updateUIView(_ textField: UITextField, context: Context) {
+    func updateUIView(_ textField: NameTextField, context: Context) {
         context.coordinator.parent = self
+        textField.isEnabled = context.environment.isEnabled
+        textField.wantsFocus = isFocused
+        defer {
+            if isFocused {
+                textField.focusIfPossible()
+            } else if textField.isFirstResponder {
+                textField.resignFirstResponder()
+            }
+        }
         let validHighlightRange = validatedHighlightRange
         guard textField.attributedText?.string != text
                 || context.coordinator.appliedHighlightRange != validHighlightRange
@@ -100,6 +110,22 @@ struct HighlightedTaskNameField: UIViewRepresentable {
     }
 
     @MainActor
+    final class NameTextField: UITextField {
+        var wantsFocus = false
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            focusIfPossible()
+        }
+
+        func focusIfPossible() {
+            if wantsFocus, window != nil, !isFirstResponder {
+                becomeFirstResponder()
+            }
+        }
+    }
+
+    @MainActor
     final class Coordinator: NSObject, UITextFieldDelegate {
         var parent: HighlightedTaskNameField
         var appliedHighlightRange: NSRange?
@@ -110,6 +136,14 @@ struct HighlightedTaskNameField: UIViewRepresentable {
 
         @objc func textDidChange(_ textField: UITextField) {
             parent.text = textField.text ?? ""
+        }
+
+        func textFieldDidBeginEditing(_ textField: UITextField) {
+            if !parent.isFocused { parent.isFocused = true }
+        }
+
+        func textFieldDidEndEditing(_ textField: UITextField) {
+            if parent.isFocused { parent.isFocused = false }
         }
 
         func textFieldShouldReturn(_ textField: UITextField) -> Bool {

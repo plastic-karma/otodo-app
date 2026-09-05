@@ -264,6 +264,180 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(afterEdit.pendingChanges[0].content, afterEdit.tasks[0].content)
     }
 
+    func testAddTasksPersistsParsedNamesAndOutboxUsingOneReferenceDate() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration(obsidianLinkPrefix: "Vault")
+        let initial = try makeWorkspace(selection: selection, configuration: configuration)
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let referenceDate = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 9, day: 5, hour: 23, minute: 59
+        )))
+        let clock = AdvancingBatchClock(date: referenceDate)
+        let service = TaskWorkspaceService(
+            persistence: store,
+            taskCodec: ObsidianTaskCodec(),
+            now: { clock.next() }
+        )
+
+        let added = try await service.addTasks(
+            selection: selection,
+            names: [" \t ", "  Buy milk tomorrow  ", "", "Call Alex tomorrow", "Read 2026-10-01"],
+            calendar: calendar
+        )
+
+        XCTAssertEqual(added.map(\.name), ["Buy milk", "Call Alex", "Read 2026-10-01"])
+        XCTAssertEqual(added.map(\.dueDate), [
+            try CivilDate(rawValue: "2026-09-06"),
+            try CivilDate(rawValue: "2026-09-06"),
+            nil,
+        ])
+        let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(durable.tasks.map(\.task), added)
+        XCTAssertEqual(durable.pendingChanges.count, 3)
+        for document in durable.tasks {
+            let pending = try XCTUnwrap(durable.pendingChanges.first {
+                $0.path == repositoryPath(selection, document.task.relativePath)
+            })
+            let uploadedTask = try ObsidianTaskCodec().parseTask(
+                id: document.task.id,
+                relativePath: document.task.relativePath,
+                text: try XCTUnwrap(pending.content),
+                configuration: configuration
+            )
+            XCTAssertEqual(uploadedTask, document.task)
+            XCTAssertNil(pending.baseBlobSHA)
+        }
+    }
+
+    func testAddTasksRejectsLaterInvalidNameWithoutPersistingEarlierTask() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let initial = try makeWorkspace(selection: selection, configuration: makeConfiguration())
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+
+        do {
+            _ = try await service.addTasks(selection: selection, names: ["Valid first task", "tomorrow"])
+            XCTFail("Expected a date phrase without a task name to be rejected")
+        } catch let error as OTodoError {
+            guard case .validation(field: "name", message: _) = error else {
+                return XCTFail("Expected task name validation, got \(error)")
+            }
+        }
+
+        let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(durable, initial)
+    }
+
+    func testAddTasksRejectsBlankBatchWithoutChangingWorkspace() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let initial = try makeWorkspace(selection: selection, configuration: makeConfiguration())
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+
+        do {
+            _ = try await service.addTasks(selection: selection, names: [" ", "\t", "\r"])
+            XCTFail("Expected an empty batch to be rejected")
+        } catch let error as OTodoError {
+            guard case .validation = error else {
+                return XCTFail("Expected validation, got \(error)")
+            }
+        }
+
+        let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(durable, initial)
+    }
+
+    func testAddTasksSaveFailureLeavesDurableWorkspaceUnchanged() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let initial = try makeWorkspace(selection: selection, configuration: makeConfiguration())
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(
+            persistence: CapacityLimitedWorkspaceStore(store: store, maximumTaskCount: 1),
+            taskCodec: ObsidianTaskCodec()
+        )
+
+        do {
+            _ = try await service.addTasks(selection: selection, names: ["First task", "Second task"])
+            XCTFail("Expected persistence failure")
+        } catch let error as OTodoError {
+            guard case .corruptLocalState = error else {
+                return XCTFail("Expected persistence failure, got \(error)")
+            }
+        }
+
+        let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(durable, initial)
+    }
+
+    func testAddTasksAvoidsExistingPendingConflictedAndStagedIDs() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let ids = [
+            taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            taskID("01ARZ3NDEKTSV4RRFFQ69G5FAW"),
+            taskID("01ARZ3NDEKTSV4RRFFQ69G5FAX"),
+            taskID("01ARZ3NDEKTSV4RRFFQ69G5FAY"),
+            taskID("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
+        ]
+        let referenceDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let existing = try makeDocument(id: ids[0], name: "Existing task", configuration: configuration)
+        let pending = try PendingChange(
+            id: UUID(uuidString: "77777777-7777-7777-7777-777777777777")!,
+            path: repositoryPath(selection, "Tasks/\(ids[1].rawValue).md"),
+            baseBlobSHA: "deleted-blob",
+            content: nil,
+            createdAt: referenceDate
+        )
+        let conflict = try SyncConflict(
+            path: repositoryPath(selection, "Tasks/\(ids[2].rawValue).md"),
+            baseBlobSHA: "base-blob",
+            remoteBlobSHA: "remote-blob",
+            localContent: nil,
+            remoteContent: "remote"
+        )
+        let initial = try makeWorkspace(
+            selection: selection,
+            configuration: configuration,
+            tasks: [existing],
+            pendingChanges: [pending],
+            conflicts: [conflict]
+        )
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(
+            persistence: store,
+            taskCodec: ObsidianTaskCodec(),
+            ulidGenerator: RetryingBatchULIDGenerator(ids: ids, referenceDate: referenceDate),
+            now: { referenceDate }
+        )
+
+        let added = try await service.addTasks(selection: selection, names: ["First task", "Second task"])
+
+        XCTAssertEqual(added.map(\.id), Array(ids.suffix(2)))
+        let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(durable.tasks.map(\.task), [existing.task] + added)
+        XCTAssertEqual(durable.pendingChanges.first, pending)
+        XCTAssertEqual(durable.pendingChanges.count, 3)
+        XCTAssertEqual(durable.conflicts, [conflict])
+    }
+
     func testAddProjectCreatesCanonicalDurableRecordAndRejectsDuplicates() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1138,6 +1312,52 @@ private struct FixedULIDGenerator: ULIDGenerating {
 
     func generate(at _: Date) throws -> TaskID {
         id
+    }
+}
+
+private final class AdvancingBatchClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var date: Date
+
+    init(date: Date) {
+        self.date = date
+    }
+
+    func next() -> Date {
+        lock.lock()
+        defer { lock.unlock() }
+        let result = date
+        date = date.addingTimeInterval(86_400)
+        return result
+    }
+}
+
+private struct RetryingBatchULIDGenerator: ULIDGenerating {
+    let ids: [TaskID]
+    let referenceDate: Date
+
+    func generate(at date: Date) throws -> TaskID {
+        let index = Int((date.timeIntervalSince(referenceDate) * 1_000).rounded())
+        guard ids.indices.contains(index) else {
+            throw OTodoError.conflict(message: "Exhausted fixture task IDs")
+        }
+        return ids[index]
+    }
+}
+
+private struct CapacityLimitedWorkspaceStore: WorkspacePersisting {
+    let store: FileWorkspaceStore
+    let maximumTaskCount: Int
+
+    func load(selection: RepositorySelection) async throws -> WorkspaceState? {
+        try await store.load(selection: selection)
+    }
+
+    func save(_ workspace: WorkspaceState, expectedRevision: UInt64?) async throws {
+        guard workspace.tasks.count <= maximumTaskCount else {
+            throw OTodoError.corruptLocalState(message: "Injected storage capacity failure")
+        }
+        try await store.save(workspace, expectedRevision: expectedRevision)
     }
 }
 
