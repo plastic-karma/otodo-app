@@ -1566,6 +1566,56 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testSyncStatusStaysPinnedWhileTodosScroll() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments.append(contentsOf: ["-ui-testing", "-ui-testing-reset-workspace"])
+        app.launch()
+        guard selectFilter("Active", in: app) else { return }
+        let addButton = app.buttons["task-add"]
+        guard require(addButton, in: app, description: "the quick-add control") else { return }
+        addButton.press(forDuration: 1.2)
+        let bulkAction = app.buttons["task-add-menu-bulk"]
+        guard require(bulkAction, in: app, description: "the Bulk Add action") else { return }
+        bulkAction.tap()
+        let input = app.textViews["task-bulk-text"]
+        guard require(input, in: app, description: "the multiline todo input") else { return }
+        input.tap()
+        input.typeText((1...16).map { String(format: "Scrollable todo %02d", $0) }.joined(separator: "\n"))
+        app.buttons["task-bulk-save"].tap()
+        let bulkEditor = app.descendants(matching: .any).matching(identifier: "task-bulk-editor").firstMatch
+        XCTAssertTrue(bulkEditor.waitForNonExistence(timeout: 8))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 8))
+
+        let taskList = app.descendants(matching: .any).matching(identifier: "task-list").firstMatch
+        let status = app.descendants(matching: .any).matching(identifier: "sync-status").firstMatch
+        guard require(status, in: app, description: "the pinned update information for a long list") else { return }
+        let initialFrame = status.frame
+        XCTAssertTrue(status.isHittable)
+        XCTAssertGreaterThan(initialFrame.minY, app.frame.midY)
+        XCTAssertLessThanOrEqual(initialFrame.maxY, app.frame.maxY)
+        XCTAssertFalse(initialFrame.intersects(addButton.frame), "Update information must not overlap quick add")
+        XCTAssertTrue(app.buttons["sync-refresh"].exists)
+
+        let firstScrollable = taskRow(named: "Scrollable todo 01", state: "Pending", in: app)
+        guard require(firstScrollable, in: app, description: "the first added todo before scrolling") else { return }
+        let lastTodo = taskRow(named: "Undated todo", state: "Pending", in: app)
+        for _ in 0..<4 where !lastTodo.isHittable {
+            taskList.swipeUp()
+        }
+        XCTAssertTrue(lastTodo.isHittable, "The final todo must remain reachable above the pinned bar")
+        XCTAssertFalse(firstScrollable.isHittable, "The todo list must actually scroll")
+        XCTAssertTrue(status.isHittable)
+        XCTAssertEqual(status.frame.minY, initialFrame.minY, accuracy: 1)
+        XCTAssertEqual(status.frame.maxY, initialFrame.maxY, accuracy: 1)
+        XCTAssertTrue(addButton.isHittable)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Update information and quick add remain pinned after scrolling"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
     func testBulkTextCreatesDatedAndUndatedTodosDurably() {
         continueAfterFailure = false
         let app = XCUIApplication()

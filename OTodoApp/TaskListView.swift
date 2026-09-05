@@ -204,18 +204,6 @@ struct TaskListView: View {
                                     .listRowBackground(Color.clear)
                                 }
                             }
-
-                            SyncStatusView(model: model)
-                                .listRowInsets(
-                                    EdgeInsets(
-                                        top: 20,
-                                        leading: 20,
-                                        bottom: 6,
-                                        trailing: 20
-                                    )
-                                )
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(Color.clear)
                         }
                         .listSectionSeparator(.hidden)
                     }
@@ -223,19 +211,20 @@ struct TaskListView: View {
                     .listSectionSpacing(10)
                     .scrollContentBackground(.hidden)
                     .contentMargins(.top, 2, for: .scrollContent)
-                    .safeAreaInset(edge: .bottom) {
-                        Color.clear
-                            .frame(height: 72)
-                            .accessibilityHidden(true)
-                    }
                     .accessibilityIdentifier("task-list")
                     .refreshable {
                         await model.refresh()
                     }
-                    .overlay(alignment: .bottomTrailing) {
-                        addTodoButton
-                            .padding(.trailing, 20)
-                            .padding(.bottom, 18)
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        HStack(alignment: .bottom, spacing: 16) {
+                            SyncStatusView(model: model)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            addTodoButton
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.top, 12)
+                        .padding(.bottom, 18)
+                        .background(OTodoCanvas())
                     }
                 }
                 .navigationTitle(selectedProject.map(projectDisplayName) ?? "Todos")

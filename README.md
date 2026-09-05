@@ -10,6 +10,8 @@ Project sidebar badges count only open todos across all dates, independent of th
 
 Touch and hold a todo for **Done**, **Reschedule**, and **Delete**. Done is available only for open todos; Delete is available for both open and completed todos.
 
+Update and sync information stays pinned beside **+** at the bottom of the workspace. Todo scrolling does not move it, and the list reserves space so the final todo remains reachable without overlapping the status or quick-add controls.
+
 Touch and hold OTodo's Home Screen icon and choose **New Todo** to open task creation directly.
 Tap **+** to add a todo. Touch and hold **+** to choose **New Todo**, **Bulk Add**, or **New Project**.
 
