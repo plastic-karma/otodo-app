@@ -6,6 +6,8 @@ The workspace uses a compact typographic heading, a neutral canvas, quiet row di
 
 Tap a todo's circle to complete it without opening the editor. Completed todos remain available in **All**; tap their checked circle to reopen them in the configured default state. Tapping the title or details still opens the editor, and both state changes use the same durable offline save and sync path as editing.
 
+Project sidebar badges count only open todos across all dates, independent of the selected filter. Configured terminal states are excluded from both individual project counts and the **All Todos** sidebar count.
+
 Touch and hold OTodo's Home Screen icon and choose **New Todo** to open task creation directly.
 Tap **+** to add a todo. Touch and hold **+** to choose **New Todo**, **Bulk Add**, or **New Project**.
 

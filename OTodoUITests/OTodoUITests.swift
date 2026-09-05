@@ -1276,6 +1276,8 @@ final class OTodoUITests: XCTestCase {
 
         let pending = taskRow(named: "Seed todo", state: "Pending", in: app)
         guard require(pending, in: app, description: "the open todo") else { return }
+        guard requireProjectCounts([(nil, 4), ("home", 2), ("work", 2)], in: app) else { return }
+        app.buttons["project-sidebar-close"].tap()
         let circle = app.buttons["task-toggle-completion-01ARZ3NDEKTSV4RRFFQ69G5FAV"]
         guard require(circle, in: app, description: "the todo completion circle") else { return }
         circle.tap()
@@ -1296,6 +1298,12 @@ final class OTodoUITests: XCTestCase {
         screenshot.name = "Completed todo with tappable reopen circle"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+        guard requireProjectCounts([(nil, 3), ("home", 1), ("work", 2)], in: app) else { return }
+        let countsScreenshot = XCTAttachment(screenshot: app.screenshot())
+        countsScreenshot.name = "Project badges exclude completed todos while All is selected"
+        countsScreenshot.lifetime = .keepAlways
+        add(countsScreenshot)
+        app.buttons["project-sidebar-close"].tap()
 
         guard require(circle, in: app, description: "the completed todo circle") else { return }
         circle.tap()
@@ -1306,6 +1314,8 @@ final class OTodoUITests: XCTestCase {
         app.launch()
         guard selectFilter("Today", in: app) else { return }
         guard require(pending, in: app, description: "the reopened todo persisted in Today") else { return }
+        guard requireProjectCounts([(nil, 4), ("home", 2), ("work", 2)], in: app) else { return }
+        app.buttons["project-sidebar-close"].tap()
         pending.tap()
         guard require(editor, in: app, description: "the editor opened by tapping the todo title") else { return }
         XCTAssertEqual(app.buttons["home project"].value as? String, "Selected")
@@ -1681,6 +1691,29 @@ final class OTodoUITests: XCTestCase {
             line: line
         ) else { return nil }
         return row
+    }
+
+    @MainActor
+    private func requireProjectCounts(
+        _ expected: [(String?, Int)],
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> Bool {
+        let sidebarButton = app.buttons["project-sidebar-toggle"]
+        guard require(
+            sidebarButton, in: app, description: "the project sidebar button", file: file, line: line
+        ) else { return false }
+        sidebarButton.tap()
+        for (project, count) in expected {
+            let identifier = project.map { "project-open-count-\($0)" } ?? "project-open-count"
+            let badge = app.staticTexts[identifier]
+            guard require(
+                badge, in: app, description: "the open count for \(project ?? "all projects")", file: file, line: line
+            ) else { return false }
+            XCTAssertEqual(badge.label, String(count), "Only open todos should count", file: file, line: line)
+        }
+        return true
     }
 
     @MainActor

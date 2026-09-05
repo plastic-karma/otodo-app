@@ -719,7 +719,7 @@ struct TaskListView: View {
     private func projectFilterButton(_ project: String?) -> some View {
         let isSelected = selectedProject == project
         let title = project.map(projectDisplayName) ?? "All Todos"
-        let count = project.map(taskCount(for:)) ?? model.tasks.count
+        let count = taskCount(for: project)
         let color = projectColor(project)
 
         return Button {
@@ -742,6 +742,7 @@ struct TaskListView: View {
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier(project.map { "project-open-count-\($0)" } ?? "project-open-count")
 
                 Image(systemName: "checkmark")
                     .font(.body)
@@ -757,7 +758,7 @@ struct TaskListView: View {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(title), \(count) todos")
+        .accessibilityLabel("\(title), \(count) open todos")
         .accessibilityValue(isSelected ? "Selected" : "Not selected")
         .accessibilityIdentifier(project.map { "project-filter-\($0)" } ?? "project-filter-all")
     }
@@ -777,8 +778,13 @@ struct TaskListView: View {
         }
     }
 
-    private func taskCount(for project: String) -> Int {
-        model.tasks.lazy.filter { $0.projectSlugs.contains(project) }.count
+    private func taskCount(for project: String?) -> Int {
+        model.tasks.lazy.filter { task in
+            if let project, !task.projectSlugs.contains(project) {
+                return false
+            }
+            return state(for: task.state)?.isTerminal != true
+        }.count
     }
 
     private func projectDisplayName(_ project: String) -> String {
