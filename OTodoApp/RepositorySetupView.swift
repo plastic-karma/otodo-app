@@ -290,6 +290,7 @@ struct RepositorySetupView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .tint(OTodoTheme.filledAccent)
             .controlSize(.large)
             .disabled(!canConnect)
             .accessibilityHint("Downloads the selected todo store and opens your tasks")

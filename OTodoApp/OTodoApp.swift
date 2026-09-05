@@ -14,6 +14,9 @@ struct OTodoApp: App {
         WindowGroup {
             RootView(model: model, notifications: notifications)
                 .tint(OTodoTheme.accent)
+#if DEBUG
+                .preferredColorScheme(testColorScheme)
+#endif
                 .task {
                     await model.start()
                     await synchronizeSystemSurfaces()
@@ -32,6 +35,16 @@ struct OTodoApp: App {
                 }
         }
     }
+#if DEBUG
+    private var testColorScheme: ColorScheme? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard arguments.contains("-ui-testing") else { return nil }
+        if arguments.contains("-ui-testing-dark") { return .dark }
+        if arguments.contains("-ui-testing-light") { return .light }
+        return nil
+    }
+#endif
+
 
     private func synchronizeSystemSurfaces() async {
         let states = model.configuration?.states ?? []

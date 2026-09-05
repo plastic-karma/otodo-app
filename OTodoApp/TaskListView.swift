@@ -147,7 +147,7 @@ struct TaskListView: View {
                                                 systemImage: "calendar.badge.clock"
                                             )
                                         }
-                                        .tint(OTodoTheme.violet)
+                                        .tint(OTodoTheme.filledViolet)
                                         .disabled(model.isBusy)
                                         .accessibilityIdentifier(
                                             "task-reschedule-\(task.id.rawValue)"
@@ -528,6 +528,7 @@ struct TaskListView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .tint(OTodoTheme.filledAccent)
             .controlSize(.large)
             .disabled(model.configuration == nil || model.isBusy)
             .accessibilityIdentifier("project-add")

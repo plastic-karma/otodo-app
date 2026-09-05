@@ -100,6 +100,7 @@ struct AuthenticationView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(OTodoTheme.filledAccent)
                 .controlSize(.large)
                 .accessibilityHint("Requests a one-time code from GitHub")
                 .accessibilityIdentifier("authentication.start")
@@ -156,6 +157,7 @@ struct AuthenticationView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(OTodoTheme.filledAccent)
                 .controlSize(.large)
                 .disabled(isExpired)
                 .accessibilityHint("Opens GitHub’s device authorization page")

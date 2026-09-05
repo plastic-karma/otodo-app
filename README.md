@@ -7,6 +7,8 @@ Touch and hold OTodo's Home Screen icon and choose **New Todo** to open task cre
 
 Add OTodo's **Today** widget to the Home Screen to see active todos due today or overdue without opening the app. The widget refreshes when OTodo's tasks change and at the next local day boundary.
 
+The shared palette follows the system appearance: light mode uses indigo accents, while dark mode uses legible lavender foregrounds, neutral raised surfaces, and subdued dark fills behind white labels.
+
 Task names recognize full weekday names, `tomorrow`, `in N days`, `in N weeks`, `in N months`, `next week`, and `next month`. The editor highlights the detected phrase; saving removes it from the name and stores the resolved calendar date as `due_date`.
 
 Due reminders are opt-in from the Projects sidebar. When enabled, active dated todos schedule local iOS notifications at their exact due time, or at 9:00 AM in the device time zone for date-only todos; an already-due todo gets a near-term reminder, and completing, deleting, or rescheduling a todo reconciles its pending alert. If notification access was denied, the control opens the app's iOS Settings page.

@@ -822,10 +822,19 @@ final class OTodoUITests: XCTestCase {
     @MainActor
     func testTodayFilterIncludesOverdueAndIsDefault() {
         continueAfterFailure = false
+        verifyTodayFilters(appearance: "light")
+        verifyTodayFilters(appearance: "dark")
+    }
+
+    @MainActor
+    private func verifyTodayFilters(appearance: String) {
 
         let app = XCUIApplication()
-        app.launchArguments.append(contentsOf: ["-ui-testing", "-ui-testing-reset-workspace"])
+        app.launchArguments.append(contentsOf: [
+            "-ui-testing", "-ui-testing-reset-workspace", "-ui-testing-\(appearance)",
+        ])
         app.launch()
+        defer { app.terminate() }
 
         let taskList = app.descendants(matching: .any)
             .matching(identifier: "task-list")
@@ -867,6 +876,11 @@ final class OTodoUITests: XCTestCase {
             "Today should hide terminal todos"
         )
 
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Today workspace - \(appearance)"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
         guard selectFilter("Active", in: app) else { return }
         guard require(
             taskRow(named: "Future todo", state: "Pending", in: app),
@@ -889,6 +903,17 @@ final class OTodoUITests: XCTestCase {
             in: app,
             description: "the completed overdue todo in All"
         )
+
+        app.buttons["project-sidebar-toggle"].tap()
+        guard require(
+            app.buttons["project-filter-work"],
+            in: app,
+            description: "the Work project"
+        ) else { return }
+        let sidebarScreenshot = XCTAttachment(screenshot: app.screenshot())
+        sidebarScreenshot.name = "Projects - \(appearance)"
+        sidebarScreenshot.lifetime = .keepAlways
+        add(sidebarScreenshot)
     }
 
     @MainActor
@@ -1225,43 +1250,6 @@ final class OTodoUITests: XCTestCase {
         )
     }
 
-    @MainActor
-    func testWorkspaceVisualDesign() {
-        continueAfterFailure = false
-
-        let app = XCUIApplication()
-        app.launchArguments.append(contentsOf: ["-ui-testing", "-ui-testing-reset-workspace"])
-        app.launch()
-
-        let hero = app.descendants(matching: .any)
-            .matching(identifier: "workspace-hero")
-            .firstMatch
-        guard require(
-            hero,
-            in: app,
-            description: "the workspace focus card"
-        ) else { return }
-        guard require(
-            app.segmentedControls["task-filter"],
-            in: app,
-            description: "the styled visibility control"
-        ) else { return }
-        guard require(
-            app.buttons["task-add"],
-            in: app,
-            description: "the floating Add Todo button"
-        ) else { return }
-        guard require(
-            taskRow(named: "Seed todo", state: "Pending", in: app),
-            in: app,
-            description: "a styled todo card"
-        ) else { return }
-
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "OTodo workspace redesign"
-        screenshot.lifetime = .keepAlways
-        add(screenshot)
-    }
 
 
     @MainActor
