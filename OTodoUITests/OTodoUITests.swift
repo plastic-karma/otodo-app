@@ -1267,6 +1267,52 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testCircleCompletesAndReopensTodoDurablyWithoutOpeningEditor() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        let resetWorkspaceArgument = "-ui-testing-reset-workspace"
+        app.launchArguments.append(contentsOf: ["-ui-testing", resetWorkspaceArgument])
+        app.launch()
+
+        let pending = taskRow(named: "Seed todo", state: "Pending", in: app)
+        guard require(pending, in: app, description: "the open todo") else { return }
+        let circle = app.buttons["task-toggle-completion-01ARZ3NDEKTSV4RRFFQ69G5FAV"]
+        guard require(circle, in: app, description: "the todo completion circle") else { return }
+        circle.tap()
+        XCTAssertTrue(pending.waitForNonExistence(timeout: 8))
+        let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
+        XCTAssertFalse(editor.exists, "Tapping the circle should not open the editor")
+
+        app.terminate()
+        app.launchArguments.removeAll { $0 == resetWorkspaceArgument }
+        app.launch()
+        guard selectFilter("All", in: app) else { return }
+        guard require(
+            taskRow(named: "Seed todo", state: "Done", in: app),
+            in: app,
+            description: "the completed todo persisted after relaunch"
+        ) else { return }
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Completed todo with tappable reopen circle"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        guard require(circle, in: app, description: "the completed todo circle") else { return }
+        circle.tap()
+        guard require(pending, in: app, description: "the reopened todo") else { return }
+        XCTAssertFalse(editor.exists, "Reopening from the circle should not open the editor")
+
+        app.terminate()
+        app.launch()
+        guard selectFilter("Today", in: app) else { return }
+        guard require(pending, in: app, description: "the reopened todo persisted in Today") else { return }
+        pending.tap()
+        guard require(editor, in: app, description: "the editor opened by tapping the todo title") else { return }
+        XCTAssertEqual(app.buttons["home project"].value as? String, "Selected")
+        app.buttons["Cancel"].tap()
+    }
+
+    @MainActor
     func testSwipeActionsCompleteAndDeleteDurably() {
         continueAfterFailure = false
 

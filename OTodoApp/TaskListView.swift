@@ -101,21 +101,13 @@ struct TaskListView: View {
                                 emptyRow
                             } else {
                                 ForEach(displayedTasks, id: \.id) { task in
-                                    Button {
-                                        editorPresentation = .edit(task)
-                                    } label: {
-                                        TaskRowView(
-                                            task: task,
-                                            workflowState: state(for: task.state),
-                                            today: today
-                                        )
-                                    }
-                                    .buttonStyle(.plain)
-                                    .accessibilityHint(
-                                        "Opens the todo editor; swipe right or touch and hold for task actions"
-                                    )
-                                    .accessibilityIdentifier(
-                                        "task-row-\(task.id.rawValue)"
+                                    TaskRowView(
+                                        task: task,
+                                        workflowState: state(for: task.state),
+                                        today: today,
+                                        isCompletionDisabled: model.isBusy || completionTarget(for: task) == nil,
+                                        onOpen: { editorPresentation = .edit(task) },
+                                        onToggleCompletion: { toggleCompletion(task) }
                                     )
                                     .contextMenu {
                                         Button {
@@ -136,7 +128,7 @@ struct TaskListView: View {
                                            completionState != nil
                                         {
                                             Button {
-                                                complete(task)
+                                                toggleCompletion(task)
                                             } label: {
                                                 Label("Done", systemImage: "checkmark")
                                             }
@@ -960,11 +952,19 @@ struct TaskListView: View {
         )
     }
 
-    private func complete(_ task: TodoTask) {
-        guard let completionState else { return }
-        var draft = TaskEditorDraft(task: task)
-        draft.state = completionState.id
+    private func completionTarget(for task: TodoTask) -> String? {
+        if state(for: task.state)?.isTerminal == true {
+            return model.configuration?.defaultState
+        }
+        return completionState?.id
+    }
+
+    private func toggleCompletion(_ task: TodoTask) {
+        guard let targetState = completionTarget(for: task) else { return }
         Task { @MainActor in
+            guard !model.isBusy else { return }
+            var draft = TaskEditorDraft(task: task)
+            draft.state = targetState
             await model.updateTask(id: task.id, draft: draft)
         }
     }

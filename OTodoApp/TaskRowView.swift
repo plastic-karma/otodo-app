@@ -6,50 +6,73 @@ struct TaskRowView: View {
     let task: TodoTask
     let workflowState: WorkflowState?
     let today: String
+    let isCompletionDisabled: Bool
+    let onOpen: () -> Void
+    let onToggleCompletion: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            statusMark
-                .padding(.top, 2)
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(task.name)
-                        .font(.body)
-                        .foregroundStyle(.primary)
-                        .strikethrough(workflowState?.isTerminal == true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    Text(workflowState?.name ?? task.state)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-
-                if let duePresentation {
-                    Label(duePresentation.label, systemImage: "calendar")
-                        .font(.caption)
-                        .foregroundStyle(duePresentation.color)
-                }
-
-                if !task.projectSlugs.isEmpty || !task.tags.isEmpty {
-                    HStack(spacing: 12) {
-                        if !task.projectSlugs.isEmpty {
-                            Label(projectDescription, systemImage: "folder")
-                        }
-                        if !task.tags.isEmpty {
-                            Text(tagDescription)
-                        }
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                }
+        HStack(alignment: .top, spacing: 0) {
+            Button(action: onToggleCompletion) {
+                statusMark
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .disabled(isCompletionDisabled)
+            .accessibilityLabel(
+                workflowState?.isTerminal == true ? "Reopen \(task.name)" : "Complete \(task.name)"
+            )
+            .accessibilityValue(workflowState?.name ?? task.state)
+            .accessibilityIdentifier("task-toggle-completion-\(task.id.rawValue)")
+            .padding(.top, 2)
+
+            Button(action: onOpen) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(task.name)
+                            .font(.body)
+                            .foregroundStyle(.primary)
+                            .strikethrough(workflowState?.isTerminal == true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text(workflowState?.name ?? task.state)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if let duePresentation {
+                        Label(duePresentation.label, systemImage: "calendar")
+                            .font(.caption)
+                            .foregroundStyle(duePresentation.color)
+                    }
+
+                    if !task.projectSlugs.isEmpty || !task.tags.isEmpty {
+                        HStack(spacing: 12) {
+                            if !task.projectSlugs.isEmpty {
+                                Label(projectDescription, systemImage: "folder")
+                            }
+                            if !task.tags.isEmpty {
+                                Text(tagDescription)
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    }
+                }
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(accessibilityDescription)
+            .accessibilityHint(
+                "Opens the todo editor; swipe right or touch and hold for task actions"
+            )
+            .accessibilityIdentifier("task-row-\(task.id.rawValue)")
         }
-        .padding(.vertical, 14)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityDescription)
+        .accessibilityElement(children: .contain)
     }
 
     private var statusMark: some View {
