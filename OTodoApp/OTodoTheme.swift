@@ -43,22 +43,8 @@ enum OTodoTheme {
 }
 
 struct OTodoCanvas: View {
-    @Environment(\.colorScheme) private var colorScheme
-
     var body: some View {
-        ZStack {
-            Color(uiColor: .systemGroupedBackground)
-
-            LinearGradient(
-                colors: [
-                    OTodoTheme.violet.opacity(colorScheme == .dark ? 0.04 : 0.14),
-                    OTodoTheme.coral.opacity(colorScheme == .dark ? 0.02 : 0.06),
-                    .clear,
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        }
-        .ignoresSafeArea()
+        Color(uiColor: .systemBackground)
+            .ignoresSafeArea()
     }
 }

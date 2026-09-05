@@ -8,42 +8,36 @@ struct TaskRowView: View {
     let today: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .top, spacing: 12) {
             statusMark
                 .padding(.top, 2)
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(task.name)
-                        .font(.body.weight(.semibold))
+                        .font(.body)
                         .foregroundStyle(.primary)
                         .strikethrough(workflowState?.isTerminal == true)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                     Text(workflowState?.name ?? task.state)
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(stateColor)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(stateColor.opacity(0.11), in: Capsule())
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
 
                 if let duePresentation {
                     Label(duePresentation.label, systemImage: "calendar")
-                        .font(.caption.weight(.semibold))
+                        .font(.caption)
                         .foregroundStyle(duePresentation.color)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(duePresentation.color.opacity(0.11), in: Capsule())
                 }
 
                 if !task.projectSlugs.isEmpty || !task.tags.isEmpty {
                     HStack(spacing: 12) {
                         if !task.projectSlugs.isEmpty {
-                            Label(projectDescription, systemImage: "folder.fill")
+                            Label(projectDescription, systemImage: "folder")
                         }
                         if !task.tags.isEmpty {
-                            Label(tagDescription, systemImage: "tag.fill")
+                            Text(tagDescription)
                         }
                     }
                     .font(.caption)
@@ -52,17 +46,8 @@ struct TaskRowView: View {
                 }
             }
         }
-        .padding(16)
-        .background(
-            OTodoTheme.raisedCard,
-            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.045))
-        }
-        .shadow(color: .black.opacity(0.055), radius: 10, y: 4)
-        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(.vertical, 14)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
     }
@@ -76,7 +61,7 @@ struct TaskRowView: View {
                         : stateColor.opacity(0.10)
                 )
             Circle()
-                .strokeBorder(stateColor, lineWidth: 2)
+                .strokeBorder(stateColor, lineWidth: 1.5)
 
             if workflowState?.isTerminal == true {
                 Image(systemName: "checkmark")
@@ -84,7 +69,7 @@ struct TaskRowView: View {
                     .foregroundStyle(.white)
             }
         }
-        .frame(width: 24, height: 24)
+        .frame(width: 21, height: 21)
         .accessibilityHidden(true)
     }
 

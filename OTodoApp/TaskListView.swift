@@ -31,9 +31,9 @@ struct TaskListView: View {
 
                     List {
                         Section {
-                            workspaceHero(taskCount: displayedTasks.count)
+                            workspaceHeader(taskCount: displayedTasks.count)
                                 .listRowInsets(
-                                    EdgeInsets(top: 8, leading: 16, bottom: 6, trailing: 16)
+                                    EdgeInsets(top: 12, leading: 20, bottom: 10, trailing: 20)
                                 )
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(Color.clear)
@@ -46,14 +46,9 @@ struct TaskListView: View {
                                 }
                             }
                             .pickerStyle(.segmented)
-                            .padding(5)
-                            .background(
-                                .thinMaterial,
-                                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            )
                             .accessibilityIdentifier("task-filter")
                             .listRowInsets(
-                                EdgeInsets(top: 4, leading: 16, bottom: 8, trailing: 16)
+                                EdgeInsets(top: 0, leading: 20, bottom: 8, trailing: 20)
                             )
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
@@ -168,39 +163,29 @@ struct TaskListView: View {
                                     }
                                     .listRowInsets(
                                         EdgeInsets(
-                                            top: 5,
-                                            leading: 16,
-                                            bottom: 5,
-                                            trailing: 16
+                                            top: 0,
+                                            leading: 20,
+                                            bottom: 0,
+                                            trailing: 20
                                         )
                                     )
-                                    .listRowSeparator(.hidden)
+                                    .listRowSeparator(.visible)
+                                    .listRowSeparatorTint(.primary.opacity(0.08))
                                     .listRowBackground(Color.clear)
                                 }
                             }
 
                             SyncStatusView(model: model)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 10)
-                                .background(
-                                    .thinMaterial,
-                                    in: RoundedRectangle(
-                                        cornerRadius: 14,
-                                        style: .continuous
-                                    )
-                                )
                                 .listRowInsets(
                                     EdgeInsets(
-                                        top: 12,
-                                        leading: 16,
+                                        top: 20,
+                                        leading: 20,
                                         bottom: 6,
-                                        trailing: 16
+                                        trailing: 20
                                     )
                                 )
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(Color.clear)
-                        } header: {
-                            taskSectionHeader(count: displayedTasks.count)
                         }
                         .listSectionSeparator(.hidden)
                     }
@@ -331,68 +316,27 @@ struct TaskListView: View {
 
     }
 
-    private func workspaceHero(taskCount: Int) -> some View {
-        ZStack(alignment: .topTrailing) {
-            OTodoTheme.heroGradient
-
-            Image(systemName: heroSymbol)
-                .font(.system(size: 104, weight: .bold))
-                .foregroundStyle(.white.opacity(0.10))
-                .offset(x: 24, y: -22)
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Label(heroEyebrow, systemImage: heroSymbol)
-                        .font(.caption.weight(.bold))
-                        .tracking(0.8)
-
-                    Spacer()
-
-                    Text("\(taskCount) \(taskCount == 1 ? "todo" : "todos")")
-                        .font(.caption.weight(.semibold))
-                        .monospacedDigit()
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(.white.opacity(0.16), in: Capsule())
-                }
-
-                Text(heroTitle)
-                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
-
-                Text(heroSubtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.82))
-            }
-            .foregroundStyle(.white)
-            .padding(22)
-            .frame(maxWidth: .infinity, minHeight: 168, alignment: .bottomLeading)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .shadow(color: OTodoTheme.accent.opacity(0.22), radius: 18, y: 10)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("workspace-hero")
-    }
-
-    private func taskSectionHeader(count: Int) -> some View {
-        HStack {
-            Text(visibility == .today ? "Your focus" : "\(visibility.rawValue) todos")
-                .font(.headline)
+    private func workspaceHeader(taskCount: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(workspaceTitle)
+                .font(.largeTitle.weight(.semibold))
                 .foregroundStyle(.primary)
+                .accessibilityAddTraits(.isHeader)
 
-            Spacer()
+            Text(workspaceSubtitle)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
 
-            Text("\(count)")
-                .font(.caption.weight(.bold))
+            Text("\(taskCount) \(taskCount == 1 ? "todo" : "todos")")
+                .font(.caption)
                 .monospacedDigit()
-                .foregroundStyle(OTodoTheme.accent)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4)
-                .background(OTodoTheme.accent.opacity(0.10), in: Capsule())
+                .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 4)
-        .textCase(nil)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("workspace-header")
     }
+
 
     private var addTodoButton: some View {
         Button {
@@ -400,11 +344,11 @@ struct TaskListView: View {
             editorPresentation = .create
         } label: {
             Image(systemName: "plus")
-                .font(.title2.bold())
+                .font(.title2.weight(.medium))
                 .foregroundStyle(.white)
-                .frame(width: 58, height: 58)
-                .background(OTodoTheme.heroGradient, in: Circle())
-                .shadow(color: OTodoTheme.accent.opacity(0.34), radius: 12, y: 7)
+                .frame(width: 54, height: 54)
+                .background(OTodoTheme.filledAccent, in: Circle())
+                .shadow(color: .black.opacity(0.12), radius: 5, y: 3)
         }
         .disabled(model.configuration == nil)
         .opacity(model.configuration == nil ? 0.45 : 1)
@@ -424,7 +368,7 @@ struct TaskListView: View {
     }
 
 
-    private var heroTitle: String {
+    private var workspaceTitle: String {
         if let selectedProject {
             return projectDisplayName(selectedProject)
         }
@@ -432,33 +376,17 @@ struct TaskListView: View {
         case .today:
             return "Today"
         case .active:
-            return "In Motion"
+            return "Active"
         case .all:
             return "All Todos"
         }
     }
 
-    private var heroEyebrow: String {
-        selectedProject == nil ? "YOUR FOCUS" : "PROJECT"
-    }
 
-    private var heroSymbol: String {
-        if selectedProject != nil {
-            return "folder.fill"
-        }
-        switch visibility {
-        case .today:
-            return "sun.max.fill"
-        case .active:
-            return "bolt.fill"
-        case .all:
-            return "tray.full.fill"
-        }
-    }
 
-    private var heroSubtitle: String {
+    private var workspaceSubtitle: String {
         if selectedProject != nil {
-            return "\(visibility.rawValue) view · clear the next meaningful step"
+            return "\(visibility.rawValue) todos"
         }
         switch visibility {
         case .today:
@@ -466,48 +394,37 @@ struct TaskListView: View {
                 .dateTime.weekday(.wide).month(.wide).day()
             )
         case .active:
-            return "Everything still in motion"
+            return "Todos still to do"
         case .all:
-            return "The complete picture, finished work included"
+            return "Including completed todos"
         }
     }
 
     private var projectSidebar: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 14) {
-                Image(systemName: "square.grid.2x2.fill")
-                    .font(.title3.bold())
-                    .frame(width: 44, height: 44)
-                    .background(.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 13))
-                    .accessibilityHidden(true)
+            HStack {
+                Text("Projects")
+                    .font(.title2.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Projects")
-                        .font(.title2.bold())
-                    Text("Choose what deserves your focus")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.78))
-                }
-
-                Spacer(minLength: 8)
+                Spacer()
 
                 Button("Close", systemImage: "xmark") {
                     dismissProjectSidebar()
                 }
                 .labelStyle(.iconOnly)
-                .font(.body.bold())
-                .foregroundStyle(.white)
-                .frame(width: 36, height: 36)
-                .background(.white.opacity(0.14), in: Circle())
+                .foregroundStyle(.secondary)
+                .frame(width: 44, height: 44)
                 .accessibilityIdentifier("project-sidebar-close")
             }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 22)
-            .background(OTodoTheme.heroGradient)
+            .padding(.leading, 20)
+            .padding(.trailing, 8)
+            .padding(.vertical, 10)
+
+            Divider()
 
             ScrollView {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: 2) {
                     projectFilterButton(nil)
 
                     ForEach(model.projectChoices, id: \.self) { project in
@@ -560,10 +477,10 @@ struct TaskListView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
         }
-        .frame(width: 316)
+        .frame(maxWidth: 316)
         .frame(maxHeight: .infinity)
         .background(OTodoTheme.card)
-        .shadow(color: .black.opacity(0.24), radius: 24, x: 10)
+        .shadow(color: .black.opacity(0.12), radius: 16, x: 6)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("project-sidebar")
         .accessibilityAction(.escape) {
@@ -719,11 +636,10 @@ struct TaskListView: View {
             dismissProjectSidebar()
         } label: {
             HStack(spacing: 12) {
-                Image(systemName: project == nil ? "tray.full.fill" : "folder.fill")
-                    .font(.subheadline.weight(.semibold))
+                Image(systemName: project == nil ? "tray" : "folder")
+                    .font(.body)
                     .foregroundStyle(color)
-                    .frame(width: 38, height: 38)
-                    .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
+                    .frame(width: 24)
 
                 Text(title)
                     .font(.body.weight(isSelected ? .semibold : .regular))
@@ -732,31 +648,22 @@ struct TaskListView: View {
                 Spacer(minLength: 8)
 
                 Text("\(count)")
-                    .font(.caption.weight(.semibold))
+                    .font(.caption)
                     .monospacedDigit()
-                    .foregroundStyle(isSelected ? OTodoTheme.accent : .secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(.primary.opacity(0.055), in: Capsule())
+                    .foregroundStyle(.secondary)
 
-                Image(systemName: "checkmark.circle.fill")
+                Image(systemName: "checkmark")
                     .font(.body)
                     .foregroundStyle(OTodoTheme.accent)
                     .opacity(isSelected ? 1 : 0)
             }
             .padding(.horizontal, 11)
-            .frame(minHeight: 58)
+            .frame(minHeight: 48)
             .contentShape(Rectangle())
             .background(
-                isSelected ? OTodoTheme.accent.opacity(0.11) : Color.clear,
-                in: RoundedRectangle(cornerRadius: 15, style: .continuous)
+                isSelected ? OTodoTheme.accent.opacity(0.08) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
             )
-            .overlay {
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 15, style: .continuous)
-                        .strokeBorder(OTodoTheme.accent.opacity(0.15))
-                }
-            }
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(title), \(count) todos")
@@ -801,23 +708,16 @@ struct TaskListView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity)
-        .background(
-            OTodoTheme.raisedCard,
-            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-        )
         .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
     }
 
     private var emptyRow: some View {
-        VStack(spacing: 14) {
-            Image(systemName: visibility == .all ? "checklist" : "checkmark")
-                .font(.title2.bold())
-                .foregroundStyle(.white)
-                .frame(width: 52, height: 52)
-                .background(OTodoTheme.heroGradient, in: Circle())
-                .shadow(color: OTodoTheme.accent.opacity(0.2), radius: 9, y: 5)
+        VStack(spacing: 12) {
+            Image(systemName: visibility == .all ? "checklist" : "checkmark.circle")
+                .font(.system(size: 32, weight: .light))
+                .foregroundStyle(OTodoTheme.accent)
 
             Text("No \(visibility.rawValue) Todos")
                 .font(.title3.bold())
@@ -837,14 +737,6 @@ struct TaskListView: View {
         }
         .padding(28)
         .frame(maxWidth: .infinity)
-        .background(
-            OTodoTheme.raisedCard,
-            in: RoundedRectangle(cornerRadius: 22, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.045))
-        }
         .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
