@@ -5,6 +5,8 @@ import SwiftUI
 struct TaskFiltersView: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var library: TaskFilterLibrary
+    let projectChoices: [String]
+    let tagChoices: [String]
     let onSelect: (SavedTaskFilter) -> Void
     @State private var editor: FilterEditorPresentation?
 
@@ -55,7 +57,10 @@ struct TaskFiltersView: View {
                 }
             }
             .sheet(item: $editor) { presentation in
-                TaskFilterEditorView(library: library, filter: presentation.filter)
+                TaskFilterEditorView(
+                    library: library, filter: presentation.filter,
+                    projectChoices: projectChoices, tagChoices: tagChoices
+                )
             }
         }
     }
@@ -120,17 +125,26 @@ private struct TaskFilterEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable private var library: TaskFilterLibrary
     private let filter: SavedTaskFilter?
+    private let projectChoices: [String]
+    private let tagChoices: [String]
     @State private var name: String
     @State private var query: String
+    @State private var querySelection: NSRange
+    @State private var isQueryFocused = false
+    @State private var isQueryComposing = false
+    @ScaledMetric(relativeTo: .body) private var queryHeight = 120
     @State private var isStarred: Bool
     @State private var queryError: String?
     @State private var saveError: String?
 
-    init(library: TaskFilterLibrary, filter: SavedTaskFilter?) {
+    init(library: TaskFilterLibrary, filter: SavedTaskFilter?, projectChoices: [String], tagChoices: [String]) {
         self.library = library
         self.filter = filter
+        self.projectChoices = projectChoices
+        self.tagChoices = tagChoices
         _name = State(initialValue: filter?.name ?? "")
         _query = State(initialValue: filter?.query ?? "")
+        _querySelection = State(initialValue: NSRange(location: (filter?.query ?? "").utf16.count, length: 0))
         _isStarred = State(initialValue: filter?.isStarred ?? false)
         _queryError = State(initialValue: filter == nil ? "Enter a filter query." : nil)
     }
@@ -141,13 +155,11 @@ private struct TaskFilterEditorView: View {
                 Section {
                     TextField("Filter name", text: $name)
                         .accessibilityIdentifier("filter-editor-name")
-                    TextField("active AND project:work", text: $query, axis: .vertical)
-                        .font(.system(.body, design: .monospaced))
-                        .lineLimit(3...8)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .accessibilityLabel("Filter query")
-                        .accessibilityIdentifier("filter-editor-query")
+                    TaskFilterQueryField(
+                        text: $query, selection: $querySelection,
+                        isFocused: $isQueryFocused, isComposing: $isQueryComposing
+                    )
+                        .frame(height: queryHeight)
                         .onChange(of: query) { _, value in
                             do {
                                 _ = try TaskFilterQuery(value)
@@ -157,6 +169,39 @@ private struct TaskFilterEditorView: View {
                             }
                             saveError = nil
                         }
+                    let suggestions = querySuggestions
+                    if !suggestions.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Project and tag suggestions")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 0) {
+                                    ForEach(suggestions, id: \.value) { suggestion in
+                                        Button {
+                                            guard let result = suggestion.applying(to: query) else { return }
+                                            query = result.query
+                                            querySelection = result.selection
+                                            isQueryFocused = true
+                                        } label: {
+                                            Label(
+                                                suggestion.value,
+                                                systemImage: suggestion.field == "project" ? "folder" : "number"
+                                            )
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.vertical, 10)
+                                            .contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .accessibilityLabel("\(suggestion.field == "project" ? "Project" : "Tag"): \(suggestion.value)")
+                                        .accessibilityIdentifier("filter-completion-\(suggestion.field)-\(suggestion.value)")
+                                    }
+                                }
+                            }
+                            .frame(maxHeight: queryHeight)
+                        }
+                        .accessibilityIdentifier("filter-editor-suggestions")
+                    }
                     Button {
                         isStarred.toggle()
                     } label: {
@@ -189,6 +234,7 @@ private struct TaskFilterEditorView: View {
                     Text("name:/report/i\ndescription:/invoice|receipt/i")
                         .font(.system(.footnote, design: .monospaced))
                     Text("Tags and project slugs match exactly. Double-quote values containing operators. Name and description use /regular expressions/; optional i ignores case, m enables line anchors, and s lets dots match newlines. Escape a slash as \\/.")
+                    Text("Type project: or tag: to see local suggestions. Tap a suggestion to replace the value at the cursor without changing the rest of your query.")
                 }
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -224,6 +270,14 @@ private struct TaskFilterEditorView: View {
                 }
             }
         }
+    }
+
+    private var querySuggestions: [TaskFilterCompletion.Suggestion] {
+        guard isQueryFocused, !isQueryComposing else { return [] }
+        return TaskFilterCompletion.suggestions(
+            in: query, selection: querySelection,
+            projectChoices: projectChoices, tagChoices: tagChoices
+        )
     }
 }
 

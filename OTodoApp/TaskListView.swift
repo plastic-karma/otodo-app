@@ -284,7 +284,11 @@ struct TaskListView: View {
             }
         }
         .sheet(isPresented: $isFilterLibraryPresented) {
-            TaskFiltersView(library: filterLibrary) { filter in
+            TaskFiltersView(
+                library: filterLibrary,
+                projectChoices: model.projectChoices,
+                tagChoices: model.tagChoices
+            ) { filter in
                 selectFilter(filter.id)
                 if !isUpcoming {
                     selectedProject = nil

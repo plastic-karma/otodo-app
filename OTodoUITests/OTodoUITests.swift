@@ -889,7 +889,19 @@ final class OTodoUITests: XCTestCase {
         query.typeText("next-seven-days AND")
         let save = app.buttons["filter-editor-save"]
         XCTAssertFalse(save.isEnabled, "An unfinished boolean expression must not be saved")
-        query.typeText(" project:work AND tag:focus AND name:/future/i AND description:/invoice/i")
+        query.typeText(" project:wo")
+        let projectCompletion = app.buttons["filter-completion-project-work"]
+        guard require(projectCompletion, in: app, description: "the matching Work project completion") else { return }
+        let completionScreenshot = XCTAttachment(screenshot: app.screenshot())
+        completionScreenshot.name = "Project autocomplete in the filter query"
+        completionScreenshot.lifetime = .keepAlways
+        add(completionScreenshot)
+        projectCompletion.tap()
+        query.typeText(" AND tag:fo")
+        let tagCompletion = app.buttons["filter-completion-tag-focus"]
+        guard require(tagCompletion, in: app, description: "the matching focus tag completion") else { return }
+        tagCompletion.tap()
+        query.typeText(" AND name:/future/i AND description:/invoice/i")
         app.buttons["filter-editor-star"].tap()
         XCTAssertTrue(save.isEnabled, "A complete query can be saved")
         let editorScreenshot = XCTAttachment(screenshot: app.screenshot())
