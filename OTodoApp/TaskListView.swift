@@ -757,6 +757,7 @@ struct TaskListView: View {
 
     private var inboxButton: some View {
         let isSelected = selectedFilterID == "inbox"
+        let count = taskCount(for: nil, inboxOnly: true)
 
         return Button {
             selectFilter("inbox")
@@ -770,6 +771,11 @@ struct TaskListView: View {
                     .font(.body.weight(isSelected ? .semibold : .regular))
                     .foregroundStyle(.primary)
                 Spacer(minLength: 8)
+                Text("\(count)")
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("inbox-open-count")
                 Image(systemName: "checkmark")
                     .foregroundStyle(OTodoTheme.accent)
                     .opacity(isSelected ? 1 : 0)
@@ -783,6 +789,7 @@ struct TaskListView: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Inbox, \(count) open todos")
         .accessibilityValue(isSelected ? "Selected" : "Not selected")
         .accessibilityIdentifier("inbox-open")
     }
@@ -849,8 +856,11 @@ struct TaskListView: View {
         }
     }
 
-    private func taskCount(for project: String?) -> Int {
+    private func taskCount(for project: String?, inboxOnly: Bool = false) -> Int {
         model.tasks.lazy.filter { task in
+            if inboxOnly, !task.projectSlugs.isEmpty {
+                return false
+            }
             if let project, !task.projectSlugs.contains(project) {
                 return false
             }

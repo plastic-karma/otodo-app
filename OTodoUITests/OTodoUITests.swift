@@ -1878,6 +1878,9 @@ final class OTodoUITests: XCTestCase {
         app.buttons["project-sidebar-toggle"].tap()
         let inbox = app.buttons["inbox-open"]
         guard require(inbox, in: app, description: "the first-class Inbox sidebar action") else { return }
+        let inboxCount = app.staticTexts["inbox-open-count"]
+        guard require(inboxCount, in: app, description: "the Inbox open count") else { return }
+        XCTAssertEqual(inboxCount.label, "0", "Project-assigned todos must not count toward Inbox")
         inbox.tap()
         XCTAssertFalse(taskRow(named: "Undated todo", state: "Pending", in: app).exists)
         let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
@@ -1898,7 +1901,16 @@ final class OTodoUITests: XCTestCase {
         app.terminate()
         app.launchArguments.removeAll { $0 == reset }
         app.launch()
-        guard selectFilter("Inbox", in: app) else { return }
+        app.buttons["project-sidebar-toggle"].tap()
+        app.buttons["project-filter-work"].tap()
+        app.buttons["project-sidebar-toggle"].tap()
+        guard require(inboxCount, in: app, description: "the persisted Inbox count from Today's Work view") else { return }
+        XCTAssertEqual(inboxCount.label, "2", "Inbox counts all active projectless todos, regardless of date or selected project")
+        let sidebarScreenshot = XCTAttachment(screenshot: app.screenshot())
+        sidebarScreenshot.name = "Inbox open count includes dated and undated tasks outside the current project"
+        sidebarScreenshot.lifetime = .keepAlways
+        add(sidebarScreenshot)
+        inbox.tap()
         let undated = taskRow(named: "Inbox undated", state: "Pending", in: app)
         let scheduled = taskRow(named: "Inbox scheduled", state: "Pending", in: app)
         guard require(undated, in: app, description: "the undated Inbox todo after relaunch"),
@@ -1918,6 +1930,10 @@ final class OTodoUITests: XCTestCase {
         app.buttons["task-editor-save"].tap()
         guard requireEditorDismissed(editor, after: "assigning a project and tag", in: app) else { return }
         XCTAssertTrue(undated.waitForNonExistence(timeout: 8))
+        app.buttons["project-sidebar-toggle"].tap()
+        guard require(inboxCount, in: app, description: "the Inbox count after organizing a todo") else { return }
+        XCTAssertEqual(inboxCount.label, "1")
+        inbox.tap()
         let completion = app.buttons.matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "task-toggle-completion-")
         ).firstMatch
@@ -1931,6 +1947,8 @@ final class OTodoUITests: XCTestCase {
         XCTAssertFalse(undated.exists)
         XCTAssertFalse(scheduled.exists)
         app.buttons["project-sidebar-toggle"].tap()
+        guard require(inboxCount, in: app, description: "the Inbox count after completing its last todo and relaunching") else { return }
+        XCTAssertEqual(inboxCount.label, "0", "Terminal projectless todos must not count")
         app.buttons["project-filter-home"].tap()
         XCTAssertTrue(app.buttons["task-filter-active"].isSelected)
         guard require(undated, in: app, description: "the organized todo in its project") else { return }
@@ -1946,6 +1964,9 @@ final class OTodoUITests: XCTestCase {
             taskRow(named: "Inbox scheduled", state: "Done", in: app),
             in: app, description: "the completed todo outside Inbox"
         )
+        app.buttons["project-sidebar-toggle"].tap()
+        guard require(inboxCount, in: app, description: "the Inbox count while All includes terminal todos") else { return }
+        XCTAssertEqual(inboxCount.label, "0")
     }
 
     @MainActor
