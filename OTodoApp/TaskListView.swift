@@ -5,6 +5,7 @@ import UIKit
 
 struct TaskListView: View {
     @EnvironmentObject private var quickActions: QuickActionSceneDelegate
+    @Environment(\.scenePhase) private var scenePhase
 
     @Bindable private var model: AppModel
     private let notifications: TaskNotificationManager
@@ -21,6 +22,11 @@ struct TaskListView: View {
     @State private var isChangelogPresented = false
     @State private var isBulkEditorPresented = false
     @State private var reschedulePresentation: ReschedulePresentation?
+    @State private var isUpcoming = false
+    @State private var agendaSections: [TaskAgendaSection] = []
+    @State private var dates = TaskDateContext()
+    @State private var isSelecting = false
+    @State private var selectedTaskIDs: Set<TaskID> = []
 
     init(model: AppModel, notifications: TaskNotificationManager) {
         self.model = model
@@ -29,7 +35,6 @@ struct TaskListView: View {
     }
 
     var body: some View {
-        let today = currentDateKey
         let input = filterInput
 
         return ZStack(alignment: .leading) {
@@ -95,117 +100,36 @@ struct TaskListView: View {
                             }
                         }
 
-                        Section {
-                            if model.isBusy && model.tasks.isEmpty {
-                                loadingRow
-                            } else if displayedTasks.isEmpty {
-                                emptyRow
-                            } else {
+                        if model.isBusy && model.tasks.isEmpty {
+                            Section { loadingRow }
+                        } else if displayedTasks.isEmpty {
+                            Section { emptyRow }
+                        } else if isUpcoming {
+                            ForEach(agendaSections, id: \.group) { section in
+                                Section {
+                                    if section.tasks.isEmpty {
+                                        Text("No todos")
+                                            .font(.subheadline)
+                                            .foregroundStyle(.secondary)
+                                            .listRowBackground(Color.clear)
+                                    } else {
+                                        ForEach(section.tasks, id: \.id) { task in
+                                            taskRow(task)
+                                        }
+                                    }
+                                } header: {
+                                    agendaHeader(section)
+                                }
+                                .listSectionSeparator(.hidden)
+                            }
+                        } else {
+                            Section {
                                 ForEach(displayedTasks, id: \.id) { task in
-                                    let workflowState = state(for: task.state)
-                                    let canComplete = workflowState?.isTerminal != true && completionState != nil
-                                    TaskRowView(
-                                        task: task,
-                                        workflowState: workflowState,
-                                        today: today,
-                                        isCompletionDisabled: model.isBusy || completionTarget(for: task) == nil,
-                                        onOpen: { editorPresentation = .edit(task) },
-                                        onToggleCompletion: { toggleCompletion(task) }
-                                    )
-                                    .contextMenu {
-                                        if canComplete {
-                                            Button {
-                                                toggleCompletion(task)
-                                            } label: {
-                                                Label("Done", systemImage: "checkmark")
-                                            }
-                                            .disabled(model.isBusy)
-                                            .accessibilityIdentifier(
-                                                "task-context-complete-\(task.id.rawValue)"
-                                            )
-                                        }
-                                        Button {
-                                            reschedulePresentation = ReschedulePresentation(task: task)
-                                        } label: {
-                                            Label(
-                                                "Reschedule",
-                                                systemImage: "calendar.badge.clock"
-                                            )
-                                        }
-                                        .disabled(model.isBusy)
-                                        .accessibilityIdentifier(
-                                            "task-context-reschedule-\(task.id.rawValue)"
-                                        )
-
-                                        Divider()
-
-                                        Button(role: .destructive) {
-                                            Task { @MainActor in
-                                                await model.deleteTask(task)
-                                            }
-                                        } label: {
-                                            Label("Delete", systemImage: "trash")
-                                        }
-                                        .disabled(model.isBusy)
-                                        .accessibilityIdentifier(
-                                            "task-context-delete-\(task.id.rawValue)"
-                                        )
-                                    }
-                                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                                        if canComplete {
-                                            Button {
-                                                toggleCompletion(task)
-                                            } label: {
-                                                Label("Done", systemImage: "checkmark")
-                                            }
-                                            .tint(OTodoTheme.mint)
-                                            .disabled(model.isBusy)
-                                            .accessibilityIdentifier(
-                                                "task-complete-\(task.id.rawValue)"
-                                            )
-                                        }
-                                        Button {
-                                            reschedulePresentation = ReschedulePresentation(task: task)
-                                        } label: {
-                                            Label(
-                                                "Reschedule",
-                                                systemImage: "calendar.badge.clock"
-                                            )
-                                        }
-                                        .tint(OTodoTheme.filledViolet)
-                                        .disabled(model.isBusy)
-                                        .accessibilityIdentifier(
-                                            "task-reschedule-\(task.id.rawValue)"
-                                        )
-                                    }
-                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                        Button(role: .destructive) {
-                                            Task { @MainActor in
-                                                await model.deleteTask(task)
-                                            }
-                                        } label: {
-                                            Label("Delete", systemImage: "trash")
-                                        }
-                                        .disabled(model.isBusy)
-                                        .accessibilityIdentifier(
-                                            "task-delete-\(task.id.rawValue)"
-                                        )
-                                    }
-                                    .listRowInsets(
-                                        EdgeInsets(
-                                            top: 0,
-                                            leading: 20,
-                                            bottom: 0,
-                                            trailing: 20
-                                        )
-                                    )
-                                    .listRowSeparator(.visible)
-                                    .listRowSeparatorTint(.primary.opacity(0.08))
-                                    .listRowBackground(Color.clear)
+                                    taskRow(task)
                                 }
                             }
+                            .listSectionSeparator(.hidden)
                         }
-                        .listSectionSeparator(.hidden)
                     }
                     .listStyle(.plain)
                     .listSectionSpacing(10)
@@ -216,10 +140,17 @@ struct TaskListView: View {
                         await model.refresh()
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
-                        HStack(alignment: .bottom, spacing: 16) {
-                            SyncStatusView(model: model)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            addTodoButton
+                        VStack(spacing: 12) {
+                            if isSelecting {
+                                selectionActions
+                            }
+                            HStack(alignment: .bottom, spacing: 16) {
+                                SyncStatusView(model: model)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                if !isSelecting {
+                                    addTodoButton
+                                }
+                            }
                         }
                         .padding(.horizontal, 20)
                         .padding(.top, 12)
@@ -227,7 +158,7 @@ struct TaskListView: View {
                         .background(OTodoCanvas())
                     }
                 }
-                .navigationTitle(selectedProject.map(projectDisplayName) ?? "Todos")
+                .navigationTitle(isUpcoming ? "Upcoming" : selectedProject.map(projectDisplayName) ?? "Todos")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(.hidden, for: .navigationBar)
                 .toolbar {
@@ -239,8 +170,18 @@ struct TaskListView: View {
                                 .font(.body.weight(.semibold))
                         }
                         .accessibilityLabel("Projects")
-                        .accessibilityHint("Shows Inbox, project filters, and changelog")
+                        .accessibilityHint("Shows Upcoming, Inbox, project filters, and changelog")
                         .accessibilityIdentifier("project-sidebar-toggle")
+                    }
+                    if isUpcoming {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button(isSelecting ? "Cancel" : "Select") {
+                                selectedTaskIDs.removeAll()
+                                isSelecting.toggle()
+                            }
+                            .disabled(model.isBusy || (!isSelecting && (isFiltering || displayedTasks.isEmpty)))
+                            .accessibilityIdentifier("upcoming-select")
+                        }
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Filters", systemImage: "line.3.horizontal.decrease") {
@@ -283,12 +224,15 @@ struct TaskListView: View {
                     .presentationDetents([.large])
                 }
                 .sheet(item: $reschedulePresentation) { presentation in
-                    TaskRescheduleView(task: presentation.task) { date, time in
-                        await model.rescheduleTask(
-                            presentation.task,
+                    TaskRescheduleView(tasks: presentation.tasks) { date, time in
+                        await model.rescheduleTasks(
+                            presentation.tasks,
                             dueDate: date,
                             dueTime: time
                         )
+                        if model.errorMessage == nil {
+                            clearSelection()
+                        }
                         return model.errorMessage
                     }
                     .presentationDetents([.large])
@@ -342,7 +286,9 @@ struct TaskListView: View {
         .sheet(isPresented: $isFilterLibraryPresented) {
             TaskFiltersView(library: filterLibrary) { filter in
                 selectFilter(filter.id)
-                selectedProject = nil
+                if !isUpcoming {
+                    selectedProject = nil
+                }
             }
         }
         .sheet(isPresented: $isChangelogPresented) {
@@ -350,10 +296,27 @@ struct TaskListView: View {
         }
         .task(id: model.workspaceSelection.map(FileWorkspaceStore.selectionKey(for:))) {
             selectedFilterID = "today"
+            isUpcoming = false
+            clearSelection()
             await filterLibrary.load(selection: model.workspaceSelection)
         }
         .task(id: input) {
             await updateVisibleTasks(input: input)
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: .NSCalendarDayChanged)
+                .merge(
+                    with: NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification),
+                    NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)
+                )
+                .receive(on: RunLoop.main)
+        ) { _ in
+            dates = TaskDateContext()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                dates = TaskDateContext()
+            }
         }
         .onChange(of: filterLibrary.filters) { _, filters in
             if !filters.contains(where: { $0.id == selectedFilterID }) {
@@ -408,13 +371,16 @@ struct TaskListView: View {
     }
 
     private func selectFilter(_ id: String) {
+        clearSelection()
         selectedFilterID = id
         if id == "inbox" {
+            isUpcoming = false
             selectedProject = nil
         }
     }
 
     private func selectProject(_ project: String?) {
+        clearSelection()
         if selectedFilterID == "inbox" {
             selectedFilterID = "active"
         }
@@ -485,6 +451,7 @@ struct TaskListView: View {
             return
         }
         isProjectSidebarPresented = false
+        clearSelection()
         isProjectEditorPresented = false
         isFilterLibraryPresented = false
         isChangelogPresented = false
@@ -495,6 +462,9 @@ struct TaskListView: View {
 
 
     private var workspaceTitle: String {
+        if isUpcoming {
+            return selectedProject.map(projectDisplayName) ?? "Upcoming"
+        }
         if let selectedProject {
             return projectDisplayName(selectedProject)
         }
@@ -504,6 +474,11 @@ struct TaskListView: View {
 
 
     private var workspaceSubtitle: String {
+        if isUpcoming {
+            return selectedFilterID == "active"
+                ? "Review deadlines and undated work"
+                : "Upcoming · \(selectedFilter.name)"
+        }
         if selectedProject != nil {
             return "\(selectedFilter.name) todos"
         }
@@ -546,6 +521,7 @@ struct TaskListView: View {
 
             ScrollView {
                 LazyVStack(spacing: 2) {
+                    agendaModeButtons
                     inboxButton
                     projectFilterButton(nil)
 
@@ -781,7 +757,7 @@ struct TaskListView: View {
 
     private func projectFilterButton(_ project: String?) -> some View {
         let isSelected = selectedProject == project && selectedFilterID != "inbox"
-        let title = project.map(projectDisplayName) ?? "All Todos"
+        let title = project.map(projectDisplayName) ?? (isUpcoming ? "All projects" : "All Todos")
         let count = taskCount(for: project)
         let color = projectColor(project)
 
@@ -908,6 +884,9 @@ struct TaskListView: View {
     }
 
     private var emptyDescription: String {
+        if isUpcoming {
+            return "No active todos match this agenda. Choose another filter or project."
+        }
         if selectedFilterID == "inbox" {
             return "New todos without a project appear here, with or without a due date. Complete them or assign a project to clear your Inbox."
         }
@@ -938,7 +917,8 @@ struct TaskListView: View {
             filterID: selectedFilter.id,
             query: selectedFilter.query,
             selectedProject: selectedProject,
-            today: currentDateKey,
+            dates: dates,
+            isUpcoming: isUpcoming,
             workspaceKey: model.workspaceSelection.map(FileWorkspaceStore.selectionKey(for:)),
             isLibraryLoaded: filterLibrary.isLoaded
         )
@@ -948,6 +928,7 @@ struct TaskListView: View {
         isFiltering = true
         filterError = nil
         displayedTasks = []
+        agendaSections = []
         guard let query = filterLibrary.query(for: input.filterID) else {
             isFiltering = false
             filterError = "This filter could not be loaded. Open Filters to review it."
@@ -963,7 +944,9 @@ struct TaskListView: View {
                 worker.cancel()
             }
             try Task.checkCancellation()
-            displayedTasks = result
+            displayedTasks = result.tasks
+            agendaSections = result.sections
+            selectedTaskIDs.formIntersection(result.tasks.map(\.id))
             isFiltering = false
         } catch is CancellationError {
             // A newer input owns the next result and loading state.
@@ -977,18 +960,21 @@ struct TaskListView: View {
     private nonisolated static func filteredTasks(
         input: TaskFilterInput,
         query: TaskFilterQuery
-    ) throws -> [TodoTask] {
+    ) throws -> TaskFilterResult {
         let states = input.states
         let stateOrder = Dictionary(uniqueKeysWithValues: states.enumerated().map { ($0.element.id, $0.offset) })
         let terminalStates = Set(states.lazy.filter(\.isTerminal).map(\.id))
         var result = try input.tasks.filter { task in
             try Task.checkCancellation()
+            if input.isUpcoming && terminalStates.contains(task.state) {
+                return false
+            }
             if let selectedProject = input.selectedProject,
                !task.projectSlugs.contains(selectedProject)
             {
                 return false
             }
-            return try query.matches(task, terminalStateIDs: terminalStates, today: input.today)
+            return try query.matches(task, terminalStateIDs: terminalStates, dates: input.dates)
         }
         result.sort { lhs, rhs in
             switch (lhs.dueDate, rhs.dueDate) {
@@ -1026,7 +1012,242 @@ struct TaskListView: View {
             }
             return lhs.id < rhs.id
         }
-        return result
+        return TaskFilterResult(
+            tasks: result,
+            sections: input.isUpcoming
+                ? TaskAgenda.sections(tasks: result, terminalStateIDs: terminalStates, dates: input.dates)
+                : []
+        )
+    }
+
+    private var agendaModeButtons: some View {
+        HStack {
+            Button {
+                isUpcoming = false
+                clearSelection()
+                dismissProjectSidebar()
+            } label: {
+                Label("Todos", systemImage: "checklist")
+                    .frame(maxWidth: .infinity)
+            }
+            .tint(isUpcoming ? .secondary : OTodoTheme.accent)
+            .accessibilityIdentifier("tasks-open")
+            .accessibilityAddTraits(isUpcoming ? [] : .isSelected)
+
+            Button {
+                if !isUpcoming {
+                    selectedFilterID = "active"
+                }
+                isUpcoming = true
+                clearSelection()
+                dismissProjectSidebar()
+            } label: {
+                Label("Upcoming", systemImage: "calendar")
+                    .frame(maxWidth: .infinity)
+            }
+            .tint(isUpcoming ? OTodoTheme.accent : .secondary)
+            .accessibilityIdentifier("upcoming-open")
+            .accessibilityAddTraits(isUpcoming ? .isSelected : [])
+        }
+        .buttonStyle(.bordered)
+        .padding(.bottom, 12)
+    }
+
+    private var selectionActions: some View {
+        HStack(spacing: 8) {
+            Button(selectedTaskIDs.count == displayedTasks.count ? "Deselect all" : "Select all") {
+                if selectedTaskIDs.count == displayedTasks.count {
+                    selectedTaskIDs.removeAll()
+                } else {
+                    selectedTaskIDs = Set(displayedTasks.map(\.id))
+                }
+            }
+            .accessibilityIdentifier("upcoming-select-all")
+
+            Text("\(selectedTaskIDs.count) selected")
+                .font(.caption)
+                .monospacedDigit()
+                .accessibilityIdentifier("upcoming-selection-count")
+            Spacer(minLength: 0)
+
+            Button("Reschedule", systemImage: "calendar.badge.clock") {
+                reschedulePresentation = ReschedulePresentation(
+                    tasks: displayedTasks.filter { selectedTaskIDs.contains($0.id) }
+                )
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(selectedTaskIDs.isEmpty)
+            .accessibilityLabel("Reschedule \(selectedTaskIDs.count) selected todos")
+            .accessibilityIdentifier("upcoming-reschedule")
+        }
+        .font(.callout)
+        .disabled(model.isBusy || isFiltering)
+    }
+
+    private func clearSelection() {
+        selectedTaskIDs.removeAll()
+        isSelecting = false
+    }
+
+    private func toggleSelection(_ task: TodoTask) {
+        if !selectedTaskIDs.insert(task.id).inserted {
+            selectedTaskIDs.remove(task.id)
+        }
+    }
+
+    private func agendaHeader(_ section: TaskAgendaSection) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(section.group.title)
+                    .font(.headline)
+                Spacer()
+                Text("\(section.tasks.count)")
+                    .font(.caption.monospacedDigit())
+            }
+            Text(agendaBoundary(for: section.group))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .textCase(nil)
+        .foregroundStyle(.primary)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("upcoming-section-\(section.group.rawValue)")
+    }
+
+    private func agendaBoundary(for group: TaskAgendaGroup) -> String {
+        switch group {
+        case .overdue: "Before \(dates.today)"
+        case .today: dates.today
+        case .tomorrow: dates.tomorrow
+        case .nextSevenDays: "After \(dates.tomorrow), through \(dates.endOfNextSevenDays)"
+        case .later: "After \(dates.endOfNextSevenDays)"
+        case .noDate: "Not scheduled"
+        }
+    }
+
+    @ViewBuilder
+    private func taskRow(_ task: TodoTask) -> some View {
+        let today = dates.today
+        let workflowState = state(for: task.state)
+        let canComplete = workflowState?.isTerminal != true && completionState != nil
+        TaskRowView(
+            task: task,
+            workflowState: workflowState,
+            today: today,
+            isCompletionDisabled: model.isBusy
+                || (isSelecting ? isFiltering : completionTarget(for: task) == nil),
+            onOpen: {
+                if isSelecting {
+                    toggleSelection(task)
+                } else {
+                    editorPresentation = .edit(task)
+                }
+            },
+            onToggleCompletion: {
+                if isSelecting {
+                    toggleSelection(task)
+                } else {
+                    toggleCompletion(task)
+                }
+            },
+            isSelected: isSelecting ? selectedTaskIDs.contains(task.id) : nil
+        )
+        .contextMenu {
+            if !isSelecting {
+                if canComplete {
+                    Button {
+                        toggleCompletion(task)
+                    } label: {
+                        Label("Done", systemImage: "checkmark")
+                    }
+                    .disabled(model.isBusy)
+                    .accessibilityIdentifier(
+                        "task-context-complete-\(task.id.rawValue)"
+                    )
+                }
+                Button {
+                    reschedulePresentation = ReschedulePresentation(tasks: [task])
+                } label: {
+                    Label(
+                        "Reschedule",
+                        systemImage: "calendar.badge.clock"
+                    )
+                }
+                .disabled(model.isBusy)
+                .accessibilityIdentifier(
+                    "task-context-reschedule-\(task.id.rawValue)"
+                )
+
+                Divider()
+
+                Button(role: .destructive) {
+                    Task { @MainActor in
+                        await model.deleteTask(task)
+                    }
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+                .disabled(model.isBusy)
+                .accessibilityIdentifier(
+                    "task-context-delete-\(task.id.rawValue)"
+                )
+            }
+        }
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            if !isSelecting {
+                if canComplete {
+                    Button {
+                        toggleCompletion(task)
+                    } label: {
+                        Label("Done", systemImage: "checkmark")
+                    }
+                    .tint(OTodoTheme.mint)
+                    .disabled(model.isBusy)
+                    .accessibilityIdentifier(
+                        "task-complete-\(task.id.rawValue)"
+                    )
+                }
+                Button {
+                    reschedulePresentation = ReschedulePresentation(tasks: [task])
+                } label: {
+                    Label(
+                        "Reschedule",
+                        systemImage: "calendar.badge.clock"
+                    )
+                }
+                .tint(OTodoTheme.filledViolet)
+                .disabled(model.isBusy)
+                .accessibilityIdentifier(
+                    "task-reschedule-\(task.id.rawValue)"
+                )
+            }
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            if !isSelecting {
+                Button(role: .destructive) {
+                    Task { @MainActor in
+                        await model.deleteTask(task)
+                    }
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+                .disabled(model.isBusy)
+                .accessibilityIdentifier(
+                    "task-delete-\(task.id.rawValue)"
+                )
+            }
+        }
+        .listRowInsets(
+            EdgeInsets(
+                top: 0,
+                leading: 20,
+                bottom: 0,
+                trailing: 20
+            )
+        )
+        .listRowSeparator(.visible)
+        .listRowSeparatorTint(.primary.opacity(0.08))
+        .listRowBackground(Color.clear)
     }
 
     private var completionState: WorkflowState? {
@@ -1035,17 +1256,6 @@ struct TaskListView: View {
             ?? states.first(where: \.isTerminal)
     }
 
-    private var currentDateKey: String {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .autoupdatingCurrent
-        let components = calendar.dateComponents([.year, .month, .day], from: .now)
-        return String(
-            format: "%04d-%02d-%02d",
-            components.year!,
-            components.month!,
-            components.day!
-        )
-    }
 
     private func completionTarget(for task: TodoTask) -> String? {
         if state(for: task.state)?.isTerminal == true {
@@ -1075,9 +1285,15 @@ private struct TaskFilterInput: Equatable, Sendable {
     let filterID: String
     let query: String
     let selectedProject: String?
-    let today: String
+    let dates: TaskDateContext
+    let isUpcoming: Bool
     let workspaceKey: String?
     let isLibraryLoaded: Bool
+}
+
+private struct TaskFilterResult: Sendable {
+    let tasks: [TodoTask]
+    let sections: [TaskAgendaSection]
 }
 
 private enum EditorPresentation: Identifiable {
@@ -1104,9 +1320,6 @@ private enum EditorPresentation: Identifiable {
 }
 
 private struct ReschedulePresentation: Identifiable {
-    let task: TodoTask
-
-    var id: TaskID {
-        task.id
-    }
+    let id = UUID()
+    let tasks: [TodoTask]
 }

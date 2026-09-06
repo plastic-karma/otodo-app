@@ -10,7 +10,7 @@ struct RelativeDueDateField: View {
 
     let accessibilityIdentifierPrefix: String
     let onPendingChange: (Bool) -> Void
-    let onApply: (Date) -> Void
+    let onApply: (Date, RelativeDueDateExpression.Unit) -> Void
 
     @State private var text = ""
     @State private var parsedExpression: RelativeDueDateExpression?
@@ -91,7 +91,7 @@ struct RelativeDueDateField: View {
             self.parsedExpression = nil
             resolutionError = nil
             onPendingChange(false)
-            onApply(resolvedDate)
+            onApply(resolvedDate, parsedExpression.unit)
         } catch {
             resolutionError = error.localizedDescription
         }

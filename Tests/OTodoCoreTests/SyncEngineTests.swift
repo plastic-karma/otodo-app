@@ -283,6 +283,86 @@ final class SyncEngineTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(calls.updates.isEmpty)
     }
 
+    func testReschedulingConcurrentSaveRejectsWholeBatchWithoutOverwritingNewerEdit() async throws {
+        let f = try Fixture(twoTasks: true)
+        let initial = try await f.engine.initialPull(selection: f.selection)
+        let pending = try f.pending(Fixture.record("Concurrent edit", body: "Newer body\n"))
+        let concurrent = try f.edit(initial, pending: pending)
+        await f.store.inject(concurrent)
+        let service = TaskWorkspaceService(persistence: f.store, taskCodec: ObsidianTaskCodec())
+
+        do {
+            _ = try await service.rescheduleTasks(
+                selection: f.selection, expectedTasks: initial.tasks.map(\.task),
+                dueDate: .set(try CivilDate(rawValue: "2027-08-09")), dueTime: .preserve
+            )
+            XCTFail("Expected optimistic save conflict")
+        } catch let error as OTodoError {
+            guard case .conflict = error else { return XCTFail("Expected conflict, got \(error)") }
+        }
+
+        let saved = await f.store.current()
+        XCTAssertEqual(try XCTUnwrap(saved), concurrent)
+    }
+
+    func testRescheduledBatchSyncsCanonicalSchedulesWithoutLosingOtherContent() async throws {
+        let f = try Fixture(twoTasks: true)
+        let initial = try await f.engine.initialPull(selection: f.selection)
+        let service = TaskWorkspaceService(persistence: f.store, taskCodec: ObsidianTaskCodec())
+        var update = TaskUpdate(task: initial.tasks[0].task)
+        update.name = "Offline edit"
+        update.body = "Keep offline body\n\n- [ ] Follow up\n"
+        update.tags = ["local"]
+        let edited = try await service.editTask(
+            selection: f.selection, id: initial.tasks[0].task.id,
+            expectedTask: initial.tasks[0].task, update: update
+        )
+        let beforeBatchValue = await f.store.current()
+        let beforeBatch = try XCTUnwrap(beforeBatchValue)
+        let originalPending = try XCTUnwrap(beforeBatch.pendingChanges.first)
+        let date = try CivilDate(rawValue: "2027-03-04")
+        let time = try CivilTime(rawValue: "09:30")
+        let rescheduled = try await service.rescheduleTasks(
+            selection: f.selection, expectedTasks: [edited, initial.tasks[1].task],
+            dueDate: .set(date), dueTime: .set(time)
+        )
+        let queuedValue = await f.store.current()
+        let queued = try XCTUnwrap(queuedValue)
+        XCTAssertEqual(queued.pendingChanges.count, 2)
+        let coalesced = try XCTUnwrap(queued.pendingChanges.first { $0.path == f.aPath })
+        XCTAssertEqual(coalesced.id, originalPending.id)
+        XCTAssertEqual(coalesced.baseBlobSHA, originalPending.baseBlobSHA)
+        XCTAssertEqual(coalesced.createdAt, originalPending.createdAt)
+
+        let report = try await f.engine.sync(selection: f.selection)
+
+        XCTAssertEqual(report.pushedCount, 2)
+        XCTAssertTrue(report.conflicts.isEmpty)
+        let saved = await f.store.current()
+        let durable = try XCTUnwrap(saved)
+        XCTAssertTrue(durable.pendingChanges.isEmpty)
+        XCTAssertEqual(durable.tasks.map(\.task), rescheduled)
+        let calls = await f.gitHub.calls()
+        XCTAssertEqual(calls.commits.count, 1)
+        let branch = await f.gitHub.branch()
+        for document in durable.tasks {
+            let remote = try XCTUnwrap(branch.files.first {
+                $0.path == f.path(document.task.relativePath)
+            })
+            let parsed = try ObsidianTaskCodec().parseTask(
+                id: document.task.id, relativePath: document.task.relativePath,
+                text: remote.content, configuration: durable.configuration
+            )
+            XCTAssertEqual(parsed, document.task)
+            XCTAssertEqual(parsed.dueDate, date)
+            XCTAssertEqual(parsed.dueTime, time)
+        }
+        XCTAssertEqual(durable.tasks[0].task.body, update.body)
+        XCTAssertEqual(durable.tasks[0].task.tags, update.tags)
+        XCTAssertEqual(durable.tasks[0].task.projectSlugs, edited.projectSlugs)
+        XCTAssertEqual(branch.files.first { $0.path == f.path("Projects/alpha.md") }?.content, "# Alpha\n")
+    }
+
     func testProjectCreationAndItsTaskReferenceSyncInOneCommit() async throws {
         let f = try Fixture()
         let initial = try await f.engine.initialPull(selection: f.selection)

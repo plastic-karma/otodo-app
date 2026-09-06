@@ -192,7 +192,7 @@ struct TaskEditorView: View {
                             RelativeDueDateField(
                                 accessibilityIdentifierPrefix: "task-editor-relative-due",
                                 onPendingChange: { hasPendingRelativeDueDate = $0 },
-                                onApply: { resolvedDate in
+                                onApply: { resolvedDate, _ in
                                     dueDate = resolvedDate
                                     hasDueDate = true
                                     hasDueTime = true

@@ -40,6 +40,18 @@ public struct TaskUpdate: Sendable, Equatable {
     }
 }
 
+public enum TaskDueDateChange: Sendable, Equatable {
+    case preserve
+    case set(CivilDate)
+    case clear
+}
+
+public enum TaskDueTimeChange: Sendable, Equatable {
+    case preserve
+    case set(CivilTime)
+    case clear
+}
+
 public enum WorkspaceConflictResolution: Sendable, Equatable {
     case keepLocal
     case useRemote
@@ -427,6 +439,111 @@ public actor TaskWorkspaceService {
         )
         try await persistence.save(updatedWorkspace, expectedRevision: workspace.revision)
         return document.task
+    }
+
+    /// Reschedules the complete selection in one optimistic, durable mutation.
+    public func rescheduleTasks(
+        selection: RepositorySelection,
+        expectedTasks: [TodoTask],
+        dueDate: TaskDueDateChange,
+        dueTime: TaskDueTimeChange
+    ) async throws -> [TodoTask] {
+        guard !expectedTasks.isEmpty else {
+            throw OTodoError.validation(field: "expectedTasks", message: "Select at least one task")
+        }
+        guard Set(expectedTasks.map(\.id)).count == expectedTasks.count else {
+            throw OTodoError.validation(field: "expectedTasks", message: "Select each task only once")
+        }
+
+        let workspace = try await requireWorkspace(selection: selection)
+        let taskIndices = Dictionary(uniqueKeysWithValues: workspace.tasks.enumerated().map {
+            ($0.element.task.id, $0.offset)
+        })
+        let conflictedPaths = Set(workspace.conflicts.map(\.path))
+        var tasks = workspace.tasks
+        var pendingChanges = workspace.pendingChanges
+        var rescheduledTasks: [TodoTask] = []
+        rescheduledTasks.reserveCapacity(expectedTasks.count)
+        let timestamp = now()
+
+        for expectedTask in expectedTasks {
+            try Task.checkCancellation()
+            guard let taskIndex = taskIndices[expectedTask.id] else {
+                throw OTodoError.notFound(resource: "task \(expectedTask.id.rawValue)")
+            }
+            let original = workspace.tasks[taskIndex]
+            guard original.task == expectedTask else {
+                throw OTodoError.conflict(
+                    message: "Task \(expectedTask.id.rawValue) changed since rescheduling began"
+                )
+            }
+            let repositoryPath = Self.repositoryPath(
+                selection: workspace.selection,
+                storeRelativePath: original.task.relativePath
+            )
+            guard !conflictedPaths.contains(repositoryPath) else {
+                throw OTodoError.conflict(
+                    message: "Resolve the conflict at \(repositoryPath) before editing"
+                )
+            }
+            try Self.validate(
+                state: original.task.state,
+                projects: original.task.projectSlugs,
+                in: workspace
+            )
+
+            let updatedDate: CivilDate?
+            switch dueDate {
+            case .preserve: updatedDate = original.task.dueDate
+            case let .set(date): updatedDate = date
+            case .clear: updatedDate = nil
+            }
+            let updatedTime: CivilTime?
+            switch dueTime {
+            case .preserve: updatedTime = dueDate == .clear ? nil : original.task.dueTime
+            case let .set(time): updatedTime = time
+            case .clear: updatedTime = nil
+            }
+            let task = try TodoTask(
+                id: original.task.id,
+                relativePath: original.task.relativePath,
+                name: original.task.name,
+                state: original.task.state,
+                projectSlugs: original.task.projectSlugs,
+                tags: original.task.tags,
+                dueDate: updatedDate,
+                dueTime: updatedTime,
+                recurrence: original.task.recurrence,
+                recurrenceFrom: original.task.recurrenceFrom,
+                lastCompletedDate: original.task.lastCompletedDate,
+                body: original.task.body,
+                extraProperties: original.task.extraProperties
+            )
+            let document = try canonicalDocument(
+                for: task,
+                configuration: workspace.configuration,
+                blobSHA: original.blobSHA
+            )
+            tasks[taskIndex] = document
+            pendingChanges = try upsertingPendingChange(
+                path: repositoryPath,
+                content: document.content,
+                baseBlobSHA: original.blobSHA,
+                in: pendingChanges,
+                at: timestamp
+            )
+            rescheduledTasks.append(document.task)
+        }
+
+        let updatedWorkspace = try Self.replacing(
+            workspace,
+            tasks: tasks,
+            pendingChanges: pendingChanges,
+            conflicts: workspace.conflicts
+        )
+        try Task.checkCancellation()
+        try await persistence.save(updatedWorkspace, expectedRevision: workspace.revision)
+        return rescheduledTasks
     }
 
     public func editTask(

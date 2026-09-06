@@ -886,7 +886,7 @@ final class OTodoUITests: XCTestCase {
             .matching(identifier: "filter-editor-query").firstMatch
         guard require(query, in: app, description: "the text query editor") else { return }
         query.tap()
-        query.typeText("active AND")
+        query.typeText("next-seven-days AND")
         let save = app.buttons["filter-editor-save"]
         XCTAssertFalse(save.isEnabled, "An unfinished boolean expression must not be saved")
         query.typeText(" project:work AND tag:focus AND name:/future/i AND description:/invoice/i")
@@ -1912,6 +1912,139 @@ final class OTodoUITests: XCTestCase {
         guard require(notes, in: app, description: "the saved Markdown notes") else { return }
         XCTAssertTrue((notes.value as? String)?.contains(sourceURL) == true)
         XCTAssertTrue((notes.value as? String)?.contains("Example Domain") == true)
+    }
+
+    @MainActor
+    func testUpcomingGroupsActiveTasksAndRetainsProjectScope() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace", "-ui-testing-upcoming"]
+        app.launch()
+        let sidebar = app.buttons["project-sidebar-toggle"]
+        guard require(sidebar, in: app, description: "the agenda sidebar") else { return }
+        sidebar.tap()
+        app.buttons["project-filter-work"].tap()
+        sidebar.tap()
+        app.buttons["upcoming-open"].tap()
+        let future = taskRow(named: "Future todo", state: "Pending", in: app)
+        guard require(future, in: app, description: "the work project's upcoming task") else { return }
+        XCTAssertFalse(taskRow(named: "Overdue todo", state: "Pending", in: app).exists)
+        XCTAssertFalse(taskRow(named: "Seed todo", state: "Pending", in: app).exists)
+        XCTAssertTrue(future.label.contains("at 09:15"), "Agenda rows retain exact due times")
+        sidebar.tap()
+        XCTAssertEqual(app.buttons["project-filter-work"].value as? String, "Selected")
+        XCTAssertTrue(app.buttons["upcoming-open"].isSelected)
+        app.buttons["project-filter-all"].tap()
+
+        let taskList = app.descendants(matching: .any).matching(identifier: "task-list").firstMatch
+        for (group, name) in [
+            ("overdue", "Overdue todo"), ("today", "Seed todo"), ("tomorrow", "Future todo"),
+            ("next-seven-days", "Week review"), ("later", "Later review"), ("no-date", "Undated todo"),
+        ] {
+            let row = taskRow(named: name, state: "Pending", in: app)
+            for _ in 0..<8 {
+                if row.exists && row.isHittable { break }
+                taskList.swipeUp(velocity: .slow)
+            }
+            guard require(row, in: app, description: "\(name) in Upcoming") else { return }
+            let header = app.descendants(matching: .any)
+                .matching(identifier: "upcoming-section-\(group)").firstMatch
+            guard require(header, in: app, description: "the \(group) agenda section") else { return }
+            XCTAssertLessThan(header.frame.minY, row.frame.minY)
+            XCTAssertEqual(app.buttons.matching(identifier: row.identifier).count, 1)
+            XCTAssertFalse(taskRow(named: "Completed overdue todo", state: "Done", in: app).exists)
+            if group == "tomorrow" || group == "no-date" {
+                let screenshot = XCTAttachment(screenshot: app.screenshot())
+                screenshot.name = "Upcoming agenda \(group) sections"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+            }
+        }
+    }
+
+    @MainActor
+    func testUpcomingBulkReschedulePreservesMixedTimesAndDetailsOffline() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        let reset = "-ui-testing-reset-workspace"
+        app.launchArguments = ["-ui-testing", reset, "-ui-testing-upcoming"]
+        app.launch()
+        let sidebar = app.buttons["project-sidebar-toggle"]
+        guard require(sidebar, in: app, description: "the weekly review sidebar") else { return }
+        sidebar.tap()
+        app.buttons["project-filter-work"].tap()
+        sidebar.tap()
+        app.buttons["upcoming-open"].tap()
+        let select = app.buttons["upcoming-select"]
+        guard require(select, in: app, description: "Upcoming's multi-selection action") else { return }
+        select.tap()
+        let taskList = app.descendants(matching: .any).matching(identifier: "task-list").firstMatch
+        let reschedule = app.buttons["upcoming-reschedule"]
+        for name in ["Future todo", "Week review"] {
+            let row = taskRow(named: name, state: "Pending", in: app)
+            for _ in 0..<6 {
+                // XCTest may report a row behind the pinned toolbar as hittable.
+                if row.exists && row.isHittable && row.frame.maxY < reschedule.frame.minY {
+                    break
+                }
+                taskList.swipeUp(velocity: .slow)
+            }
+            guard require(row, in: app, description: "the selected \(name) task") else { return }
+            XCTAssertLessThan(row.frame.maxY, reschedule.frame.minY, "Scroll the whole row above the toolbar")
+            row.tap()
+            XCTAssertTrue(row.isSelected)
+        }
+        guard require(reschedule, in: app, description: "the bulk reschedule action") else { return }
+        XCTAssertTrue(reschedule.isEnabled)
+        reschedule.tap()
+        let sheet = app.descendants(matching: .any).matching(identifier: "task-reschedule").firstMatch
+        guard require(sheet, in: app, description: "the batch schedule editor") else { return }
+        let save = app.buttons["task-reschedule-save"]
+        XCTAssertFalse(save.isEnabled, "A batch must not overwrite schedules before any field is changed")
+        let relative = app.textFields["task-reschedule-relative-due-date"]
+        relative.tap()
+        relative.typeText("in 5 days")
+        app.buttons["task-reschedule-relative-due-apply"].tap()
+        XCTAssertTrue(save.isEnabled)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Bulk date change keeps each task's existing time"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        save.tap()
+        guard requireEditorDismissed(sheet, after: "bulk rescheduling offline", in: app) else { return }
+
+        app.terminate()
+        app.launchArguments.removeAll { $0 == reset }
+        app.launch()
+        guard selectFilter("Active", in: app) else { return }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        let date = calendar.date(byAdding: .day, value: 5, to: Date())!
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        let expectedDate = String(format: "%04d-%02d-%02d", components.year!, components.month!, components.day!)
+        for (name, time) in [("Future todo", "09:15"), ("Week review", "16:45")] {
+            guard let row = requireTaskRow(
+                named: name, state: "Pending", in: app, taskList: taskList,
+                description: "the durably rescheduled \(name) task"
+            ) else { return }
+            XCTAssertTrue(row.label.contains("Due: \(expectedDate) at \(time)"))
+            XCTAssertTrue(row.label.contains("Projects: work"))
+            XCTAssertTrue(row.label.contains("Tags: focus"))
+            if name == "Future todo" {
+                row.tap()
+                let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
+                guard require(editor, in: app, description: "the rescheduled task's unchanged notes") else { return }
+                let notes = app.textViews["Todo notes"]
+                for _ in 0..<4 {
+                    if notes.exists && notes.isHittable { break }
+                    editor.swipeUp()
+                }
+                XCTAssertEqual(notes.value as? String, "Review invoice 123\nSend receipt")
+                app.buttons["Cancel"].tap()
+            }
+        }
+        XCTAssertTrue(taskRow(named: "Undated todo", state: "Pending", in: app).exists)
+        XCTAssertFalse(taskRow(named: "Undated todo", state: "Pending", in: app).label.contains("Due:"))
     }
 
     @MainActor

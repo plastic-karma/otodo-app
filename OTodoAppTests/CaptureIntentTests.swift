@@ -61,7 +61,7 @@ final class CaptureIntentTests: XCTestCase {
         XCTAssertNil(document.task.dueDate)
         XCTAssertNil(document.task.dueTime)
         XCTAssertTrue(try TaskFilterQuery.inbox.matches(
-            document.task, terminalStateIDs: ["done"], today: "2026-09-05"
+            document.task, terminalStateIDs: ["done"], dates: TaskDateContext()
         ))
         XCTAssertEqual(saved.pendingChanges.count, 1)
         XCTAssertEqual(saved.pendingChanges.first?.content, document.content)

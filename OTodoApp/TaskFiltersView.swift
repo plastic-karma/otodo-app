@@ -180,6 +180,10 @@ private struct TaskFilterEditorView: View {
                 Section("Query guide") {
                     Text("Combine terms with AND, OR, NOT (or &, |, !). Parentheses group terms; NOT binds first, then AND, then OR.")
                     Text("all · active · today · inbox\nToday includes active overdue todos. Inbox includes active todos without a project, regardless of due date.")
+                    Text("overdue · tomorrow · next-seven-days · undated\nDate predicates select active todos. Next-seven-days covers tomorrow through today + 7 local calendar days.")
+                    Text("due:2026-09-05\ndue:2026-09-01..2026-09-07\n(overdue OR next-seven-days) AND project:work")
+                        .font(.system(.footnote, design: .monospaced))
+                    Text("Use valid YYYY-MM-DD dates. Date ranges include both endpoints. Relative dates follow the device's local calendar and update when the day changes.")
                     Text("project:work AND tag:focus\nactive AND NOT tag:waiting\n(project:home OR project:work) AND today")
                         .font(.system(.footnote, design: .monospaced))
                     Text("name:/report/i\ndescription:/invoice|receipt/i")

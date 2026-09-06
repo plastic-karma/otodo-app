@@ -6,6 +6,10 @@ public struct TaskFilterQuery: Sendable {
     public static let all = TaskFilterQuery(expression: .all)
     public static let active = TaskFilterQuery(expression: .active)
     public static let today = TaskFilterQuery(expression: .today)
+    public static let overdue = TaskFilterQuery(expression: .overdue)
+    public static let tomorrow = TaskFilterQuery(expression: .tomorrow)
+    public static let nextSevenDays = TaskFilterQuery(expression: .nextSevenDays)
+    public static let undated = TaskFilterQuery(expression: .undated)
     public static let inbox = TaskFilterQuery(expression: .inbox)
 
     public init(_ source: String) throws {
@@ -20,9 +24,9 @@ public struct TaskFilterQuery: Sendable {
         self.expression = expression
     }
 
-    public func matches(_ task: TodoTask, terminalStateIDs: Set<String>, today: String) throws -> Bool {
+    public func matches(_ task: TodoTask, terminalStateIDs: Set<String>, dates: TaskDateContext) throws -> Bool {
         try Task.checkCancellation()
-        let result = try expression.matches(task, terminalStateIDs: terminalStateIDs, today: today)
+        let result = try expression.matches(task, terminalStateIDs: terminalStateIDs, dates: dates)
         try Task.checkCancellation()
         return result
     }
@@ -31,6 +35,11 @@ public struct TaskFilterQuery: Sendable {
         case all
         case active
         case today
+        case overdue
+        case tomorrow
+        case nextSevenDays
+        case undated
+        case due(ClosedRange<CivilDate>)
         case inbox
         case tag(String)
         case project(String)
@@ -40,7 +49,7 @@ public struct TaskFilterQuery: Sendable {
         case and([Expression])
         case or([Expression])
 
-        func matches(_ task: TodoTask, terminalStateIDs: Set<String>, today: String) throws -> Bool {
+        func matches(_ task: TodoTask, terminalStateIDs: Set<String>, dates: TaskDateContext) throws -> Bool {
             try Task.checkCancellation()
             switch self {
             case .all:
@@ -48,7 +57,19 @@ public struct TaskFilterQuery: Sendable {
             case .active:
                 return !terminalStateIDs.contains(task.state)
             case .today:
-                return !terminalStateIDs.contains(task.state) && task.dueDate.map { $0.rawValue <= today } == true
+                return !terminalStateIDs.contains(task.state) && task.dueDate.map { $0.rawValue <= dates.today } == true
+            case .overdue:
+                return !terminalStateIDs.contains(task.state) && task.dueDate.map { $0.rawValue < dates.today } == true
+            case .tomorrow:
+                return !terminalStateIDs.contains(task.state) && task.dueDate?.rawValue == dates.tomorrow
+            case .nextSevenDays:
+                return !terminalStateIDs.contains(task.state) && task.dueDate.map {
+                    $0.rawValue >= dates.tomorrow && $0.rawValue <= dates.endOfNextSevenDays
+                } == true
+            case .undated:
+                return !terminalStateIDs.contains(task.state) && task.dueDate == nil
+            case let .due(range):
+                return !terminalStateIDs.contains(task.state) && task.dueDate.map { range.contains($0) } == true
             case .inbox:
                 return task.projectSlugs.isEmpty && !terminalStateIDs.contains(task.state)
             case let .tag(value):
@@ -60,17 +81,17 @@ public struct TaskFilterQuery: Sendable {
             case let .description(regex):
                 return try Self.matches(regex, in: task.body)
             case let .not(expression):
-                return try !expression.matches(task, terminalStateIDs: terminalStateIDs, today: today)
+                return try !expression.matches(task, terminalStateIDs: terminalStateIDs, dates: dates)
             case let .and(expressions):
                 for expression in expressions {
-                    if try !expression.matches(task, terminalStateIDs: terminalStateIDs, today: today) {
+                    if try !expression.matches(task, terminalStateIDs: terminalStateIDs, dates: dates) {
                         return false
                     }
                 }
                 return true
             case let .or(expressions):
                 for expression in expressions {
-                    if try expression.matches(task, terminalStateIDs: terminalStateIDs, today: today) {
+                    if try expression.matches(task, terminalStateIDs: terminalStateIDs, dates: dates) {
                         return true
                     }
                 }
@@ -177,7 +198,7 @@ public struct TaskFilterQuery: Sendable {
                 try advance()
                 return expression
             default:
-                throw lexer.error("Expected all, active, today, inbox, tag:value, project:value, name:/regex/, description:/regex/, NOT, or '('")
+                throw lexer.error("Expected a built-in filter, due:date, tag:value, project:value, name:/regex/, description:/regex/, NOT, or '('")
             }
         }
     }
@@ -235,24 +256,53 @@ public struct TaskFilterQuery: Sendable {
                 switch word {
                 case "tag": return .atom(.tag(try literal()))
                 case "project": return .atom(.project(try literal()))
+                case "due": return .atom(.due(try dueRange()))
                 case "name": return .atom(.name(try regex()))
                 case "description": return .atom(.description(try regex()))
-                default: throw error("Unknown field '\(word)'; use tag, project, name, or description")
+                default: throw error("Unknown field '\(word)'; use due, tag, project, name, or description")
                 }
             }
             switch word {
             case "all": return .atom(.all)
             case "active": return .atom(.active)
             case "today": return .atom(.today)
+            case "overdue": return .atom(.overdue)
+            case "tomorrow": return .atom(.tomorrow)
+            case "next-seven-days": return .atom(.nextSevenDays)
+            case "undated": return .atom(.undated)
             case "inbox": return .atom(.inbox)
             default:
                 switch word.uppercased() {
                 case "AND": return .and
                 case "OR": return .or
                 case "NOT": return .not
-                default: throw error("Unknown expression '\(word)'; use all, active, today, inbox, or a supported field")
+                default: throw error("Unknown expression '\(word)'; use a built-in filter or a supported field")
                 }
             }
+        }
+
+        private mutating func dueRange() throws -> ClosedRange<CivilDate> {
+            let value = try literal()
+            let bounds = value.components(separatedBy: "..")
+            guard bounds.count == 1 || bounds.count == 2 else {
+                throw error("Expected due:YYYY-MM-DD or due:YYYY-MM-DD..YYYY-MM-DD")
+            }
+            let lower: CivilDate
+            let upper: CivilDate
+            do {
+                lower = try CivilDate(rawValue: bounds[0])
+                if bounds.count == 1 {
+                    upper = lower
+                } else {
+                    upper = try CivilDate(rawValue: bounds[1])
+                }
+            } catch {
+                throw self.error("Expected a valid Gregorian date in YYYY-MM-DD format")
+            }
+            guard lower <= upper else {
+                throw error("Due date range must begin on or before its end")
+            }
+            return lower ... upper
         }
 
         private mutating func literal() throws -> String {

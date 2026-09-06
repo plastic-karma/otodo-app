@@ -65,13 +65,13 @@ final class TaskFilterQueryTests: XCTestCase, @unchecked Sendable {
             (TaskFilterQuery.today, [true, true, false, false, false, false, true]),
         ] {
             XCTAssertEqual(
-                try tasks.map { try query.matches($0, terminalStateIDs: terminalStates, today: "2026-09-05") },
+                try tasks.map { try query.matches($0, terminalStateIDs: terminalStates, dates: Self.dates) },
                 expected
             )
         }
-        XCTAssertTrue(try TaskFilterQuery("today").matches(tasks[2], terminalStateIDs: terminalStates, today: "2026-09-06"))
-        XCTAssertFalse(try TaskFilterQuery("active").matches(tasks[0], terminalStateIDs: ["doing"], today: "2026-09-05"))
-        XCTAssertTrue(try TaskFilterQuery("all").matches(tasks[4], terminalStateIDs: terminalStates, today: "2026-09-05"))
+        XCTAssertTrue(try TaskFilterQuery("today").matches(tasks[2], terminalStateIDs: terminalStates, dates: Self.makeDates(day: 6)))
+        XCTAssertFalse(try TaskFilterQuery("active").matches(tasks[0], terminalStateIDs: ["doing"], dates: Self.dates))
+        XCTAssertTrue(try TaskFilterQuery("all").matches(tasks[4], terminalStateIDs: terminalStates, dates: Self.dates))
     }
 
     func testInboxIncludesOnlyActiveProjectlessTasksRegardlessOfDueDate() throws {
@@ -89,13 +89,79 @@ final class TaskFilterQueryTests: XCTestCase, @unchecked Sendable {
         let terminalStates: Set<String> = ["archived", "cancelled"]
         for query in [TaskFilterQuery.inbox, try TaskFilterQuery("inbox")] {
             XCTAssertEqual(
-                try tasks.map { try query.matches($0, terminalStateIDs: terminalStates, today: "2026-09-05") },
+                try tasks.map { try query.matches($0, terminalStateIDs: terminalStates, dates: Self.dates) },
                 [true, true, true, true, false, false, false, false, true]
             )
         }
         XCTAssertFalse(try TaskFilterQuery.inbox.matches(
-            tasks[0], terminalStateIDs: ["doing"], today: "2026-09-05"
+            tasks[0], terminalStateIDs: ["doing"], dates: Self.dates
         ))
+    }
+
+    func testDatePredicatesUseInclusiveBoundsAndExcludeTerminalTasks() throws {
+        let tasks = try [
+            task(dueDate: "2026-09-04"),
+            task(dueDate: "2026-09-05"),
+            task(dueDate: "2026-09-06"),
+            task(dueDate: "2026-09-07"),
+            task(dueDate: "2026-09-12"),
+            task(dueDate: "2026-09-13"),
+            task(),
+        ]
+        let cases: [(String, TaskFilterQuery?, [Bool])] = [
+            ("overdue", .overdue, [true, false, false, false, false, false, false]),
+            ("tomorrow", .tomorrow, [false, false, true, false, false, false, false]),
+            ("next-seven-days", .nextSevenDays, [false, false, true, true, true, false, false]),
+            ("undated", .undated, [false, false, false, false, false, false, true]),
+            ("due:2026-09-05", nil, [false, true, false, false, false, false, false]),
+            ("due:2026-09-06..2026-09-12", nil, [false, false, true, true, true, false, false]),
+            ("due:2026-09-05..2026-09-05", nil, [false, true, false, false, false, false, false]),
+        ]
+        for (source, builtin, expected) in cases {
+            var queries = [try TaskFilterQuery(source)]
+            if let builtin { queries.append(builtin) }
+            for query in queries {
+                XCTAssertEqual(try tasks.map { try matches(query, $0) }, expected, source)
+                XCTAssertEqual(
+                    try tasks.map { try query.matches($0, terminalStateIDs: ["doing"], dates: Self.dates) },
+                    Array(repeating: false, count: tasks.count),
+                    source
+                )
+            }
+        }
+        XCTAssertTrue(try matches(TaskFilterQuery("due:2028-02-29"), task(dueDate: "2028-02-29")))
+    }
+
+    func testDatePredicatesComposeWithBooleanProjectTagAndRegexFilters() throws {
+        let tasks = try [
+            task(name: "Ship 日本", projects: ["work"], tags: ["focus"], dueDate: "2026-09-04"),
+            task(name: "Ship 日本", projects: ["work"], tags: ["focus"], dueDate: "2026-09-06"),
+            task(name: "Ship 日本", projects: ["home"], tags: ["focus"], dueDate: "2026-09-06"),
+            task(name: "Ship 日本", projects: ["work"], tags: ["focus", "blocked"], dueDate: "2026-09-07"),
+            task(name: "Plan", projects: ["work"], tags: ["focus"]),
+            task(name: "Ship 日本", state: "archived", projects: ["work"], tags: ["focus"], dueDate: "2026-09-06"),
+        ]
+        let query = try TaskFilterQuery(
+            #"(overdue OR next-seven-days) AND project:"work" AND tag:focus AND NOT tag:blocked AND name:/^ship\s+日本$/i"#
+        )
+        XCTAssertEqual(try tasks.map { try matches(query, $0) }, [true, true, false, false, false, false])
+        let range = try TaskFilterQuery(#"due:"2026-09-06..2026-09-07" & !tomorrow | undated"#)
+        XCTAssertEqual(try tasks.map { try matches(range, $0) }, [false, false, false, true, true, false])
+        let precedence = try TaskFilterQuery("overdue OR tomorrow AND project:work")
+        XCTAssertEqual(try tasks.map { try matches(precedence, $0) }, [true, true, false, false, false, false])
+        XCTAssertTrue(try matches(TaskFilterQuery("NOT tomorrow"), tasks[5]))
+    }
+
+    func testRejectsInvalidCivilDateLiteralsAndReversedOrOpenRanges() {
+        for source in [
+            "due:", "due:2026-02-29", "due:2026-04-31", "due:2026-00-10", "due:2026-09-00",
+            "due:2026-9-05", "due:２０２６-09-05", "due:2026-09-05T12:00",
+            "due:2026-09-06..2026-09-05", "due:2026-09-05..", "due:..2026-09-05",
+            "due:2026-09-05..2026-09-06..2026-09-07", "due:2026-09-05...2026-09-06",
+            #"due:"2026-09-05"suffix"#, #"due:"2026-09-05..2026-02-29""#,
+        ] {
+            assertInvalid(source)
+        }
     }
 
     func testRejectsMalformedExpressionsWithFilterValidationErrors() {
@@ -131,7 +197,7 @@ final class TaskFilterQueryTests: XCTestCase, @unchecked Sendable {
             withUnsafeCurrentTask { $0?.cancel() }
             for query in queries {
                 do {
-                    _ = try query.matches(task, terminalStateIDs: [], today: "2026-09-05")
+                    _ = try query.matches(task, terminalStateIDs: [], dates: Self.dates)
                     XCTFail("Cancelled query returned a result")
                 } catch is CancellationError {
                     // Cancellation must not be converted into a false match or a validation error.
@@ -149,7 +215,7 @@ final class TaskFilterQueryTests: XCTestCase, @unchecked Sendable {
         let started = expectation(description: "Regex worker started")
         let worker = Task.detached {
             started.fulfill()
-            return try query.matches(task, terminalStateIDs: [], today: "2026-09-05")
+            return try query.matches(task, terminalStateIDs: [], dates: Self.dates)
         }
         defer { worker.cancel() }
         await fulfillment(of: [started], timeout: 2)
@@ -169,8 +235,8 @@ final class TaskFilterQueryTests: XCTestCase, @unchecked Sendable {
         let either = try TaskFilterQuery("all OR name:/^(a+)+$/")
         let both = try TaskFilterQuery("active AND name:/^(a+)+$/")
         let worker = Task.detached {
-            let first = try either.matches(task, terminalStateIDs: ["archived"], today: "2026-09-05")
-            let second = try both.matches(task, terminalStateIDs: ["archived"], today: "2026-09-05")
+            let first = try either.matches(task, terminalStateIDs: ["archived"], dates: Self.dates)
+            let second = try both.matches(task, terminalStateIDs: ["archived"], dates: Self.dates)
             return [first, second]
         }
         let cancellation = Task.detached {
@@ -192,7 +258,18 @@ final class TaskFilterQueryTests: XCTestCase, @unchecked Sendable {
     }
 
     private func matches(_ query: TaskFilterQuery, _ task: TodoTask) throws -> Bool {
-        try query.matches(task, terminalStateIDs: ["archived"], today: "2026-09-05")
+        try query.matches(task, terminalStateIDs: ["archived"], dates: Self.dates)
+    }
+
+    private static let dates = makeDates()
+
+    private static func makeDates(day: Int = 5) -> TaskDateContext {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        return TaskDateContext(
+            referenceDate: calendar.date(from: DateComponents(year: 2026, month: 9, day: day))!,
+            calendar: calendar
+        )
     }
 
     private func task(

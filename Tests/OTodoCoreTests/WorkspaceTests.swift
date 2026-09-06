@@ -572,6 +572,274 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(unchanged, durable)
     }
 
+    func testReschedulingPreservesMixedTimesAndUneditedTaskDataDurably() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let documents = try makeReschedulingDocuments(configuration: configuration)
+        let initial = try makeWorkspace(
+            selection: selection, configuration: configuration, tasks: documents
+        )
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+        let newDate = try CivilDate(rawValue: "2027-04-05")
+        let selected = [documents[2].task, documents[0].task, documents[1].task]
+
+        let dateOnly = try await service.rescheduleTasks(
+            selection: selection, expectedTasks: selected,
+            dueDate: .set(newDate), dueTime: .preserve
+        )
+        let expectedDateOnly = selected.map { task in
+            var expected = task
+            expected.dueDate = newDate
+            return expected
+        }
+        XCTAssertEqual(dateOnly, expectedDateOnly)
+        let dated = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(dated.tasks.map(\.task.id), documents.map(\.task.id))
+        XCTAssertEqual(dated.tasks.map(\.task.dueTime), documents.map(\.task.dueTime))
+        XCTAssertEqual(dated.pendingChanges.count, documents.count)
+        for document in dated.tasks {
+            let pending = try XCTUnwrap(dated.pendingChanges.first {
+                $0.path == repositoryPath(selection, document.task.relativePath)
+            })
+            XCTAssertEqual(pending.baseBlobSHA, document.blobSHA)
+            XCTAssertEqual(pending.content, document.content)
+            let parsed = try ObsidianTaskCodec().parseTask(
+                id: document.task.id, relativePath: document.task.relativePath,
+                text: try XCTUnwrap(pending.content), configuration: configuration
+            )
+            XCTAssertEqual(parsed, document.task)
+        }
+
+        let time = try CivilTime(rawValue: "14:25")
+        // Restore one distinct date so time-only edits must preserve each task's own date.
+        let distinct = try await service.rescheduleTasks(
+            selection: selection, expectedTasks: [dateOnly[0]],
+            dueDate: .set(try CivilDate(rawValue: "2027-04-09")), dueTime: .preserve
+        )
+        let timeSelection = [distinct[0], dateOnly[1], dateOnly[2]]
+        let timed = try await service.rescheduleTasks(
+            selection: selection, expectedTasks: timeSelection,
+            dueDate: .preserve, dueTime: .set(time)
+        )
+        XCTAssertEqual(timed, timeSelection.map { task in
+            var expected = task
+            expected.dueTime = time
+            return expected
+        })
+        let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(durable.tasks.map(\.task.dueDate), [newDate, newDate, distinct[0].dueDate])
+        XCTAssertEqual(durable.pendingChanges.count, dated.pendingChanges.count)
+        for pending in durable.pendingChanges {
+            let original = try XCTUnwrap(dated.pendingChanges.first { $0.path == pending.path })
+            XCTAssertEqual(pending.id, original.id)
+            XCTAssertEqual(pending.baseBlobSHA, original.baseBlobSHA)
+            XCTAssertEqual(pending.createdAt, original.createdAt)
+            XCTAssertEqual(pending.content, durable.tasks.first {
+                repositoryPath(selection, $0.task.relativePath) == pending.path
+            }?.content)
+        }
+    }
+
+    func testReschedulingClearsTimeAndDateWithoutLeavingOrphanTimes() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        // The third fixture is recurring and cannot lose its date.
+        let documents = Array(try makeReschedulingDocuments(configuration: configuration).prefix(2))
+        let initial = try makeWorkspace(
+            selection: selection, configuration: configuration, tasks: documents
+        )
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+        let clearedTime = try await service.rescheduleTasks(
+            selection: selection, expectedTasks: documents.map(\.task),
+            dueDate: .preserve, dueTime: .clear
+        )
+        XCTAssertEqual(clearedTime, documents.map { document in
+            var expected = document.task
+            expected.dueTime = nil
+            return expected
+        })
+        let timed = try await service.rescheduleTasks(
+            selection: selection, expectedTasks: clearedTime,
+            dueDate: .preserve, dueTime: .set(try CivilTime(rawValue: "10:30"))
+        )
+        let undated = try await service.rescheduleTasks(
+            selection: selection, expectedTasks: timed,
+            dueDate: .clear, dueTime: .preserve
+        )
+        XCTAssertEqual(undated, documents.map { document in
+            var expected = document.task
+            expected.dueDate = nil
+            expected.dueTime = nil
+            return expected
+        })
+        let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(durable.tasks.map(\.task), undated)
+        for document in durable.tasks {
+            let parsed = try ObsidianTaskCodec().parseTask(
+                id: document.task.id, relativePath: document.task.relativePath,
+                text: document.content, configuration: configuration
+            )
+            XCTAssertNil(parsed.dueDate)
+            XCTAssertNil(parsed.dueTime)
+        }
+    }
+
+    func testInvalidReschedulingRollsBackEarlierTasksAndOutbox() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let documents = try makeReschedulingDocuments(configuration: configuration)
+        let initial = try makeWorkspace(
+            selection: selection, configuration: configuration, tasks: documents
+        )
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+        let time = try CivilTime(rawValue: "12:00")
+        // Clearing a later recurring task must also roll back earlier valid changes.
+        await assertReschedulingValidation {
+            _ = try await service.rescheduleTasks(
+                selection: selection, expectedTasks: documents.map(\.task),
+                dueDate: .clear, dueTime: .preserve
+            )
+        }
+        await assertReschedulingValidation {
+            _ = try await service.rescheduleTasks(
+                selection: selection, expectedTasks: [documents[0].task],
+                dueDate: .clear, dueTime: .set(time)
+            )
+        }
+        let unchanged = try await loadRequired(store, selection: selection)
+        XCTAssertEqual(unchanged, initial)
+        let undated = try await service.rescheduleTasks(
+            selection: selection, expectedTasks: [documents[1].task],
+            dueDate: .clear, dueTime: .clear
+        )
+        let beforeTimeOnly = try await loadRequired(store, selection: selection)
+        await assertReschedulingValidation {
+            _ = try await service.rescheduleTasks(
+                selection: selection, expectedTasks: [documents[0].task, undated[0]],
+                dueDate: .preserve, dueTime: .set(time)
+            )
+        }
+        let afterTimeOnly = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(afterTimeOnly, beforeTimeOnly)
+        let date = try CivilDate(rawValue: "2027-06-07")
+        let dated = try await service.rescheduleTasks(
+            selection: selection, expectedTasks: [documents[0].task, undated[0]],
+            dueDate: .set(date), dueTime: .set(time)
+        )
+        XCTAssertEqual(dated.map(\.dueDate), [date, date])
+        XCTAssertEqual(dated.map(\.dueTime), [time, time])
+    }
+
+    func testReschedulingRejectsEmptyDuplicateStaleMissingAndConflictedSelectionsAtomically() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let documents = try makeReschedulingDocuments(configuration: configuration)
+        let initial = try makeWorkspace(
+            selection: selection, configuration: configuration, tasks: documents
+        )
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+        let date = try CivilDate(rawValue: "2027-05-06")
+        for invalidSelection in [[], [documents[0].task, documents[0].task]] {
+            await assertReschedulingValidation {
+                _ = try await service.rescheduleTasks(
+                    selection: selection, expectedTasks: invalidSelection,
+                    dueDate: .set(date), dueTime: .preserve
+                )
+            }
+        }
+        var stale = documents[1].task
+        stale.name = "Outdated version"
+        await assertConflict {
+            _ = try await service.rescheduleTasks(
+                selection: selection, expectedTasks: [documents[0].task, stale],
+                dueDate: .set(date), dueTime: .preserve
+            )
+        }
+        let missing = try makeDocument(
+            id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAZ"), name: "Deleted",
+            configuration: configuration
+        )
+        do {
+            _ = try await service.rescheduleTasks(
+                selection: selection, expectedTasks: [documents[0].task, missing.task],
+                dueDate: .set(date), dueTime: .preserve
+            )
+            XCTFail("Expected missing task rejection")
+        } catch let error as OTodoError {
+            guard case .notFound = error else { return XCTFail("Expected notFound, got \(error)") }
+        }
+        let unchanged = try await loadRequired(store, selection: selection)
+        XCTAssertEqual(unchanged, initial)
+
+        let pending = try PendingChange(
+            id: UUID(), path: repositoryPath(selection, documents[1].task.relativePath),
+            baseBlobSHA: documents[1].blobSHA, content: documents[1].content, createdAt: .now
+        )
+        let conflict = try SyncConflict(
+            path: pending.path, baseBlobSHA: pending.baseBlobSHA, remoteBlobSHA: "remote-new",
+            localContent: pending.content, remoteContent: "Remote version"
+        )
+        let conflicted = try makeWorkspace(
+            selection: selection, configuration: configuration, tasks: documents,
+            pendingChanges: [pending], conflicts: [conflict], revision: 1
+        )
+        try await store.save(conflicted, expectedRevision: initial.revision)
+        await assertConflict {
+            _ = try await service.rescheduleTasks(
+                selection: selection, expectedTasks: documents.map(\.task),
+                dueDate: .set(date), dueTime: .preserve
+            )
+        }
+        let afterConflict = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(afterConflict, conflicted)
+    }
+
+    func testReschedulingSaveFailureLeavesDurableBatchUnchanged() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let documents = try makeReschedulingDocuments(configuration: configuration)
+        let initial = try makeWorkspace(
+            selection: selection, configuration: configuration, tasks: documents
+        )
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(
+            persistence: CapacityLimitedWorkspaceStore(store: store, maximumTaskCount: 0),
+            taskCodec: ObsidianTaskCodec()
+        )
+        do {
+            _ = try await service.rescheduleTasks(
+                selection: selection, expectedTasks: documents.map(\.task),
+                dueDate: .set(try CivilDate(rawValue: "2027-07-08")), dueTime: .preserve
+            )
+            XCTFail("Expected storage failure")
+        } catch let error as OTodoError {
+            guard case .corruptLocalState = error else {
+                return XCTFail("Expected storage failure, got \(error)")
+            }
+        }
+        let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(durable, initial)
+    }
+
     func testRepeatedEditsCoalesceOutboxAndRetainOriginalBaseIDAndTime() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1496,6 +1764,10 @@ private func makeDocument(
     tags: [String] = [],
     dueDate: CivilDate? = nil,
     dueTime: CivilTime? = nil,
+    recurrence: String? = nil,
+    recurrenceFrom: RecurrenceFrom? = nil,
+    lastCompletedDate: CivilDate? = nil,
+    extraProperties: [YAMLProperty] = [],
     body: String = "",
     blobSHA: String? = nil,
     configuration: StoreConfiguration
@@ -1510,11 +1782,11 @@ private func makeDocument(
         tags: tags,
         dueDate: dueDate,
         dueTime: dueTime,
-        recurrence: nil,
-        recurrenceFrom: nil,
-        lastCompletedDate: nil,
+        recurrence: recurrence,
+        recurrenceFrom: recurrenceFrom,
+        lastCompletedDate: lastCompletedDate,
         body: body,
-        extraProperties: []
+        extraProperties: extraProperties
     )
     let codec = ObsidianTaskCodec()
     let content = try codec.serializeTask(task, configuration: configuration)
@@ -1568,5 +1840,40 @@ private func assertConflict(
         }
     } catch {
         XCTFail("Expected OTodoError.conflict, got \(error)", file: file, line: line)
+    }
+}
+
+private func makeReschedulingDocuments(configuration: StoreConfiguration) throws -> [TaskDocument] {
+    let ids = [
+        taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+        taskID("01ARZ3NDEKTSV4RRFFQ69G5FAW"),
+        taskID("01ARZ3NDEKTSV4RRFFQ69G5FAX"),
+    ]
+    let times = [try CivilTime(rawValue: "08:15"), nil, try CivilTime(rawValue: "17:45")]
+    return try ids.enumerated().map { index, id in
+        try makeDocument(
+            id: id, name: "Task \(index)", state: index == 1 ? "doing" : "backlog",
+            projectSlugs: ["alpha", "beta"], tags: ["important", "home"],
+            dueDate: CivilDate(rawValue: "2027-03-0\(index + 1)"), dueTime: times[index],
+            recurrence: index == 2 ? "FREQ=WEEKLY;INTERVAL=1" : nil,
+            recurrenceFrom: index == 2 ? .schedule : nil,
+            lastCompletedDate: index == 2 ? CivilDate(rawValue: "2027-02-24") : nil,
+            extraProperties: [YAMLProperty(name: "custom", value: .string("Keep me"))],
+            body: "Exact body \(index)\n\n- [ ] Checklist\n", blobSHA: "base-\(index)",
+            configuration: configuration
+        )
+    }
+}
+
+private func assertReschedulingValidation(operation: () async throws -> Void) async {
+    do {
+        try await operation()
+        XCTFail("Expected schedule validation failure")
+    } catch let error as OTodoError {
+        guard case .validation = error else {
+            return XCTFail("Expected validation failure, got \(error)")
+        }
+    } catch {
+        XCTFail("Expected validation failure, got \(error)")
     }
 }

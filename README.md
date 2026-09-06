@@ -39,11 +39,32 @@ System captures start without a project or deadline. After connecting a workspac
 
 Open OTodo once after upgrading an existing installation. The app atomically moves its complete private workspace directory, including pending changes, saved filters, and repository selection, into the shared App Group before opening stores. Migration errors are shown instead of silently starting an empty workspace. App and extension saves coordinate revision checks with a cross-process lock.
 
+## Upcoming and weekly review
+
+Open **Upcoming** from the sidebar to review active work using cached task fields. It keeps the selected project; **All projects** clears that scope. The filter strip and library can narrow the agenda without losing its project scope. **Todos** switches back to the flat list, and **Inbox** leaves the agenda for projectless work.
+
+The six sections use the device's local Gregorian calendar:
+
+| Section | Due date |
+| --- | --- |
+| Overdue | Before today |
+| Today | Today |
+| Tomorrow | The next calendar day |
+| Next seven days | After tomorrow, through today + 7 days |
+| Later | After today + 7 days |
+| No date | No due date |
+
+Sections never duplicate a task and exclude configured terminal states. They are based on dates, not time of day: elapsed times on today's tasks still appear under Today with an overdue marker. Optional times remain visible. Relative filters and sections refresh on local day changes, significant clock/time-zone changes, and returning to the app.
+
+Tap **Select**, choose several rows (or **Select all** for the current scope), then **Reschedule**. The shared calendar and relative-date controls support a weekly review without opening each todo. Bulk edits initially keep every date and time; explicitly set or remove either field. A date-only edit keeps each todo's own time. Relative days/weeks/months/years change dates, while minutes/hours set both date and time. Removing dates also removes times; recurring todos still require dates.
+
+The entire batch is validated and saved atomically to the normal durable outbox, including offline. Names, states, projects, tags, notes, recurrence metadata, and custom front matter are preserved. A stale/conflicted task or invalid schedule prevents the whole batch from saving. No external calendar or generated recurring occurrences are involved.
+
 ## Saved filters
 
 Open **Filters** from the top-right of the workspace, then **+** to save a name and text query. Tap a filter to open it; star it to put it on the app's Home filter strip. Touch and hold a saved filter (or swipe left) to edit or delete it. **Today**, **Active**, **All**, and **Inbox** are predefined queries: their definitions cannot change, but their Home stars can.
 
-Filters are saved offline on this device, separately for each repository, branch, and store path. They do not alter the Obsidian store or sync through GitHub. Selecting a filter from the library clears the sidebar's project scope; selecting a Home filter retains that scope except for Inbox, which always shows projectless work. Selecting a project from Inbox switches to that project's Active view.
+Filters are saved offline on this device, separately for each repository, branch, and store path. They do not alter the Obsidian store or sync through GitHub. Selecting a filter from the library clears project scope in Todos but preserves it in Upcoming. Selecting a Home filter retains that scope except for Inbox, which always shows projectless work. Selecting a project from Inbox switches to that project's Active view.
 
 The language uses explicit boolean operators, inspired by [Todoist's text filters](https://www.todoist.com/help/articles/introduction-to-filters-V98wIH):
 
@@ -53,6 +74,13 @@ The language uses explicit boolean operators, inspired by [Todoist's text filter
 | `active` | Todos outside the configured terminal states |
 | `today` | Active todos due today or overdue |
 | `inbox` | Active todos with no assigned projects, regardless of due date |
+| `overdue` | Active todos dated before today |
+| `tomorrow` | Active todos dated the next local calendar day |
+| `next-seven-days` | Active todos from tomorrow through today + 7 days, inclusive |
+| `undated` | Active todos without a due date |
+| `due:2026-09-05` | Active todos on that exact date |
+| `due:2026-09-01..2026-09-07` | Active todos in the inclusive date range |
+| `(overdue OR next-seven-days) AND project:work AND NOT tag:waiting` | Approaching or late work, excluding waiting tasks |
 | `project:work AND tag:focus` | Exact project slug and tag |
 | `active AND NOT tag:waiting` | Active todos without the tag |
 | `(project:home OR project:work) AND today` | Today's focus in either project |
@@ -60,6 +88,8 @@ The language uses explicit boolean operators, inspired by [Todoist's text filter
 | `description:/invoice\|receipt/i` | Regex against the Markdown body |
 
 `AND`, `OR`, and `NOT` are case-insensitive; `&`, `|`, and `!` are equivalent. `NOT` binds first, then `AND`, then `OR`; parentheses override this order. Atoms and field names are lowercase. Tag/project values follow the colon immediately and match exactly, including case. Double-quote values containing operators, for example `tag:"a|b"`; inside quotes, `\"` and `\\` escape a quote and backslash.
+
+Date literals must be valid `YYYY-MM-DD` Gregorian dates; ranges require both endpoints in ascending order. Every date predicate excludes terminal tasks. `next-seven-days` includes tomorrow when used as a query, while the agenda places those tasks only in its separate Tomorrow section.
 
 Name and description patterns use ICU regular expressions between `/` delimiters. Escape a literal slash as `\/`. Optional flags are `i` (ignore case), `m` (line anchors), and `s` (dot matches newlines); omit them for case-sensitive matching. Invalid syntax is shown in the editor and cannot be saved. Compiled queries are cached; matching runs off the UI thread and is cancelled when the selected query or tasks change.
 

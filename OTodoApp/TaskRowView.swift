@@ -9,6 +9,7 @@ struct TaskRowView: View {
     let isCompletionDisabled: Bool
     let onOpen: () -> Void
     let onToggleCompletion: () -> Void
+    var isSelected: Bool? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -20,10 +21,16 @@ struct TaskRowView: View {
             .buttonStyle(.plain)
             .disabled(isCompletionDisabled)
             .accessibilityLabel(
-                workflowState?.isTerminal == true ? "Reopen \(task.name)" : "Complete \(task.name)"
+                isSelected.map { "\($0 ? "Deselect" : "Select") \(task.name)" }
+                    ?? (workflowState?.isTerminal == true ? "Reopen \(task.name)" : "Complete \(task.name)")
             )
-            .accessibilityValue(workflowState?.name ?? task.state)
-            .accessibilityIdentifier("task-toggle-completion-\(task.id.rawValue)")
+            .accessibilityValue(isSelected.map { $0 ? "Selected" : "Not selected" }
+                ?? (workflowState?.name ?? task.state))
+            .accessibilityIdentifier(
+                isSelected == nil
+                    ? "task-toggle-completion-\(task.id.rawValue)"
+                    : "task-select-\(task.id.rawValue)"
+            )
             .padding(.top, 2)
 
             Button(action: onOpen) {
@@ -65,12 +72,16 @@ struct TaskRowView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(isSelected != nil && isCompletionDisabled)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(accessibilityDescription)
             .accessibilityHint(
-                "Opens the todo editor; swipe right or touch and hold for task actions"
+                isSelected == nil
+                    ? "Opens the todo editor; swipe right or touch and hold for task actions"
+                    : "Selects this todo for bulk rescheduling"
             )
             .accessibilityIdentifier("task-row-\(task.id.rawValue)")
+            .accessibilityAddTraits(isSelected == true ? .isSelected : [])
         }
         .accessibilityElement(children: .contain)
     }
@@ -79,14 +90,14 @@ struct TaskRowView: View {
         ZStack {
             Circle()
                 .fill(
-                    workflowState?.isTerminal == true
-                        ? OTodoTheme.mint
-                        : stateColor.opacity(0.10)
+                    isSelected == true
+                        ? OTodoTheme.accent
+                        : workflowState?.isTerminal == true ? OTodoTheme.mint : stateColor.opacity(0.10)
                 )
             Circle()
                 .strokeBorder(stateColor, lineWidth: 1.5)
 
-            if workflowState?.isTerminal == true {
+            if isSelected == true || (isSelected == nil && workflowState?.isTerminal == true) {
                 Image(systemName: "checkmark")
                     .font(.caption2.bold())
                     .foregroundStyle(.white)

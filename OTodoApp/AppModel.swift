@@ -614,15 +614,46 @@ final class AppModel {
         }
     }
 
-    func rescheduleTask(
-        _ task: TodoTask,
-        dueDate: CivilDate,
-        dueTime: CivilTime?
+    func rescheduleTasks(
+        _ tasks: [TodoTask],
+        dueDate: TaskDueDateChange,
+        dueTime: TaskDueTimeChange
     ) async {
-        var draft = TaskEditorDraft(task: task)
-        draft.dueDate = dueDate
-        draft.dueTime = dueTime
-        await updateTask(id: task.id, draft: draft)
+        guard rootState == .workspace, let selection = workspaceSelection else {
+            errorMessage = "No todo workspace is selected."
+            return
+        }
+        let operationSession = sessionID
+
+        beginLocalMutation()
+        defer { finishLocalMutation() }
+        errorMessage = nil
+        statusMessage = "Rescheduling on this device…"
+        isBusy = true
+        do {
+            _ = try await taskService.rescheduleTasks(
+                selection: selection,
+                expectedTasks: tasks,
+                dueDate: dueDate,
+                dueTime: dueTime
+            )
+            guard sessionID == operationSession else { return }
+            syncFollowUpRequested = true
+            let workspace = try await taskService.loadWorkspace(selection: selection)
+            guard sessionID == operationSession else { return }
+            apply(workspace)
+            errorMessage = nil
+            publishLocalSaveStatus(
+                onlineMessage: "Rescheduled on this device; waiting to sync.",
+                offlineMessage: "Rescheduled on this device while offline."
+            )
+            isBusy = false
+        } catch {
+            guard sessionID == operationSession else { return }
+            isBusy = false
+            errorMessage = Self.message(for: error)
+            statusMessage = nil
+        }
     }
 
     func deleteTask(_ task: TodoTask) async {
@@ -1070,7 +1101,8 @@ final class AppModel {
             if let existing = try await taskService.load(selection: selection) {
                 restored = existing
             } else {
-                let seeds: [
+                let includesAgendaFixtures = ProcessInfo.processInfo.arguments.contains("-ui-testing-upcoming")
+                var seeds: [
                     (id: String, name: String, state: String, project: String, dueDate: CivilDate?)
                 ] = [
                     ("01ARZ3NDEKTSV4RRFFQ69G5FAV", "Seed todo", "todo", "home", try Self.uiTestDate()),
@@ -1079,6 +1111,12 @@ final class AppModel {
                     ("01ARZ3NDEKTSV4RRFFQ69G5FAY", "Undated todo", "todo", "work", nil),
                     ("01ARZ3NDEKTSV4RRFFQ69G5FAZ", "Completed overdue todo", "done", "home", try Self.uiTestDate(dayOffset: -1)),
                 ]
+                if includesAgendaFixtures {
+                    seeds += [
+                        ("01ARZ3NDEKTSV4RRFFQ69G5FB0", "Week review", "todo", "work", try Self.uiTestDate(dayOffset: 3)),
+                        ("01ARZ3NDEKTSV4RRFFQ69G5FB1", "Later review", "todo", "work", try Self.uiTestDate(dayOffset: 14)),
+                    ]
+                }
                 let codec = ObsidianTaskCodec()
                 let documents = try seeds.map { seed in
                     let id = try TaskID(rawValue: seed.id)
@@ -1090,6 +1128,10 @@ final class AppModel {
                         projectSlugs: [seed.project],
                         tags: seed.project == "work" ? ["focus"] : ["home"],
                         dueDate: seed.dueDate,
+                        dueTime: includesAgendaFixtures && seed.name == "Future todo"
+                            ? try CivilTime(rawValue: "09:15")
+                            : includesAgendaFixtures && seed.name == "Week review"
+                                ? try CivilTime(rawValue: "16:45") : nil,
                         recurrence: nil,
                         recurrenceFrom: nil,
                         lastCompletedDate: nil,
