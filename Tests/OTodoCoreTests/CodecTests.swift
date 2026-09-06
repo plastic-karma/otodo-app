@@ -22,13 +22,13 @@ final class CodecTests: XCTestCase {
 
     func testUnsupportedConfigurationVersionTakesPrecedenceOverShapeValidation() {
         let source = [
-            "schema_version = 2",
+            "schema_version = 3",
             "unknown_key = true",
         ].joined(separator: "\n")
 
         assertError(
             try StrictStoreConfigCodec().parseConfiguration(source),
-            equals: .unsupportedSchema(found: 2, supported: 1)
+            equals: .unsupportedSchema(found: 3, supported: 2)
         )
     }
 
@@ -62,7 +62,7 @@ final class CodecTests: XCTestCase {
     }
 
     func testStructuralSchemaLoadsAuthoritativeBundledDocument() throws {
-        let source = try StrictStoreConfigCodec.structuralSchemaJSON()
+        let source = try StrictStoreConfigCodec.structuralSchemaJSON(schemaVersion: 1)
         let root = try XCTUnwrap(
             try JSONSerialization.jsonObject(with: Data(source.utf8)) as? [String: Any]
         )

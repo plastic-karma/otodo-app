@@ -86,7 +86,8 @@ public actor SyncEngine {
                 let refreshed = try await reconcileAndSave(
                     selection: selection,
                     snapshot: refreshedSnapshot,
-                    confirming: changesToPush
+                    confirming: changesToPush,
+                    restrictingTo: attemptedIDs
                 )
 
                 pulledCount += refreshed.pulledCount
@@ -98,7 +99,7 @@ public actor SyncEngine {
                 guard refreshedSnapshot.headCommitSHA != attemptedHead else {
                     throw error
                 }
-                let retryable = refreshed.safePendingChanges.filter { attemptedIDs.contains($0.id) }
+                let retryable = refreshed.safePendingChanges
                 if retryable.isEmpty {
                     return try SyncReport(
                         pulledCount: pulledCount,
@@ -171,7 +172,8 @@ public actor SyncEngine {
     private func reconcileAndSave(
         selection: RepositorySelection,
         snapshot: GitSnapshot,
-        confirming confirmedAttempts: [PendingChange]
+        confirming confirmedAttempts: [PendingChange],
+        restrictingTo publishablePendingIDs: Set<UUID>? = nil
     ) async throws -> Reconciliation {
         var retriesRemaining = Self.workspaceSaveRetryLimit
         var confirmedAttemptsByPath = Dictionary(
@@ -186,7 +188,8 @@ public actor SyncEngine {
                 pendingChanges: local.pendingChanges,
                 existingConflicts: local.conflicts,
                 previousWorkspace: local,
-                confirming: confirmedAttemptsByPath
+                confirming: confirmedAttemptsByPath,
+                restrictingTo: publishablePendingIDs
             )
 
             do {
@@ -215,9 +218,33 @@ public actor SyncEngine {
         pendingChanges: [PendingChange],
         existingConflicts: [SyncConflict],
         previousWorkspace: WorkspaceState?,
-        confirming confirmedAttemptsByPath: [String: PendingChange] = [:]
+        confirming confirmedAttemptsByPath: [String: PendingChange] = [:],
+        restrictingTo publishablePendingIDs: Set<UUID>? = nil
     ) throws -> Reconciliation {
         let parsed = try parse(snapshot: snapshot, selection: selection)
+        if let previousWorkspace, previousWorkspace.configuration.schemaVersion > parsed.configuration.schemaVersion {
+            throw OTodoError.validation(field: "schema_version", message: "unsupported_schema: Store schema downgrade is not supported")
+        }
+        if let previousWorkspace,
+           previousWorkspace.configuration.schemaVersion == 1, parsed.configuration.schemaVersion == 2 {
+            let blocked = try legacyParentTransitionBlocks(
+                workspace: previousWorkspace, pendingChanges: pendingChanges, conflicts: existingConflicts
+            )
+            if !blocked.isEmpty {
+                guard previousWorkspace.revision < UInt64.max else {
+                    throw OTodoError.corruptLocalState(message: "Workspace revision cannot be incremented")
+                }
+                let retained = try WorkspaceState(
+                    selection: selection, configuration: previousWorkspace.configuration,
+                    knownProjectSlugs: previousWorkspace.knownProjectSlugs, tasks: previousWorkspace.tasks,
+                    baseHeadCommitSHA: previousWorkspace.baseHeadCommitSHA,
+                    baseRootTreeSHA: previousWorkspace.baseRootTreeSHA,
+                    pendingChanges: pendingChanges, conflicts: existingConflicts,
+                    revision: previousWorkspace.revision + 1, relationshipBlocks: blocked
+                )
+                return Reconciliation(workspace: retained, safePendingChanges: [], confirmedPendingIDs: [], pulledCount: 0)
+            }
+        }
         var tasksByPath = Dictionary(uniqueKeysWithValues: parsed.tasks.map { ($0.task.relativePath, $0) })
         var knownProjectSlugs = Set(parsed.knownProjectSlugs)
         let existingConflictsByPath = Dictionary(uniqueKeysWithValues: existingConflicts.map { ($0.path, $0) })
@@ -308,6 +335,12 @@ public actor SyncEngine {
             tasks: tasks,
             knownProjectSlugs: projects
         )
+        let relationshipResult = try relationshipSafeChanges(
+            candidates: safePendingChanges.filter { publishablePendingIDs?.contains($0.id) ?? true },
+            remote: parsed, localTasks: tasks,
+            selection: selection
+        )
+        safePendingChanges = relationshipResult.changes
 
         let conflicts = reconciledConflicts.sorted { $0.path < $1.path }
         let nextRevision: UInt64
@@ -330,7 +363,8 @@ public actor SyncEngine {
             baseRootTreeSHA: snapshot.rootTreeSHA,
             pendingChanges: remainingPending,
             conflicts: conflicts,
-            revision: nextRevision
+            revision: nextRevision,
+            relationshipBlocks: relationshipResult.blocks
         )
         let pulledCount = previousWorkspace.map {
             changedTaskCount(
@@ -347,6 +381,106 @@ public actor SyncEngine {
             confirmedPendingIDs: confirmedPendingIDs,
             pulledCount: pulledCount
         )
+    }
+
+    private func legacyParentTransitionBlocks(
+        workspace: WorkspaceState, pendingChanges: [PendingChange], conflicts: [SyncConflict]
+    ) throws -> [TaskRelationshipBlock] {
+        var result: [TaskRelationshipBlock] = []
+        let versions = pendingChanges.map { ($0.path, $0.content) } + conflicts.map { ($0.path, $0.localContent) }
+        var visited: Set<String> = []
+        for (path, content) in versions {
+            guard let content, visited.insert(path).inserted,
+                  let relativePath = storeRelativePath(path, storePath: workspace.selection.storePath),
+                  relativePath.hasPrefix(workspace.configuration.tasksDirectory + "/"),
+                  relativePath.hasSuffix(".md"),
+                  let filename = relativePath.split(separator: "/").last else { continue }
+            let id = try TaskID(rawValue: String(filename.dropLast(3)))
+            let task = try taskCodec.parseTask(id: id, relativePath: relativePath, text: content,
+                                               configuration: workspace.configuration)
+            if task.extraProperties.contains(where: { $0.name == "parent" }) {
+                result.append(TaskRelationshipBlock(
+                    path: path, code: "unsupported_schema",
+                    message: "Schema activation is blocked by pending legacy parent metadata. Safeguard and explicitly relocate that metadata before upgrading.",
+                    relatedTaskIDs: [id]
+                ))
+            }
+        }
+        return result.sorted { $0.path < $1.path }
+    }
+
+    private func relationshipSafeChanges(
+        candidates: [PendingChange], remote: ParsedSnapshot, localTasks: [TaskDocument],
+        selection: RepositorySelection
+    ) throws -> (changes: [PendingChange], blocks: [TaskRelationshipBlock]) {
+        let remoteTasks = remote.tasks.map(\.task)
+        let local = localTasks.map(\.task)
+        let allEdges = remoteTasks + local
+        var blocks = TaskHierarchy.blocks(tasks: remoteTasks, storePath: selection.storePath)
+        let localBlocks = TaskHierarchy.blocks(tasks: local, storePath: selection.storePath)
+        blocks.append(contentsOf: localBlocks)
+        var safe = candidates
+        var neighbors: [TaskID: Set<TaskID>] = [:]
+        for task in allEdges {
+            if let parent = task.parentID {
+                neighbors[task.id, default: []].insert(parent)
+                neighbors[parent, default: []].insert(task.id)
+            }
+        }
+
+        func withholding(_ issues: [TaskRelationshipBlock], from changes: [PendingChange]) -> [PendingChange] {
+            guard !issues.isEmpty else { return changes }
+            var reasons: [TaskID: TaskRelationshipBlock] = [:]
+            for issue in issues {
+                guard let seed = issue.relatedTaskIDs.first, reasons[seed] == nil else { continue }
+                var related: Set<TaskID> = [seed]
+                var stack = [seed]
+                while let id = stack.popLast() {
+                    for neighbor in neighbors[id] ?? [] where related.insert(neighbor).inserted {
+                        stack.append(neighbor)
+                    }
+                }
+                let reason = TaskRelationshipBlock(
+                    path: issue.path, code: issue.code, message: issue.message, relatedTaskIDs: related.sorted()
+                )
+                for id in related { reasons[id] = reason }
+            }
+            return changes.filter { change in
+                guard let relative = storeRelativePath(change.path, storePath: selection.storePath),
+                      relative.hasPrefix(remote.configuration.tasksDirectory + "/"), relative.hasSuffix(".md"),
+                      let filename = relative.split(separator: "/").last,
+                      let id = try? TaskID(rawValue: String(filename.dropLast(3))),
+                      let issue = reasons[id] else { return true }
+                blocks.append(TaskRelationshipBlock(
+                    path: change.path, code: issue.code,
+                    message: "Pending relationship component is withheld: \(issue.message)",
+                    relatedTaskIDs: issue.relatedTaskIDs
+                ))
+                return false
+            }
+        }
+
+        safe = withholding(localBlocks, from: safe)
+        while true {
+            var publish = Dictionary(uniqueKeysWithValues: remote.tasks.map { ($0.task.relativePath, $0) })
+            var projects = Set(remote.knownProjectSlugs)
+            for change in safe {
+                try overlayChange(
+                    content: change.content, fullPath: change.path, blobSHA: change.baseBlobSHA,
+                    selection: selection, configuration: remote.configuration,
+                    tasksByPath: &publish, knownProjectSlugs: &projects
+                )
+            }
+            let publishBlocks = TaskHierarchy.blocks(tasks: publish.values.map(\.task), storePath: selection.storePath)
+            blocks.append(contentsOf: publishBlocks)
+            let reduced = withholding(publishBlocks, from: safe)
+            if reduced.count == safe.count { break }
+            safe = reduced
+        }
+        var seen: Set<String> = []
+        blocks = blocks.filter { seen.insert($0.path + "\u{0}" + $0.code + "\u{0}" + $0.message).inserted }
+        blocks.sort { $0.path == $1.path ? $0.code < $1.code : $0.path < $1.path }
+        return (safe, blocks)
     }
 
     private func parse(snapshot: GitSnapshot, selection: RepositorySelection) throws -> ParsedSnapshot {

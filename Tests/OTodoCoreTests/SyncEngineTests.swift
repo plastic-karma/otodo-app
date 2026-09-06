@@ -644,3 +644,240 @@ private actor StatefulGitHub: GitHubServing {
     func branch() -> GitSnapshot { current }
     func calls() -> Calls { Calls(fetches: fetchLog, commits: commitLog, updates: updateLog) }
 }
+
+extension SyncEngineTests {
+    func testDifferentFileCycleWithholdsRelatedOutboxButPublishesIndependentWorkAndRepair() async throws {
+        let f = try SubtaskSyncFixture()
+        let initial = try await f.engine.initialPull(selection: f.selection)
+        let a = try f.pending(1, parent: 2, name: "Local A")
+        let c = try f.pending(3, name: "Independent")
+        try await f.install(initial, pending: [a, c])
+        await f.gitHub.replace(try f.snapshot(head: "remote", parents: [2: 1]))
+        let report = try await f.engine.sync(selection: f.selection)
+        XCTAssertEqual(report.pushedCount, 1)
+        XCTAssertTrue(report.conflicts.isEmpty)
+        let blocked = try await f.workspace()
+        XCTAssertEqual(blocked.pendingChanges, [a])
+        XCTAssertEqual(Set(blocked.relationshipBlocks.filter { $0.code == "parent_cycle" }.flatMap(\.relatedTaskIDs)),
+                       Set([try f.id(1), try f.id(2)]))
+        let branch = await f.gitHub.branch()
+        XCTAssertNil(try f.task(1, in: branch).parentID)
+        XCTAssertEqual(try f.task(2, in: branch).parentID, try f.id(1))
+        let task = try XCTUnwrap(blocked.tasks.first { $0.task.id == (try? f.id(1)) }?.task)
+        var update = TaskUpdate(task: task)
+        update.parentID = nil
+        _ = try await f.service.editTask(selection: f.selection, id: task.id, expectedTask: task, update: update)
+        let repaired = try await f.engine.sync(selection: f.selection)
+        XCTAssertEqual(repaired.pushedCount, 1)
+        let final = try await f.workspace()
+        XCTAssertTrue(final.pendingChanges.isEmpty)
+        XCTAssertTrue(final.relationshipBlocks.isEmpty)
+    }
+
+    func testWithheldParentCreationCannotPublishOrphanAndResolutionRecomputes() async throws {
+        let f = try SubtaskSyncFixture()
+        let initial = try await f.engine.initialPull(selection: f.selection)
+        let parent = try f.pending(4, name: "New parent", base: nil)
+        let child = try f.pending(1, parent: 4)
+        let safe = try f.pending(3, name: "Independent")
+        let conflict = try SyncConflict(path: parent.path, baseBlobSHA: nil, remoteBlobSHA: nil,
+                                        localContent: parent.content, remoteContent: nil)
+        try await f.install(initial, pending: [parent, child, safe], conflicts: [conflict])
+        _ = try await f.engine.sync(selection: f.selection)
+        let blocked = try await f.workspace()
+        XCTAssertEqual(blocked.pendingChanges, [parent, child])
+        XCTAssertEqual(blocked.conflicts, [conflict])
+        let parentID = try f.id(4)
+        XCTAssertTrue(blocked.relationshipBlocks.contains { $0.code == "missing_parent_reference" && $0.relatedTaskIDs.contains(parentID) })
+        let calls = await f.gitHub.calls()
+        XCTAssertEqual(calls.commits.flatMap(\.changes).map(\.path), [safe.path])
+        _ = try await f.service.keepLocalConflict(selection: f.selection, path: parent.path)
+        let report = try await f.engine.sync(selection: f.selection)
+        XCTAssertEqual(report.pushedCount, 2)
+        let branch = await f.gitHub.branch()
+        XCTAssertEqual(try f.task(1, in: branch).parentID, try f.id(4))
+        XCTAssertEqual(try f.task(4, in: branch).name, "New parent")
+        let final = try await f.workspace()
+        XCTAssertTrue(final.relationshipBlocks.isEmpty)
+    }
+
+    func testWithheldDetachCannotIntroducePublishCycle() async throws {
+        let f = try SubtaskSyncFixture(parents: [1: 2])
+        let initial = try await f.engine.initialPull(selection: f.selection)
+        let detach = try f.pending(1, name: "Detached locally")
+        let reparent = try f.pending(2, parent: 1)
+        let safe = try f.pending(3, name: "Independent")
+        try await f.install(initial, pending: [detach, reparent, safe])
+        await f.gitHub.replace(try f.snapshot(head: "remote", parents: [1: 2], names: [1: "Remote A"]))
+        _ = try await f.engine.sync(selection: f.selection)
+        let blocked = try await f.workspace()
+        XCTAssertEqual(blocked.pendingChanges, [detach, reparent])
+        XCTAssertEqual(blocked.conflicts.map(\.path), [detach.path])
+        XCTAssertTrue(TaskHierarchy(tasks: blocked.tasks.map(\.task)).issues.isEmpty)
+        XCTAssertTrue(blocked.relationshipBlocks.contains { $0.code == "parent_cycle" })
+        let calls = await f.gitHub.calls()
+        XCTAssertEqual(calls.commits.flatMap(\.changes).map(\.path), [safe.path])
+        _ = try await f.service.keepLocalConflict(selection: f.selection, path: detach.path)
+        _ = try await f.engine.sync(selection: f.selection)
+        let branch = await f.gitHub.branch()
+        XCTAssertNil(try f.task(1, in: branch).parentID)
+        XCTAssertEqual(try f.task(2, in: branch).parentID, try f.id(1))
+    }
+
+    func testRemoteOrphanIsVisibleWhileIndependentPendingWorkSyncs() async throws {
+        let f = try SubtaskSyncFixture(parents: [1: 99])
+        let initial = try await f.engine.initialPull(selection: f.selection)
+        XCTAssertEqual(initial.tasks.first?.task.parentID, try f.id(99))
+        XCTAssertTrue(initial.relationshipBlocks.contains { $0.code == "missing_parent_reference" })
+        let safe = try f.pending(3, name: "Independent")
+        try await f.install(initial, pending: [safe])
+        let report = try await f.engine.sync(selection: f.selection)
+        XCTAssertEqual(report.pushedCount, 1)
+        let durable = try await f.workspace()
+        XCTAssertEqual(durable.tasks.first?.task.parentID, try f.id(99))
+        XCTAssertTrue(durable.relationshipBlocks.contains { $0.code == "missing_parent_reference" })
+    }
+
+    func testCASRetryReevaluatesNewRemoteCycleRatherThanPublishingOldSafeSubset() async throws {
+        let f = try SubtaskSyncFixture()
+        let initial = try await f.engine.initialPull(selection: f.selection)
+        let pending = try f.pending(1, parent: 2)
+        try await f.install(initial, pending: [pending])
+        await f.gitHub.raceNextUpdate(to: try f.snapshot(head: "raced", parents: [2: 1]))
+        let report = try await f.engine.sync(selection: f.selection)
+        XCTAssertEqual(report.pushedCount, 0)
+        let calls = await f.gitHub.calls()
+        XCTAssertEqual(calls.commits.count, 1)
+        let durable = try await f.workspace()
+        XCTAssertEqual(durable.pendingChanges, [pending])
+        XCTAssertTrue(durable.relationshipBlocks.contains { $0.code == "parent_cycle" })
+        let branch = await f.gitHub.branch()
+        XCTAssertNil(try f.task(1, in: branch).parentID)
+    }
+
+    func testInflightCoalescedParentEditRetainsIdentityAndRebasesRawBytes() async throws {
+        let f = try SubtaskSyncFixture()
+        let initial = try await f.engine.initialPull(selection: f.selection)
+        let first = try f.pending(1, name: "First")
+        try await f.install(initial, pending: [first])
+        await f.gitHub.onNextCommit {
+            let current = try await f.workspace()
+            let task = try XCTUnwrap(current.tasks.first { $0.task.id == (try? f.id(1)) }?.task)
+            var update = TaskUpdate(task: task)
+            update.name = "Coalesced child"
+            update.parentID = try f.id(2)
+            _ = try await f.service.editTask(selection: f.selection, id: task.id, expectedTask: task, update: update)
+        }
+        _ = try await f.engine.sync(selection: f.selection)
+        let coalesced = try await f.workspace()
+        XCTAssertEqual(coalesced.pendingChanges.count, 1)
+        XCTAssertEqual(coalesced.pendingChanges[0].id, first.id)
+        XCTAssertEqual(coalesced.pendingChanges[0].createdAt, first.createdAt)
+        XCTAssertNotEqual(coalesced.pendingChanges[0].baseBlobSHA, first.baseBlobSHA)
+        XCTAssertTrue(try XCTUnwrap(coalesced.pendingChanges[0].content).contains("parent: \"\(try f.id(2).rawValue)\""))
+        _ = try await f.engine.sync(selection: f.selection)
+        let branch = await f.gitHub.branch()
+        XCTAssertEqual(try f.task(1, in: branch).parentID, try f.id(2))
+    }
+
+    func testSchemaTransitionRetainsPendingLegacyParentInsteadOfPromotingAndDowngradeFails() async throws {
+        let f = try SubtaskSyncFixture(schema: 1)
+        let initial = try await f.engine.initialPull(selection: f.selection)
+        let content = SubtaskSyncFixture.record(1, parent: 2, name: "Legacy metadata")
+        let pending = try PendingChange(id: UUID(), path: f.path(1), baseBlobSHA: "b1", content: content, createdAt: Date(timeIntervalSince1970: 100))
+        try await f.install(initial, pending: [pending])
+        await f.gitHub.replace(try f.snapshot(head: "upgraded", schema: 2))
+        _ = try await f.engine.sync(selection: f.selection)
+        let blocked = try await f.workspace()
+        XCTAssertEqual(blocked.configuration.schemaVersion, 1)
+        XCTAssertEqual(blocked.pendingChanges, [pending])
+        XCTAssertNil(blocked.tasks.first?.task.parentID)
+        XCTAssertNotNil(blocked.tasks.first?.task.extraProperties.first { $0.name == "parent" })
+        XCTAssertEqual(blocked.relationshipBlocks.map(\.code), ["unsupported_schema"])
+
+        let other = try SubtaskSyncFixture()
+        let before = try await other.engine.initialPull(selection: other.selection)
+        await other.gitHub.replace(try other.snapshot(head: "downgraded", schema: 1))
+        do {
+            _ = try await other.engine.sync(selection: other.selection)
+            XCTFail("Downgrade must fail closed")
+        } catch let OTodoError.validation(field, _) { XCTAssertEqual(field, "schema_version") }
+        let retained = try await other.workspace()
+        XCTAssertEqual(retained, before)
+    }
+}
+
+private struct SubtaskSyncFixture: Sendable {
+    let selection: RepositorySelection
+    let store: MemoryWorkspaceStore
+    let gitHub: StatefulGitHub
+    let engine: SyncEngine
+    let service: TaskWorkspaceService
+
+    init(parents: [Int: Int] = [:], schema: Int = 2) throws {
+        selection = try RepositorySelection(owner: "o", name: "subtasks", branch: "main", storePath: "")
+        store = MemoryWorkspaceStore()
+        gitHub = StatefulGitHub(try Self.makeSnapshot(head: "initial", parents: parents, names: [:], schema: schema))
+        engine = SyncEngine(gitHub: gitHub, persistence: store, configCodec: StrictStoreConfigCodec(), taskCodec: ObsidianTaskCodec())
+        service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+    }
+
+    func id(_ number: Int) throws -> TaskID { try TaskID(rawValue: String(format: "%026d", number)) }
+    func path(_ number: Int) -> String { "Tasks/" + String(format: "%026d", number) + ".md" }
+
+    static func record(_ number: Int, parent: Int? = nil, name: String? = nil) -> String {
+        let edge = parent.map { "parent: \"" + String(format: "%026d", $0) + "\"\n" } ?? ""
+        return "---\nname: \"\(name ?? "Task \(number)")\"\nstate: open\nprojects: []\ntags: []\n\(edge)---\nNotes \(number)\r\n"
+    }
+
+    func pending(_ number: Int, parent: Int? = nil, name: String? = nil, base: String? = "default") throws -> PendingChange {
+        try PendingChange(id: UUID(), path: path(number), baseBlobSHA: base == "default" ? "b\(number)" : base,
+                          content: Self.record(number, parent: parent, name: name), createdAt: Date(timeIntervalSince1970: 100))
+    }
+
+    func snapshot(head: String, parents: [Int: Int] = [:], names: [Int: String] = [:], schema: Int = 2) throws -> GitSnapshot {
+        try Self.makeSnapshot(head: head, parents: parents, names: names, schema: schema)
+    }
+
+    private static func makeSnapshot(head: String, parents: [Int: Int], names: [Int: String], schema: Int) throws -> GitSnapshot {
+        let config = Fixture.config.replacingOccurrences(of: "schema_version = 1", with: "schema_version = \(schema)")
+        var files = [
+            try RemoteFile(path: ".todo/config.toml", blobSHA: "config", content: config),
+        ]
+        for number in 1...3 {
+            files.append(try RemoteFile(path: "Tasks/" + String(format: "%026d", number) + ".md",
+                                        blobSHA: names[number] == nil && parents[number] == nil ? "b\(number)" : "\(head)-b\(number)",
+                                        content: record(number, parent: parents[number], name: names[number])))
+        }
+        return try GitSnapshot(headCommitSHA: head, rootTreeSHA: head + "-tree", files: files)
+    }
+
+    func install(_ base: WorkspaceState, pending: [PendingChange], conflicts: [SyncConflict] = []) async throws {
+        var tasks = Dictionary(uniqueKeysWithValues: base.tasks.map { ($0.task.relativePath, $0) })
+        for change in pending {
+            guard let content = change.content else { tasks.removeValue(forKey: change.path); continue }
+            let name = String(change.path.split(separator: "/").last!.dropLast(3))
+            let task = try ObsidianTaskCodec().parseTask(id: TaskID(rawValue: name), relativePath: change.path,
+                                                        text: content, configuration: base.configuration)
+            tasks[change.path] = TaskDocument(task: task, content: content, blobSHA: change.baseBlobSHA)
+        }
+        let workspace = try WorkspaceState(selection: selection, configuration: base.configuration,
+                                           knownProjectSlugs: base.knownProjectSlugs,
+                                           tasks: tasks.values.sorted { $0.task.id < $1.task.id },
+                                           baseHeadCommitSHA: base.baseHeadCommitSHA, baseRootTreeSHA: base.baseRootTreeSHA,
+                                           pendingChanges: pending, conflicts: conflicts, revision: base.revision + 1)
+        try await store.save(workspace, expectedRevision: base.revision)
+    }
+
+    func workspace() async throws -> WorkspaceState {
+        let value = await store.current()
+        return try XCTUnwrap(value)
+    }
+
+    func task(_ number: Int, in snapshot: GitSnapshot) throws -> TodoTask {
+        let file = try XCTUnwrap(snapshot.files.first { $0.path == path(number) })
+        let config = try XCTUnwrap(snapshot.files.first { $0.path == ".todo/config.toml" })
+        return try ObsidianTaskCodec().parseTask(id: id(number), relativePath: path(number), text: file.content,
+                                                configuration: StrictStoreConfigCodec().parseConfiguration(config.content))
+    }
+}

@@ -14,6 +14,8 @@ struct TaskListView: View {
     @State private var selectedFilterID = "today"
     @State private var isFilterLibraryPresented = false
     @State private var displayedTasks: [TodoTask] = []
+    @State private var displayedDepths: [TaskID: Int] = [:]
+    @State private var displayedTaskIDs: Set<TaskID> = []
     @State private var isFiltering = false
     @State private var filterError: String?
     @State private var selectedProject: String?
@@ -201,7 +203,9 @@ struct TaskListView: View {
                             draft: presentation.draft,
                             configuration: configuration,
                             projectChoices: model.projectChoices,
-                            tagChoices: model.tagChoices
+                            tagChoices: model.tagChoices,
+                            hierarchy: model.hierarchy,
+                            workspaceTasks: model.tasks
                         ) { value in
                             switch presentation {
                             case .create:
@@ -494,7 +498,17 @@ struct TaskListView: View {
         var draft = TaskEditorDraft(configuration: configuration)
         draft.projectSlugs = defaults.projectSlugs
         draft.tags = defaults.tags
-        editorPresentation = .create(draft)
+        editorPresentation = .create(draft, id: UUID())
+    }
+
+    private func presentSubtask(of task: TodoTask) {
+        guard let configuration = model.configuration else { return }
+        var draft = TaskEditorDraft(configuration: configuration)
+        let defaults = creationDefaults
+        draft.projectSlugs = defaults.projectSlugs
+        draft.tags = defaults.tags
+        draft.parentID = task.id
+        editorPresentation = .create(draft, id: UUID())
     }
 
     private func presentPendingNewTodoRequest() {
@@ -998,6 +1012,8 @@ struct TaskListView: View {
         filterError = nil
         displayedTasks = []
         agendaSections = []
+        displayedDepths = [:]
+        displayedTaskIDs = []
         guard let query = filterLibrary.query(for: input.filterID) else {
             isFiltering = false
             filterError = "This filter could not be loaded. Open Filters to review it."
@@ -1014,6 +1030,8 @@ struct TaskListView: View {
             }
             try Task.checkCancellation()
             displayedTasks = result.tasks
+            displayedDepths = result.depths
+            displayedTaskIDs = Set(result.tasks.map(\.id))
             agendaSections = result.sections
             selectedTaskIDs.formIntersection(result.tasks.map(\.id))
             isFiltering = false
@@ -1046,8 +1064,11 @@ struct TaskListView: View {
             return try query.matches(task, terminalStateIDs: terminalStates, dates: input.dates)
         }
         input.sortOrder.sort(&result, stateOrder: stateOrder)
+        let nestsMatches = !input.isUpcoming && input.filterID != "today" && input.filterID != "inbox"
+        let rows = nestsMatches ? TaskHierarchy(tasks: input.tasks).rows(matching: result) : []
         return TaskFilterResult(
-            tasks: result,
+            tasks: nestsMatches ? rows.map(\.task) : result,
+            depths: Dictionary(uniqueKeysWithValues: rows.map { ($0.task.id, $0.depth) }),
             sections: input.isUpcoming
                 ? TaskAgenda.sections(tasks: result, terminalStateIDs: terminalStates, dates: input.dates)
                 : []
@@ -1184,10 +1205,20 @@ struct TaskListView: View {
                     toggleCompletion(task)
                 }
             },
-            isSelected: isSelecting ? selectedTaskIDs.contains(task.id) : nil
+            isSelected: isSelecting ? selectedTaskIDs.contains(task.id) : nil,
+            ancestry: ancestryContext(for: task),
+            hierarchyDepth: displayedDepths[task.id] ?? 0
         )
+        .padding(.leading, CGFloat(min(displayedDepths[task.id] ?? 0, 8)) * 12)
         .contextMenu {
             if !isSelecting {
+                Button {
+                    presentSubtask(of: task)
+                } label: {
+                    Label("Add Subtask", systemImage: "arrow.turn.down.right")
+                }
+                .disabled(model.isBusy || model.configuration?.schemaVersion != 2)
+                .accessibilityIdentifier("task-context-add-subtask-\(task.id.rawValue)")
                 if canComplete {
                     Button {
                         toggleCompletion(task)
@@ -1251,6 +1282,14 @@ struct TaskListView: View {
                     )
                 }
                 Button {
+                    presentSubtask(of: task)
+                } label: {
+                    Label("Add Subtask", systemImage: "arrow.turn.down.right")
+                }
+                .tint(OTodoTheme.accent)
+                .disabled(model.isBusy || model.configuration?.schemaVersion != 2)
+                .accessibilityIdentifier("task-add-subtask-\(task.id.rawValue)")
+                Button {
                     reschedulePresentation = ReschedulePresentation(tasks: [task])
                 } label: {
                     Label(
@@ -1291,6 +1330,19 @@ struct TaskListView: View {
         .listRowSeparator(.visible)
         .listRowSeparatorTint(.primary.opacity(0.08))
         .listRowBackground(Color.clear)
+    }
+
+    private func ancestryContext(for task: TodoTask) -> String? {
+        guard let parentID = task.parentID else { return nil }
+        let hierarchy = model.hierarchy
+        guard hierarchy.task(for: parentID) != nil else {
+            return "Missing parent · \(parentID.rawValue)"
+        }
+        let names = hierarchy.ancestorIDs(of: task.id).map {
+            hierarchy.task(for: $0)?.name ?? $0.rawValue
+        }
+        let outsideFilter = !displayedTaskIDs.contains(parentID)
+        return "Parent: \(names.joined(separator: " › "))\(outsideFilter ? " · outside this filter" : "")"
     }
 
     private var completionState: WorkflowState? {
@@ -1353,17 +1405,18 @@ private struct TaskFilterInput: Equatable, Sendable {
 
 private struct TaskFilterResult: Sendable {
     let tasks: [TodoTask]
+    let depths: [TaskID: Int]
     let sections: [TaskAgendaSection]
 }
 
 private enum EditorPresentation: Identifiable {
-    case create(TaskEditorDraft)
+    case create(TaskEditorDraft, id: UUID)
     case edit(TodoTask)
 
     var id: String {
         switch self {
-        case .create:
-            return "create"
+        case let .create(_, id):
+            return "create-\(id)"
         case let .edit(task):
             return "edit-\(task.id.rawValue)"
         }
@@ -1371,7 +1424,7 @@ private enum EditorPresentation: Identifiable {
 
     var draft: TaskEditorDraft {
         switch self {
-        case let .create(draft):
+        case let .create(draft, _):
             return draft
         case let .edit(task):
             return TaskEditorDraft(task: task)

@@ -1,6 +1,6 @@
 # OTodo
 
-OTodo is an offline-first iOS client for an Obsidian Todo v1 store kept in a GitHub repository. It signs in through GitHub's OAuth Device Flow, discovers stores on a selected branch, and lets you create projects plus create, edit, complete, and delete todos without making a local Git checkout.
+OTodo is an offline-first iOS client for Obsidian Todo schema-1 and schema-2 stores kept in a GitHub repository. It signs in through GitHub's OAuth Device Flow, discovers stores on a selected branch, and lets you create projects plus create, edit, complete, and delete todos without making a local Git checkout.
 
 The workspace uses a compact typographic heading, a neutral canvas, quiet row dividers, and a floating quick-add control while retaining native iOS interactions and accessibility. It displays active todos due today or overdue by default, with filters for every active todo or all todos including terminal states. The Projects sidebar filters projects; project names become lowercase, hyphenated slugs and direct Markdown project records. By default, todos are ordered by due date and time, configured workflow-state order, name, and ULID. Swipe right on a todo to reveal Done and Reschedule; swipe left to reveal Delete. Touch and hold a todo and choose Reschedule to shift its due date with the calendar or a relative phrase while preserving every other field. The editor supports the name, state, projects, tags, due date with optional exact time, and Markdown body. New todos and the reschedule sheet calculate an exact due date and time from phrases such as `in 3 days`, `in 6 hours`, or `in 6 months`; supported units are minutes, hours, days, weeks, months, and years. GitHub tokens are stored in the device Keychain; repository workspaces and their pending changes are stored on the device.
 
@@ -10,7 +10,7 @@ Tap a todo's circle to complete it without opening the editor. Completed todos r
 
 Sidebar badges count only open todos across all dates, independent of the selected filter or project. **Inbox** counts todos without an assigned project, including undated work; its badge updates when a todo is created, organized, completed, reopened, or deleted. Configured terminal states are excluded from Inbox, individual project counts, and the **All Todos** count.
 
-Touch and hold a todo for **Done**, **Reschedule**, and **Delete**. Done is available only for open todos; Delete is available for both open and completed todos.
+Touch and hold a todo for **Done**, **Reschedule**, **Add Subtask**, and **Delete**. Done is available only for open todos; Delete is available for both open and completed todos but refuses tasks that still have children.
 
 Update and sync information stays pinned beside **+** at the bottom of the workspace. Todo scrolling does not move it, and the list reserves space so the final todo remains reachable without overlapping the status or quick-add controls.
 
@@ -19,7 +19,7 @@ Tap **+** to add a todo. Touch and hold **+** to choose **New Todo**, **Bulk Add
 
 **Bulk Add** accepts one todo per nonblank line. Due dates come only from phrases in each name; the detected phrase is removed on save. The entire batch is validated and saved together on the device, so an invalid line cannot leave a partially created batch.
 
-In the **New Todo** editor, **Save & Create Another** saves without closing, confirms the save, and returns focus to a fresh name. It keeps the selected state, projects, and tags, but clears notes, recurrence, and all date/time inputs. Normal **Save** still saves and closes; editing an existing todo does not offer repeated creation.
+In the **New Todo** editor, **Save & Create Another** saves without closing, confirms the save, and returns focus to a fresh name. It keeps the selected parent, state, projects, and tags, but clears notes, recurrence, and all date/time inputs. Normal **Save** still saves and closes; editing an existing todo does not offer repeated creation.
 
 Add OTodo's **Today** widget to the Home Screen to see active todos due today or overdue without opening the app. The widget refreshes when OTodo's tasks change and at the next local day boundary.
 
@@ -31,13 +31,52 @@ Due reminders are opt-in from the Projects sidebar. When enabled, active dated t
 
 Open **Changelog** from the sidebar to review product features and visible improvements, newest first. Each entry shows its commit's exact UTC timestamp. The history is bundled with the app and available offline; CI and repository-maintenance changes are excluded.
 
+## Subtasks
+
+Schema-2 stores support one optional parent per task at arbitrary depth. Choose
+**Add Subtask** on a task, or use the editor's **Parent** picker to attach,
+reparent, or choose **No Parent** to detach. Search covers the complete cached
+workspace, including terminal tasks and tasks outside the current filter.
+Candidates show their full IDs; the current task and its descendants are excluded.
+
+Subtasks inherit no metadata from their parent. Every state, project, tag, due
+date/time, recurrence rule, reminder, and Today/Watch/widget eligibility remains
+record-local. Completing or finishing a parent's series leaves its children
+unchanged. Deleting any task with direct children is refused, including terminal
+children; explicitly detach, reparent, or delete those children first.
+
+All, Active, and custom task lists indent matching relatives without inserting
+filtered-out ancestors. Ancestry labels retain context outside the filter.
+Today, Upcoming, and Inbox keep their date ordering and independent eligibility,
+so a matching child remains visible even when its parent is not.
+
+**Save & Create Another** keeps the chosen parent for sibling creation. A fresh
+global **+** or Home Screen **New Todo** request starts a root draft; Share,
+Shortcuts/App Intent, and Bulk Add remain root-only. Existing filter-derived
+project/tag defaults still apply.
+
+The pinned **Relationships** review shows missing parents, cycles, and durable
+relationship blocks across the whole workspace, independently of the active
+filter and same-file conflicts. Open a task there to repair its parent. Sync
+checks both the complete local/remote overlay and the actual subset it can
+publish, withholding unsafe related changes while allowing unrelated safe work
+to sync. Repairs are reevaluated on subsequent synchronization.
+
+Schema-1 stores stay flat and editable; the picker explains that an explicit
+CLI upgrade is required. First reconcile and safeguard pending work and stop
+all writers/sync, then run `otodo --root <store> upgrade --to 2 --dry-run` followed
+by `otodo --root <store> upgrade --to 2`. Any legacy top-level `parent` property
+blocks activation until deliberately relocated or removed. Sync the upgraded
+metadata before restarting updated clients. OTodo never upgrades the Git store
+automatically.
+
 ## Inbox and system capture
 
 **Inbox** is a first-class view of active todos with no assigned projects, including undated work. Open it from the Home filters or the sidebar. It is not an Inbox project or tag. Assign a project or complete a todo to remove it from Inbox; use the existing editor to organize projects, tags, and dates.
 
 Choose **OTodo** in the iOS Share sheet to capture text or a URL. Review the proposed title and Markdown context, then **Save**. Safari capture preserves the webpage title, link, and selected text. In Shortcuts, use OTodo's **Add Todo** action with supplied **Todo** text and an optional **Source URL**. Siri's “Add a todo in OTodo” phrase prompts for the text rather than opening an empty editor.
 
-System captures start without a project or deadline. After connecting a workspace, they save directly to the normal local workspace and outbox, including offline; OTodo reloads external captures and synchronizes through its normal path when activated. No separate capture database or direct GitHub writes are used.
+System captures start without a parent, project, or deadline. After connecting a workspace, they save directly to the normal local workspace and outbox, including offline; OTodo reloads external captures and synchronizes through its normal path when activated. No separate capture database or direct GitHub writes are used.
 
 Open OTodo once after upgrading an existing installation. The app atomically moves its complete private workspace directory, including pending changes, saved filters, and repository selection, into the shared App Group before opening stores. Migration errors are shown instead of silently starting an empty workspace. App and extension saves coordinate revision checks with a cross-process lock.
 
@@ -60,7 +99,7 @@ Sections never duplicate a task and exclude configured terminal states. They are
 
 Tap **Select**, choose several rows (or **Select all** for the current scope), then **Reschedule**. The shared calendar and relative-date controls support a weekly review without opening each todo. Bulk edits initially keep every date and time; explicitly set or remove either field. A date-only edit keeps each todo's own time. Relative days/weeks/months/years change dates, while minutes/hours set both date and time. Removing dates also removes times; recurring todos still require dates.
 
-The entire batch is validated and saved atomically to the normal durable outbox, including offline. Names, states, projects, tags, notes, recurrence metadata, and custom front matter are preserved. A stale/conflicted task or invalid schedule prevents the whole batch from saving. No external calendar or generated recurring occurrences are involved.
+The entire batch is validated and saved atomically to the normal durable outbox, including offline. Names, states, parents, projects, tags, notes, recurrence metadata, and custom front matter are preserved. A stale/conflicted task or invalid schedule prevents the whole batch from saving. No external calendar or generated recurring occurrences are involved.
 
 ## Recurring todos
 
@@ -68,7 +107,7 @@ In the todo editor, choose **Repeat → Daily, Weekly, Monthly, or Yearly**, ent
 
 **Count from → Scheduled date** retains the scheduled cadence and skips missed occurrences. **Completion date** starts from the day you complete the occurrence. Calendar dates that do not exist are skipped rather than shortened: a monthly January 31 occurrence advances to March 31, and a February 29 yearly occurrence waits for a leap year.
 
-Tap the circle or choose **Done** to complete the current occurrence. OTodo advances the same task record, keeps its exact due time, notes, projects, tags, and custom front matter, records the completion date, and returns it to the configured default state. The next date is strictly after the completion day (and after the current due date when counting from schedule). The change is durable offline and uses the normal coalesced outbox; reminders, Today widgets, and Watch snapshots then reflect the next due date.
+Tap the circle or choose **Done** to complete the current occurrence. OTodo advances the same task record, keeps its parent, exact due time, notes, projects, tags, and custom front matter, records the completion date, and returns it to the configured default state. The next date is strictly after the completion day (and after the current due date when counting from schedule). The change is durable offline and uses the normal coalesced outbox; reminders, Today widgets, and Watch snapshots then reflect the next due date.
 
 Touch and hold an open recurring todo and choose **Finish series**, or select a terminal State in the editor, to end the series without scheduling another occurrence. Reopening restores the existing date and rule. **Repeat → None** removes the rule, anchor, and completion history and makes it a one-off todo. Invalid rules, dates outside the supported calendar, stale edits, or unresolved conflicts leave the saved task unchanged.
 
@@ -130,14 +169,14 @@ CI builds both Watch targets and exercises live delivery and offline relaunch on
 
 The application scheme is `OTodo`, the generated project is `OTodo.xcodeproj`, and the application bundle identifier is `plastickarma.otodo`.
 
-## Obsidian Todo v1 compatibility
+## Obsidian Todo compatibility
 
-OTodo intentionally supports store schema version **1 only**. A store is a repository root or subdirectory containing `.todo/config.toml`. OTodo discovers these files; it does not create a repository or initialize a store.
+OTodo explicitly supports store schema versions **1 and 2** and rejects other versions. A store is a repository root or subdirectory containing `.todo/config.toml`. OTodo discovers these files; it does not create a repository, initialize a store, or automatically upgrade one.
 
 A minimal compatible configuration is:
 
 ```toml
-schema_version = 1
+schema_version = 2
 tasks_directory = "Tasks"
 projects_directory = "Projects"
 obsidian_link_prefix = ""
@@ -158,7 +197,7 @@ The configuration is strict: all five top-level keys are required, only `[[state
 
 Project records are direct Markdown children of `projects_directory`; the filename without `.md` is the project slug. A task may reference only an existing project. Nested project records are not supported.
 
-Task identity belongs in the filename, not frontmatter. OTodo creates files as `<tasks_directory>/<26-character-uppercase-ULID>.md`. A v1 task has YAML frontmatter followed by an arbitrary Markdown body:
+Task identity belongs in the filename, not frontmatter. OTodo creates files as `<tasks_directory>/<26-character-uppercase-ULID>.md`. A root task in either supported version has YAML frontmatter followed by an arbitrary Markdown body:
 
 ```markdown
 ---
@@ -178,13 +217,14 @@ The exact record contract is:
 
 - Required: nonempty single-line `name`, configured `state`, `projects` list, and `tags` list.
 - Optional: `due_date` and `last_completed_date` as real `YYYY-MM-DD` civil dates; `due_time` as a 24-hour `HH:mm` value that requires `due_date`; `recurrence`; and `recurrence_from`, which is `schedule` or `completion`.
+- Schema 2 optionally recognizes `parent` as a full same-store ULID, emitted quoted and uppercase immediately after `tags`. A missing property means root; null, empty, nonstring, prefix, path, and wikilink values are rejected. Parent identity follows the recursive task filename, not its path. Self-links, cycles, missing targets, and duplicate identities require repair. Schema 1 preserves any safely representable `parent` value as unknown metadata instead.
 - Project slugs match `[a-z0-9][a-z0-9-]*` and are unique per task. Project links must be `[[<obsidian_link_prefix>/<projects_directory>/<slug>]]`, with the empty prefix omitting that first component.
 - Tags must be unique, nonempty strings without whitespace, control characters, commas, brackets, or braces, and cannot begin with `#`.
 - `id` frontmatter is rejected. Other frontmatter properties and the Markdown body are preserved when OTodo edits a task. Core fields are emitted canonically.
 - Recurrence supports `FREQ=DAILY|WEEKLY|MONTHLY|YEARLY`, positive `INTERVAL`, non-ordinal `BYDAY` for weekly rules, `BYMONTHDAY=1..31` for monthly/yearly rules, and `BYMONTH=1..12` for yearly rules. A recurring task requires both `due_date` and `recurrence_from`, and its due date must match its selection clauses. The editor supports these fields; occurrence completion advances the same record and updates `last_completed_date`.
 - The configuration limit is 1 MiB; each selected task/project record is limited to 8 MiB; at most 10,000 selected files and 64 MiB of decoded selected content are loaded.
 
-`Sources/OTodoCore/Resources/schema.json` is the bundled structural schema. Runtime validation additionally enforces the configuration, paths, project existence, dates, times, recurrence subset, and filename identity described above.
+`Sources/OTodoCore/Resources/schema.json` and `schema-v2.json` are the version-selected bundled structural schemas, retaining the app's existing due-time extension. Runtime validation additionally enforces configuration, paths, project existence, dates, times, recurrence, filename identity, and schema-2 relationships. These independent bundled assets are not compared for equality with a Rust-generated deployed schema.
 
 ## Offline, outbox, and conflict behavior
 
@@ -196,6 +236,8 @@ The first connection to a store requires GitHub access so OTodo can validate and
 4. Sync first pulls the current branch snapshot, applies unrelated remote changes, and sends safe pending paths together in one `Sync OTodo changes` commit. The branch ref is updated with compare-and-swap semantics; OTodo never force-pushes.
 5. If GitHub and this device changed the same path from the same base, OTodo preserves the local version—including a local deletion—and durable outbox entry, records a conflict, and does not push that path. Unrelated safe paths can still synchronize.
 6. **Keep My Version** rebases and queues the device's content or deletion to replace GitHub on the next sync. **Use GitHub Version** discards the device's pending version and adopts GitHub's file; if GitHub deleted it, the local task is removed. Resolution is explicit and cannot be undone in the app.
+7. Parent relationships are checked again against the actual publishable subset, not merely the visible local overlay. Related unsafe paths stay pending with durable **Relationships** diagnostics until repaired; same-file conflict actions remain separate.
+8. Local cache envelope 2 imports envelope-1 workspaces through the normal load and revision-check paths, preserving raw records, pending changes/deletions, conflict evidence, base SHAs, and revisions. This cache migration does not activate schema 2 in the remote store.
 
 Losing connectivity, a failed API request, or expired authorization does not discard saved todos or pending changes. Reauthorize to resume synchronization.
 

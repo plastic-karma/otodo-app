@@ -10,6 +10,8 @@ struct TaskRowView: View {
     let onOpen: () -> Void
     let onToggleCompletion: () -> Void
     var isSelected: Bool? = nil
+    var ancestry: String? = nil
+    var hierarchyDepth: Int = 0
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -53,6 +55,12 @@ struct TaskRowView: View {
                             .foregroundStyle(.secondary)
                     }
 
+                    if let ancestry {
+                        Label(ancestry, systemImage: "arrow.turn.down.right")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
                     if task.recurrence != nil {
                         Label(
                             workflowState?.isTerminal == true ? "Series finished" : "Repeats",
@@ -207,6 +215,8 @@ struct TaskRowView: View {
 
     private var accessibilityDescription: String {
         var values = [task.name, "State: \(workflowState?.name ?? task.state)"]
+        if let ancestry { values.append(ancestry) }
+        if hierarchyDepth > 0 { values.append("Hierarchy level \(hierarchyDepth)") }
         if workflowState?.isTerminal == true {
             values.append("Terminal state")
         }

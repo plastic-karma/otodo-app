@@ -10,6 +10,7 @@ public struct TaskUpdate: Sendable, Equatable {
     public var recurrence: String?
     public var recurrenceFrom: RecurrenceFrom?
     public var body: String
+    public var parentID: TaskID?
 
     public init(
         name: String,
@@ -20,7 +21,8 @@ public struct TaskUpdate: Sendable, Equatable {
         dueTime: CivilTime? = nil,
         recurrence: String?,
         recurrenceFrom: RecurrenceFrom?,
-        body: String
+        body: String,
+        parentID: TaskID? = nil
     ) {
         self.name = name
         self.state = state
@@ -31,6 +33,7 @@ public struct TaskUpdate: Sendable, Equatable {
         self.recurrence = recurrence
         self.recurrenceFrom = recurrenceFrom
         self.body = body
+        self.parentID = parentID
     }
 
     public init(task: TodoTask) {
@@ -43,7 +46,8 @@ public struct TaskUpdate: Sendable, Equatable {
             dueTime: task.dueTime,
             recurrence: task.recurrence,
             recurrenceFrom: task.recurrenceFrom,
-            body: task.body
+            body: task.body,
+            parentID: task.parentID
         )
     }
 }
@@ -58,6 +62,20 @@ public enum TaskDueTimeChange: Sendable, Equatable {
     case preserve
     case set(CivilTime)
     case clear
+}
+
+public enum TaskParentChange: Sendable, Equatable {
+    case preserve
+    case set(TaskID)
+    case clear
+
+    func applying(to parentID: TaskID?) -> TaskID? {
+        switch self {
+        case .preserve: parentID
+        case let .set(id): id
+        case .clear: nil
+        }
+    }
 }
 
 public enum WorkspaceConflictResolution: Sendable, Equatable {
@@ -237,7 +255,8 @@ public actor TaskWorkspaceService {
         recurrence: String? = nil,
         recurrenceFrom: RecurrenceFrom? = nil,
         lastCompletedDate: CivilDate? = nil,
-        body: String = ""
+        body: String = "",
+        parentID: TaskID? = nil
     ) async throws -> TodoTask {
         let workspace = try await requireWorkspace(selection: selection)
         let selectedState = state ?? workspace.configuration.defaultState
@@ -265,8 +284,10 @@ public actor TaskWorkspaceService {
                     name: "base",
                     value: .string(workspace.configuration.todosBaseLink)
                 ),
-            ]
+            ],
+            parentID: parentID
         )
+        try Self.validateParentChange(task, replacing: nil, in: workspace)
         let document = try canonicalDocument(
             for: task,
             configuration: workspace.configuration,
@@ -497,8 +518,10 @@ public actor TaskWorkspaceService {
             recurrenceFrom: update.recurrenceFrom,
             lastCompletedDate: lastCompletedDate,
             body: update.body,
-            extraProperties: original.task.extraProperties
+            extraProperties: original.task.extraProperties,
+            parentID: update.parentID
         )
+        try Self.validateParentChange(editedTask, replacing: original.task, in: workspace)
         let document = try canonicalDocument(
             for: editedTask,
             configuration: workspace.configuration,
@@ -600,7 +623,8 @@ public actor TaskWorkspaceService {
                 recurrenceFrom: original.task.recurrenceFrom,
                 lastCompletedDate: original.task.lastCompletedDate,
                 body: original.task.body,
-                extraProperties: original.task.extraProperties
+                extraProperties: original.task.extraProperties,
+                parentID: original.task.parentID
             )
             let document = try canonicalDocument(
                 for: task,
@@ -641,23 +665,31 @@ public actor TaskWorkspaceService {
         dueTime: CivilTime? = nil,
         recurrence: String?,
         recurrenceFrom: RecurrenceFrom?,
-        body: String
+        body: String,
+        parent: TaskParentChange = .preserve
     ) async throws -> TodoTask {
-        try await editTask(
-            selection: selection,
-            id: id,
-            expectedTask: expectedTask,
-            update: TaskUpdate(
-                name: name,
-                state: state,
-                projectSlugs: projectSlugs,
-                tags: tags,
-                dueDate: dueDate,
-                dueTime: dueTime,
-                recurrence: recurrence,
-                recurrenceFrom: recurrenceFrom,
-                body: body
-            )
+        let workspace = try await requireWorkspace(selection: selection)
+        if parent != .preserve {
+            guard workspace.configuration.schemaVersion == 2 else {
+                throw OTodoError.unsupportedSchema(found: workspace.configuration.schemaVersion, supported: 2)
+            }
+        }
+        let taskIndex = try Self.editableTaskIndex(id: id, expectedTask: expectedTask, in: workspace)
+        let update = TaskUpdate(
+            name: name,
+            state: state,
+            projectSlugs: projectSlugs,
+            tags: tags,
+            dueDate: dueDate,
+            dueTime: dueTime,
+            recurrence: recurrence,
+            recurrenceFrom: recurrenceFrom,
+            body: body,
+            parentID: parent.applying(to: expectedTask.parentID)
+        )
+        return try await persistTaskUpdate(
+            update, lastCompletedDate: update.recurrence == nil ? nil : expectedTask.lastCompletedDate,
+            taskIndex: taskIndex, in: workspace
         )
     }
 
@@ -676,6 +708,14 @@ public actor TaskWorkspaceService {
             )
         }
 
+        let children = workspace.tasks.filter { $0.task.parentID == id }.map(\.task.id).sorted()
+        guard children.isEmpty else {
+            throw OTodoError.validation(
+                field: "parent",
+                message: "task_in_use: Detach, reparent, or delete direct children first: " +
+                    children.map(\.rawValue).joined(separator: ", ")
+            )
+        }
         let original = workspace.tasks[taskIndex]
         let repositoryPath = Self.repositoryPath(
             selection: workspace.selection,
@@ -729,8 +769,9 @@ public actor TaskWorkspaceService {
         case .keepLocal:
             if let localContent = conflict.localContent {
                 let id = try Self.taskIDFromBasename(for: relativePath)
-                let destinationRelativePath =
-                    "\(workspace.configuration.tasksDirectory)/\(id.rawValue).md"
+                let destinationRelativePath = try Self.taskIDForCurrentLayout(
+                    relativePath, configuration: workspace.configuration
+                ) != nil ? relativePath : "\(workspace.configuration.tasksDirectory)/\(id.rawValue).md"
                 let destinationPath = Self.repositoryPath(
                     selection: workspace.selection,
                     storeRelativePath: destinationRelativePath
@@ -974,6 +1015,28 @@ public actor TaskWorkspaceService {
         }
     }
 
+    private static func validateParentChange(
+        _ task: TodoTask,
+        replacing original: TodoTask?,
+        in workspace: WorkspaceState
+    ) throws {
+        guard task.parentID != original?.parentID else { return }
+        guard workspace.configuration.schemaVersion == 2 else {
+            throw OTodoError.unsupportedSchema(found: workspace.configuration.schemaVersion, supported: 2)
+        }
+        // Detach always repairs its own edge, regardless of unrelated imported faults.
+        guard let parent = task.parentID else { return }
+        guard workspace.tasks.contains(where: { $0.task.id == parent }) else {
+            throw OTodoError.notFound(resource: "parent task \(parent.rawValue)")
+        }
+        let effective = workspace.tasks.map(\.task).filter { $0.id != task.id } + [task]
+        let hierarchy = TaskHierarchy(tasks: effective)
+        let ancestry = Set(hierarchy.ancestorIDs(of: task.id) + [task.id])
+        if let issue = hierarchy.issues.first(where: { ancestry.contains($0.taskID) }) {
+            throw OTodoError.validation(field: "parent", message: "\(issue.code): \(issue.message)")
+        }
+    }
+
     private static func validate(
         state: String,
         projects: [String],
@@ -1011,8 +1074,41 @@ public actor TaskWorkspaceService {
             baseRootTreeSHA: workspace.baseRootTreeSHA,
             pendingChanges: pendingChanges,
             conflicts: conflicts,
-            revision: workspace.revision + 1
+            revision: workspace.revision + 1,
+            relationshipBlocks: try relationshipBlocks(tasks: tasks, conflicts: conflicts, in: workspace)
         )
+    }
+
+    private static func relationshipBlocks(
+        tasks: [TaskDocument], conflicts: [SyncConflict], in workspace: WorkspaceState
+    ) throws -> [TaskRelationshipBlock] {
+        guard workspace.configuration.schemaVersion == 2 else {
+            return workspace.relationshipBlocks.filter { $0.code == "unsupported_schema" }
+        }
+        var publish = Dictionary(uniqueKeysWithValues: tasks.map { ($0.task.relativePath, $0.task) })
+        for conflict in conflicts {
+            let relative = try storeRelativePath(for: conflict.path, selection: workspace.selection)
+            guard let id = try taskIDForCurrentLayout(relative, configuration: workspace.configuration) else { continue }
+            if let remote = conflict.remoteContent {
+                publish[relative] = try ObsidianTaskCodec().parseTask(
+                    id: id, relativePath: relative, text: remote, configuration: workspace.configuration
+                )
+            } else {
+                publish.removeValue(forKey: relative)
+            }
+        }
+        let local = tasks.map(\.task)
+        let allEdges = local + Array(publish.values)
+        var blocks = TaskHierarchy.blocks(tasks: local, storePath: workspace.selection.storePath)
+        for block in TaskHierarchy.blocks(tasks: Array(publish.values), storePath: workspace.selection.storePath) {
+            let related = TaskHierarchy.connectedIDs(to: Set(block.relatedTaskIDs), tasks: allEdges)
+            blocks.append(TaskRelationshipBlock(
+                path: block.path, code: block.code, message: block.message, relatedTaskIDs: related.sorted()
+            ))
+        }
+        var seen: Set<String> = []
+        return blocks.filter { seen.insert($0.path + "\u{0}" + $0.code).inserted }
+            .sorted { $0.path == $1.path ? $0.code < $1.code : $0.path < $1.path }
     }
 
     private static func repositoryPath(
@@ -1065,14 +1161,9 @@ public actor TaskWorkspaceService {
         guard relativePath.hasPrefix(prefix) else {
             return nil
         }
-        let filename = String(relativePath.dropFirst(prefix.count))
-        guard !filename.contains("/"), filename.hasSuffix(".md") else {
-            return nil
-        }
+        guard relativePath.hasSuffix(".md"),
+              let filename = relativePath.split(separator: "/").last else { return nil }
         let id = try TaskID(rawValue: String(filename.dropLast(3)))
-        guard filename == "\(id.rawValue).md" else {
-            return nil
-        }
         return id
     }
 

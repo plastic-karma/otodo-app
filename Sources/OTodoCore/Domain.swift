@@ -172,7 +172,8 @@ public struct WorkflowState: Sendable, Codable, Equatable {
 }
 
 public struct StoreConfiguration: Sendable, Codable, Equatable {
-    public static let supportedSchemaVersion = 1
+    public static let supportedSchemaVersion = 2
+    public static let supportedSchemaVersions: Set<Int> = [1, 2]
 
     public let schemaVersion: Int
     public let tasksDirectory: String
@@ -189,7 +190,7 @@ public struct StoreConfiguration: Sendable, Codable, Equatable {
         defaultState: String,
         states: [WorkflowState]
     ) throws {
-        guard schemaVersion == Self.supportedSchemaVersion else {
+        guard Self.supportedSchemaVersions.contains(schemaVersion) else {
             throw OTodoError.unsupportedSchema(found: schemaVersion, supported: Self.supportedSchemaVersion)
         }
         try DomainValidation.validateManagedDirectory(tasksDirectory, field: "tasksDirectory")
@@ -298,6 +299,7 @@ public struct TodoTask: Sendable, Codable, Equatable {
     public var lastCompletedDate: CivilDate?
     public var body: String
     public var extraProperties: [YAMLProperty]
+    public var parentID: TaskID?
 
     public init(
         id: TaskID,
@@ -312,7 +314,8 @@ public struct TodoTask: Sendable, Codable, Equatable {
         recurrenceFrom: RecurrenceFrom?,
         lastCompletedDate: CivilDate?,
         body: String,
-        extraProperties: [YAMLProperty]
+        extraProperties: [YAMLProperty],
+        parentID: TaskID? = nil
     ) throws {
         try DomainValidation.validateRelativePath(relativePath, field: "relativePath")
         guard relativePath.hasSuffix(".md"),
@@ -345,6 +348,9 @@ public struct TodoTask: Sendable, Codable, Equatable {
             lastCompletedDate: lastCompletedDate
         )
         try DomainValidation.validateExtraProperties(extraProperties)
+        guard parentID == nil || !extraProperties.contains(where: { $0.name == "parent" }) else {
+            throw OTodoError.validation(field: "parent", message: "Typed parent and extra parent metadata cannot coexist")
+        }
 
         self.id = id
         self.relativePath = relativePath
@@ -359,11 +365,12 @@ public struct TodoTask: Sendable, Codable, Equatable {
         self.lastCompletedDate = lastCompletedDate
         self.body = body
         self.extraProperties = extraProperties
+        self.parentID = parentID
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, relativePath, name, state, projectSlugs, tags, dueDate, dueTime, recurrence
-        case recurrenceFrom, lastCompletedDate, body, extraProperties
+        case recurrenceFrom, lastCompletedDate, body, extraProperties, parentID
     }
 
     public init(from decoder: any Decoder) throws {
@@ -381,7 +388,8 @@ public struct TodoTask: Sendable, Codable, Equatable {
             recurrenceFrom: container.decodeIfPresent(RecurrenceFrom.self, forKey: .recurrenceFrom),
             lastCompletedDate: container.decodeIfPresent(CivilDate.self, forKey: .lastCompletedDate),
             body: container.decode(String.self, forKey: .body),
-            extraProperties: container.decode([YAMLProperty].self, forKey: .extraProperties)
+            extraProperties: container.decode([YAMLProperty].self, forKey: .extraProperties),
+            parentID: container.decodeIfPresent(TaskID.self, forKey: .parentID)
         )
     }
 }
@@ -659,6 +667,7 @@ public struct WorkspaceState: Sendable, Codable, Equatable {
     public let pendingChanges: [PendingChange]
     public let conflicts: [SyncConflict]
     public let revision: UInt64
+    public let relationshipBlocks: [TaskRelationshipBlock]
 
     public init(
         selection: RepositorySelection,
@@ -669,7 +678,8 @@ public struct WorkspaceState: Sendable, Codable, Equatable {
         baseRootTreeSHA: String,
         pendingChanges: [PendingChange],
         conflicts: [SyncConflict],
-        revision: UInt64 = 0
+        revision: UInt64 = 0,
+        relationshipBlocks: [TaskRelationshipBlock] = []
     ) throws {
         guard !baseHeadCommitSHA.isEmpty, !baseRootTreeSHA.isEmpty else {
             throw OTodoError.validation(field: "workspace", message: "Base commit and tree SHAs are required")
@@ -702,11 +712,12 @@ public struct WorkspaceState: Sendable, Codable, Equatable {
         self.pendingChanges = pendingChanges
         self.conflicts = conflicts
         self.revision = revision
+        self.relationshipBlocks = relationshipBlocks
     }
 
     private enum CodingKeys: String, CodingKey {
         case selection, configuration, tasks, knownProjectSlugs, baseHeadCommitSHA, baseRootTreeSHA
-        case pendingChanges, conflicts, revision
+        case pendingChanges, conflicts, revision, relationshipBlocks
     }
 
     public init(from decoder: any Decoder) throws {
@@ -723,7 +734,8 @@ public struct WorkspaceState: Sendable, Codable, Equatable {
             baseRootTreeSHA: container.decode(String.self, forKey: .baseRootTreeSHA),
             pendingChanges: container.decode([PendingChange].self, forKey: .pendingChanges),
             conflicts: container.decode([SyncConflict].self, forKey: .conflicts),
-            revision: container.decodeIfPresent(UInt64.self, forKey: .revision) ?? 0
+            revision: container.decodeIfPresent(UInt64.self, forKey: .revision) ?? 0,
+            relationshipBlocks: container.decodeIfPresent([TaskRelationshipBlock].self, forKey: .relationshipBlocks) ?? []
         )
     }
 }

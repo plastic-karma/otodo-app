@@ -32,7 +32,7 @@ public struct ObsidianTaskCodec: TaskRecordCoding, Sendable {
         var values: [String: YAMLValue] = [:]
         var extras: [YAMLProperty] = []
         for property in properties {
-            if Self.coreKeys.contains(property.name) {
+            if Self.coreKeys.contains(property.name) || (configuration.schemaVersion == 2 && property.name == "parent") {
                 values[property.name] = property.value
             } else {
                 extras.append(property)
@@ -43,6 +43,15 @@ public struct ObsidianTaskCodec: TaskRecordCoding, Sendable {
         let state = try Self.requiredString(values, key: "state")
         let projectLinks = try Self.requiredStringList(values, key: "projects")
         let tags = try Self.requiredStringList(values, key: "tags")
+        let parentID: TaskID?
+        if let value = values["parent"] {
+            guard case let .string(raw) = value, let id = try? TaskID(rawValue: raw) else {
+                throw OTodoError.validation(field: "parent", message: "invalid_parent_id: Expected a full ULID string")
+            }
+            parentID = id
+        } else {
+            parentID = nil
+        }
         let dueDate = try Self.optionalDate(values, key: "due_date")
         let dueTime = try Self.optionalTime(values, key: "due_time")
         let recurrenceSource = try Self.optionalString(values, key: "recurrence")
@@ -88,7 +97,8 @@ public struct ObsidianTaskCodec: TaskRecordCoding, Sendable {
             recurrenceFrom: recurrenceFrom,
             lastCompletedDate: lastCompletedDate,
             body: document.body,
-            extraProperties: extras
+            extraProperties: extras,
+            parentID: parentID
         )
     }
 
@@ -96,6 +106,9 @@ public struct ObsidianTaskCodec: TaskRecordCoding, Sendable {
         _ task: TodoTask,
         configuration: StoreConfiguration
     ) throws -> String {
+        if configuration.schemaVersion == 1, task.parentID != nil {
+            throw OTodoError.unsupportedSchema(found: 1, supported: 2)
+        }
         guard configuration.states.contains(where: { $0.id == task.state }) else {
             throw OTodoError.validation(field: "state", message: "Task state is not configured")
         }
@@ -120,9 +133,11 @@ public struct ObsidianTaskCodec: TaskRecordCoding, Sendable {
             recurrenceFrom: task.recurrenceFrom,
             lastCompletedDate: task.lastCompletedDate,
             body: task.body,
-            extraProperties: task.extraProperties
+            extraProperties: task.extraProperties,
+            parentID: task.parentID
         )
-        try SafeYAML.validateProperties(task.extraProperties, reserved: Self.coreKeys.union(["id"]))
+        let reserved = configuration.schemaVersion == 2 ? Self.coreKeys.union(["id", "parent"]) : Self.coreKeys.union(["id"])
+        try SafeYAML.validateProperties(task.extraProperties, reserved: reserved)
 
         let projects = try task.projectSlugs.sorted(by: Self.utf8Less).map {
             try configuration.projectLink(slug: $0)
@@ -134,6 +149,9 @@ public struct ObsidianTaskCodec: TaskRecordCoding, Sendable {
         output += "state: \(try Self.renderState(task.state))\n"
         try YAMLWriter.appendStringList(projects, key: "projects", to: &output)
         try YAMLWriter.appendStringList(tags, key: "tags", to: &output)
+        if let parentID = task.parentID {
+            output += "parent: \(try YAMLWriter.quoted(parentID.rawValue))\n"
+        }
         if let dueDate = task.dueDate {
             output += "due_date: \(dueDate.rawValue)\n"
         }

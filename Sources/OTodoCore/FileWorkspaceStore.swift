@@ -8,12 +8,29 @@ import Glibc
 
 /// Persists each selected repository workspace as one versioned JSON document.
 public actor FileWorkspaceStore: WorkspacePersisting {
-    private static let formatVersion = 1
+    private static let formatVersion = 2
     private static let persistenceLock = NSLock()
 
     private struct Envelope: Codable {
         let version: Int
         let workspace: WorkspaceState
+
+        private enum CodingKeys: String, CodingKey { case version, workspace }
+
+        init(version: Int, workspace: WorkspaceState) {
+            self.version = version
+            self.workspace = workspace
+        }
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            version = try container.decode(Int.self, forKey: .version)
+            guard version == 1 || version == 2 else {
+                throw OTodoError.corruptLocalState(message: "Unsupported workspace persistence version \(version)")
+            }
+            let decoded = try container.decode(WorkspaceState.self, forKey: .workspace)
+            workspace = try decoded.importCacheRecords(legacyEnvelope: version == 1)
+        }
     }
 
     private let rootURL: URL
@@ -32,7 +49,7 @@ public actor FileWorkspaceStore: WorkspacePersisting {
         do {
             let data = try Data(contentsOf: url)
             let envelope = try Self.decoder().decode(Envelope.self, from: data)
-            guard envelope.version == Self.formatVersion else {
+            guard envelope.version == 1 || envelope.version == Self.formatVersion else {
                 throw OTodoError.corruptLocalState(
                     message: "Unsupported workspace persistence version \(envelope.version)"
                 )
@@ -235,7 +252,7 @@ public actor FileWorkspaceStore: WorkspacePersisting {
         do {
             let data = try Data(contentsOf: url)
             let envelope = try Self.decoder().decode(Envelope.self, from: data)
-            guard envelope.version == Self.formatVersion else {
+            guard envelope.version == 1 || envelope.version == Self.formatVersion else {
                 throw OTodoError.corruptLocalState(
                     message: "Unsupported workspace persistence version \(envelope.version)"
                 )

@@ -21,7 +21,7 @@ public struct StrictStoreConfigCodec: StoreConfigCoding, Sendable {
         // Version inspection deliberately precedes shape decoding. A client must never
         // reinterpret or validate fields whose version it does not understand.
         if case let .integer(version)? = document.topLevel["schema_version"],
-           version != StoreConfiguration.supportedSchemaVersion
+           !StoreConfiguration.supportedSchemaVersions.contains(version)
         {
             throw OTodoError.unsupportedSchema(
                 found: version,
@@ -45,7 +45,7 @@ public struct StrictStoreConfigCodec: StoreConfigCoding, Sendable {
         }
 
         let schemaVersion = try document.requiredInteger("schema_version")
-        guard schemaVersion == StoreConfiguration.supportedSchemaVersion else {
+        guard StoreConfiguration.supportedSchemaVersions.contains(schemaVersion) else {
             throw OTodoError.unsupportedSchema(
                 found: schemaVersion,
                 supported: StoreConfiguration.supportedSchemaVersion
@@ -86,8 +86,12 @@ public struct StrictStoreConfigCodec: StoreConfigCoding, Sendable {
     }
 
     /// The complete draft-2020-12 structural schema shipped with this package.
-    public static func structuralSchemaJSON() throws -> String {
-        guard let url = Bundle.module.url(forResource: "schema", withExtension: "json") else {
+    public static func structuralSchemaJSON(schemaVersion: Int = StoreConfiguration.supportedSchemaVersion) throws -> String {
+        guard StoreConfiguration.supportedSchemaVersions.contains(schemaVersion) else {
+            throw OTodoError.unsupportedSchema(found: schemaVersion, supported: StoreConfiguration.supportedSchemaVersion)
+        }
+        let resource = schemaVersion == 1 ? "schema" : "schema-v2"
+        guard let url = Bundle.module.url(forResource: resource, withExtension: "json") else {
             throw OTodoError.corruptLocalState(message: "The bundled record schema is missing")
         }
         do {

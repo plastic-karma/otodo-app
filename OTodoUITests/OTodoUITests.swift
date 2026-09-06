@@ -291,32 +291,7 @@ final class OTodoUITests: XCTestCase {
             description: "the seeded task list before using the Home Screen shortcut"
         ) else { return }
 
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        springboard.activate()
-
-        let appIcon = springboard.icons["OTodo"]
-        guard require(
-            appIcon,
-            in: springboard,
-            description: "the OTodo Home Screen icon"
-        ) else { return }
-        appIcon.press(forDuration: 1.2)
-
-        let newTodoAction = springboard.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@", "New Todo"))
-            .firstMatch
-        guard require(
-            newTodoAction,
-            in: springboard,
-            description: "the New Todo Home Screen quick action"
-        ) else { return }
-
-        let menuScreenshot = XCTAttachment(screenshot: springboard.screenshot())
-        menuScreenshot.name = "New Todo Home Screen quick action"
-        menuScreenshot.lifetime = .keepAlways
-        add(menuScreenshot)
-
-        newTodoAction.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        guard invokeNewTodoQuickAction() else { return }
 
         let editor = app.descendants(matching: .any)
             .matching(identifier: "task-editor")
@@ -2380,6 +2355,351 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testRootlessSubtaskComponentsRemainVisibleOnce() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-ui-testing", "-ui-testing-subtasks", "-ui-testing-subtasks-rootless",
+            "-ui-testing-reset-workspace",
+        ]
+        app.launch()
+        guard selectFilter("Active", in: app) else { return }
+        let list = app.descendants(matching: .any).matching(identifier: "task-list").firstMatch
+        for name in ["Missing parent child", "Cycle first", "Cycle second"] {
+            guard let row = requireTaskRow(
+                named: name, state: "Pending", in: app, taskList: list,
+                description: "a matching task with no valid graph root"
+            ) else { return }
+            XCTAssertEqual(app.buttons.matching(identifier: row.identifier).count, 1)
+        }
+        app.buttons["sync-review-relationships"].tap()
+        let review = app.descendants(matching: .any).matching(identifier: "relationship-review").firstMatch
+        for id in ["01ARZ3NDEKTSV4RRFFQ69G5FB0", "01ARZ3NDEKTSV4RRFFQ69G5FB1"] {
+            let repair = app.buttons["relationship-repair-\(id)"]
+            for _ in 0..<5 {
+                if repair.exists && repair.isHittable { break }
+                review.swipeUp()
+            }
+            guard require(repair, in: app, description: "a repair action for each cycle member") else { return }
+        }
+    }
+
+    @MainActor
+    func testSubtaskSiblingsReparentDetachAndOfflineRelaunch() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-subtasks", "-ui-testing-reset-workspace"]
+        app.launch()
+        guard selectFilter("All", in: app) else { return }
+        let parentID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        let terminalID = "01ARZ3NDEKTSV4RRFFQ69G5FAX"
+        let list = app.descendants(matching: .any).matching(identifier: "task-list").firstMatch
+        guard let parent = requireTaskRow(
+            named: "Hierarchy parent", state: "Pending", in: app, taskList: list,
+            description: "the parent for explicit child creation"
+        ) else { return }
+        parent.press(forDuration: 1.2)
+        let addChild = app.buttons["task-context-add-subtask-\(parentID)"]
+        guard require(addChild, in: app, description: "Add Subtask") else { return }
+        addChild.tap()
+        let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
+        let name = app.textFields["task-editor-name"]
+        guard require(name, in: app, description: "the child name") else { return }
+        XCTAssertTrue((app.buttons["task-editor-parent"].value as? String ?? "").contains(parentID))
+        name.tap()
+        name.typeText("Sibling one")
+        app.buttons["task-editor-save-another"].tap()
+        guard require(
+            app.descendants(matching: .any).matching(identifier: "task-editor-saved-confirmation").firstMatch,
+            in: app, description: "the first sibling saved"
+        ) else { return }
+        name.typeText("Sibling two")
+        app.buttons["task-editor-save"].tap()
+        guard requireEditorDismissed(editor, after: "creating siblings", in: app) else { return }
+
+        for sibling in ["Sibling one", "Sibling two"] {
+            guard let row = requireTaskRow(
+                named: sibling, state: "Pending", in: app, taskList: list,
+                description: "a child nested beneath its chosen parent"
+            ) else { return }
+            XCTAssertTrue(row.label.contains("Parent: Hierarchy parent"))
+            XCTAssertTrue(row.label.contains("Hierarchy level 1"))
+        }
+        let hierarchyScreenshot = XCTAttachment(screenshot: app.screenshot())
+        hierarchyScreenshot.name = "Subtask hierarchy — repeated siblings under their parent"
+        hierarchyScreenshot.lifetime = .keepAlways
+        add(hierarchyScreenshot)
+
+        guard let first = requireTaskRow(
+            named: "Sibling one", state: "Pending", in: app, taskList: list,
+            description: "the child to reparent"
+        ) else { return }
+        first.tap()
+        app.buttons["task-editor-parent"].tap()
+        let search = app.searchFields.firstMatch
+        guard require(search, in: app, description: "searchable whole-workspace parent picker") else { return }
+        search.tap()
+        search.typeText("Terminal parent")
+        let terminal = app.buttons["parent-candidate-\(terminalID)"]
+        guard require(terminal, in: app, description: "a terminal parent remains selectable") else { return }
+        terminal.tap()
+        app.buttons["task-editor-save"].tap()
+        guard requireEditorDismissed(editor, after: "reparenting to a terminal todo", in: app) else { return }
+
+        app.terminate()
+        app.launchArguments.removeAll { $0 == "-ui-testing-reset-workspace" }
+        app.launch()
+        guard selectFilter("Active", in: app) else { return }
+        guard let reparented = requireTaskRow(
+            named: "Sibling one", state: "Pending", in: app, taskList: list,
+            description: "the child restored offline under a terminal parent"
+        ) else { return }
+        XCTAssertTrue(reparented.label.contains("Parent: Terminal parent"))
+        XCTAssertTrue(reparented.label.contains("outside this filter"))
+        reparented.tap()
+        app.buttons["task-editor-parent"].tap()
+        app.buttons["parent-picker-none"].tap()
+        app.buttons["task-editor-save"].tap()
+        guard requireEditorDismissed(editor, after: "explicitly detaching the child", in: app) else { return }
+        app.terminate()
+        app.launch()
+        guard selectFilter("Active", in: app) else { return }
+        guard let detached = requireTaskRow(
+            named: "Sibling one", state: "Pending", in: app, taskList: list,
+            description: "the detached root restored offline"
+        ) else { return }
+        XCTAssertFalse(detached.label.contains("Parent:"))
+        XCTAssertFalse(detached.label.contains("Hierarchy level"))
+        guard let sibling = requireTaskRow(
+            named: "Sibling two", state: "Pending", in: app, taskList: list,
+            description: "the untouched sibling"
+        ) else { return }
+        XCTAssertTrue(sibling.label.contains("Parent: Hierarchy parent"))
+        app.buttons["task-add"].tap()
+        guard require(name, in: app, description: "a later global root draft") else { return }
+        XCTAssertEqual(app.buttons["task-editor-parent"].value as? String, "No Parent")
+        XCTAssertEqual(app.buttons["work project"].value as? String, "Not selected")
+        name.tap()
+        name.typeText("Global root after siblings")
+        app.buttons["task-editor-save"].tap()
+        guard requireEditorDismissed(editor, after: "saving a clean global root", in: app) else { return }
+        guard let root = requireTaskRow(
+            named: "Global root after siblings", state: "Pending", in: app, taskList: list,
+            description: "global creation never inherits stale parent context"
+        ) else { return }
+        XCTAssertFalse(root.label.contains("Parent:"))
+    }
+
+    @MainActor
+    func testHomeScreenQuickActionReplacesOpenSiblingDraftWithRoot() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-subtasks", "-ui-testing-reset-workspace"]
+        app.launch()
+        guard selectFilter("All", in: app) else { return }
+        let parentID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        let list = app.descendants(matching: .any).matching(identifier: "task-list").firstMatch
+        guard let parent = requireTaskRow(
+            named: "Hierarchy parent", state: "Pending", in: app, taskList: list,
+            description: "the parent for the interrupted child creation flow"
+        ) else { return }
+        parent.press(forDuration: 1.2)
+        let addChild = app.buttons["task-context-add-subtask-\(parentID)"]
+        guard require(addChild, in: app, description: "Add Subtask") else { return }
+        addChild.tap()
+        let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
+        let name = app.textFields["task-editor-name"]
+        guard require(name, in: app, description: "the explicit child draft") else { return }
+        name.tap()
+        name.typeText("Child before global shortcut")
+        app.buttons["task-editor-save-another"].tap()
+        guard require(
+            app.descendants(matching: .any).matching(identifier: "task-editor-saved-confirmation").firstMatch,
+            in: app, description: "the child saved without dismissing sibling creation"
+        ) else { return }
+        XCTAssertTrue((app.buttons["task-editor-parent"].value as? String ?? "").contains(parentID))
+        name.typeText("Unsaved sibling draft")
+
+        guard invokeNewTodoQuickAction() else { return }
+        let rootParent = app.buttons.matching(
+            NSPredicate(format: "identifier == %@ AND value == %@", "task-editor-parent", "No Parent")
+        ).firstMatch
+        guard require(
+            rootParent, in: app,
+            description: "the global quick action replaces the still-open child editor with a root draft"
+        ) else { return }
+        XCTAssertFalse(app.buttons["task-editor-save"].isEnabled, "A fresh global request must discard the old draft name")
+        let draftScreenshot = XCTAttachment(screenshot: app.screenshot())
+        draftScreenshot.name = "Global quick action resets an open sibling draft to No Parent"
+        draftScreenshot.lifetime = .keepAlways
+        add(draftScreenshot)
+        name.tap()
+        name.typeText("Root from global shortcut")
+        app.buttons["task-editor-save"].tap()
+        guard requireEditorDismissed(editor, after: "saving the global quick-action root", in: app) else { return }
+        guard let root = requireTaskRow(
+            named: "Root from global shortcut", state: "Pending", in: app, taskList: list,
+            description: "the fresh global quick action saves a root rather than another child"
+        ) else { return }
+        XCTAssertFalse(root.label.contains("Parent:"))
+        XCTAssertFalse(root.label.contains("Hierarchy level"))
+        guard let child = requireTaskRow(
+            named: "Child before global shortcut", state: "Pending", in: app, taskList: list,
+            description: "the child saved before the fresh global request retains its parent"
+        ) else { return }
+        XCTAssertTrue(child.label.contains("Parent: Hierarchy parent"))
+        XCTAssertTrue(child.label.contains("Hierarchy level 1"))
+        let savedScreenshot = XCTAttachment(screenshot: app.screenshot())
+        savedScreenshot.name = "Global shortcut saves a root while the previous child stays parented"
+        savedScreenshot.lifetime = .keepAlways
+        add(savedScreenshot)
+    }
+
+    @MainActor
+    func testSubtaskFilterContextRepairAndNonleafDeletionRefusal() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-subtasks", "-ui-testing-reset-workspace"]
+        app.launch()
+        let parentID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        let childID = "01ARZ3NDEKTSV4RRFFQ69G5FAW"
+        let brokenID = "01ARZ3NDEKTSV4RRFFQ69G5FAZ"
+        let list = app.descendants(matching: .any).matching(identifier: "task-list").firstMatch
+        guard require(list, in: app, description: "Today with child-only matches") else { return }
+        let child = app.buttons["task-row-\(childID)"]
+        guard require(child, in: app, description: "today's child beneath an undated parent") else { return }
+        XCTAssertTrue(child.label.contains("Parent: Hierarchy parent"))
+        XCTAssertTrue(child.label.contains("outside this filter"))
+        XCTAssertFalse(app.buttons["task-row-\(parentID)"].exists)
+        let terminalChild = app.buttons["task-row-01ARZ3NDEKTSV4RRFFQ69G5FAY"]
+        guard require(terminalChild, in: app, description: "today's child beneath a terminal parent") else { return }
+        XCTAssertTrue(terminalChild.label.contains("Parent: Terminal parent"))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Today retains matching children and outside-filter ancestry"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["project-sidebar-toggle"].tap()
+        XCTAssertEqual(app.staticTexts["inbox-open-count"].label, "3", "Projectless children count as Inbox tasks")
+        app.buttons["inbox-open"].tap()
+        guard require(child, in: app, description: "Inbox includes a child with no project") else { return }
+        XCTAssertTrue(child.label.contains("Parent: Hierarchy parent"))
+        app.buttons["project-sidebar-toggle"].tap()
+        app.buttons["upcoming-open"].tap()
+        guard require(child, in: app, description: "Upcoming keeps the child's own date") else { return }
+        let todaySection = app.descendants(matching: .any).matching(identifier: "upcoming-section-today").firstMatch
+        guard require(todaySection, in: app, description: "the child's Today agenda section") else { return }
+        XCTAssertLessThan(todaySection.frame.minY, child.frame.minY)
+        XCTAssertFalse(child.label.contains("Hierarchy level"))
+        app.buttons["project-sidebar-toggle"].tap()
+        app.buttons["tasks-open"].tap()
+        guard selectFilter("Active", in: app) else { return }
+        app.buttons["project-sidebar-toggle"].tap()
+        app.buttons["project-filter-work"].tap()
+        guard require(app.buttons["task-row-\(parentID)"], in: app, description: "the independently matching work parent") else { return }
+        XCTAssertFalse(child.exists, "A parent's project does not drag its projectless child into matches")
+
+        app.buttons["sync-review-relationships"].tap()
+        let repair = app.buttons["relationship-repair-\(brokenID)"]
+        guard require(repair, in: app, description: "whole-workspace repair independent of filter") else { return }
+        repair.tap()
+        let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
+        let parentButton = app.buttons["task-editor-parent"]
+        guard require(parentButton, in: app, description: "the broken stored parent") else { return }
+        XCTAssertTrue((parentButton.value as? String ?? "").contains("Missing parent"))
+        parentButton.tap()
+        guard require(app.buttons["parent-picker-none"], in: app, description: "explicit detach repairs the edge") else { return }
+        app.buttons["parent-picker-none"].tap()
+        app.buttons["task-editor-save"].tap()
+        guard requireEditorDismissed(editor, after: "repairing a missing parent", in: app) else { return }
+        guard require(app.staticTexts["No workspace relationship issues"], in: app, description: "the graph issue cleared") else { return }
+        app.buttons["Done"].tap()
+        app.buttons["project-sidebar-toggle"].tap()
+        app.buttons["project-filter-all"].tap()
+        guard selectFilter("All", in: app) else { return }
+        guard let parent = requireTaskRow(
+            named: "Hierarchy parent", state: "Pending", in: app, taskList: list,
+            description: "the parent cannot be deleted while it has a child"
+        ) else { return }
+        parent.tap()
+        parentButton.tap()
+        XCTAssertFalse(app.buttons["parent-candidate-\(parentID)"].exists)
+        XCTAssertFalse(app.buttons["parent-candidate-\(childID)"].exists)
+        app.buttons["parent-picker-cancel"].tap()
+        app.buttons["Cancel"].tap()
+        guard requireEditorDismissed(editor, after: "checking cycle exclusions", in: app) else { return }
+        parent.press(forDuration: 1.2)
+        app.buttons["task-context-delete-\(parentID)"].tap()
+        let error = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS[c] %@", "Error.", "child")
+        ).firstMatch
+        for _ in 0..<4 {
+            if error.exists { break }
+            list.swipeDown()
+        }
+        guard require(error, in: app, description: "a visible nonleaf deletion refusal") else { return }
+        XCTAssertTrue(parent.exists)
+        XCTAssertTrue(child.exists)
+        app.buttons["task-toggle-completion-\(parentID)"].tap()
+        guard require(
+            taskRow(named: "Hierarchy parent", state: "Done", in: app),
+            in: app, description: "the parent completed independently"
+        ) else { return }
+        guard selectFilter("Active", in: app) else { return }
+        guard require(child, in: app, description: "completing a parent leaves its child active") else { return }
+        XCTAssertTrue(child.label.contains("State: Pending"))
+        XCTAssertTrue(child.label.contains("outside this filter"))
+    }
+
+    @MainActor
+    func testLegacyParentPickerShowsExplicitUpgradeGuidance() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace"]
+        app.launch()
+        guard selectFilter("Active", in: app) else { return }
+        app.buttons["task-add"].tap()
+        let parent = app.buttons["task-editor-parent"]
+        guard require(parent, in: app, description: "parent selection in a legacy store") else { return }
+        parent.tap()
+        guard require(
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Subtasks require store schema 2")).firstMatch,
+            in: app, description: "explicit upgrade guidance rather than silent parenting"
+        ) else { return }
+        XCTAssertFalse(app.buttons["parent-picker-none"].exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "parent-candidate-")).firstMatch.exists)
+        app.buttons["parent-picker-cancel"].tap()
+        XCTAssertEqual(app.buttons["task-editor-parent"].value as? String, "No Parent")
+    }
+
+    @MainActor
+    private func invokeNewTodoQuickAction(
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> Bool {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        springboard.activate()
+        let appIcon = springboard.icons["OTodo"]
+        guard require(
+            appIcon, in: springboard, description: "the OTodo Home Screen icon",
+            file: file, line: line
+        ) else { return false }
+        appIcon.press(forDuration: 1.2)
+        let newTodoAction = springboard.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "New Todo"))
+            .firstMatch
+        guard require(
+            newTodoAction, in: springboard, description: "the New Todo Home Screen quick action",
+            file: file, line: line
+        ) else { return false }
+        let menuScreenshot = XCTAttachment(screenshot: springboard.screenshot())
+        menuScreenshot.name = "New Todo Home Screen quick action"
+        menuScreenshot.lifetime = .keepAlways
+        add(menuScreenshot)
+        newTodoAction.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        return true
+    }
+
+    @MainActor
     private func selectFilter(
         _ name: String,
         in app: XCUIApplication,
@@ -2409,8 +2729,15 @@ final class OTodoUITests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) -> XCUIElement? {
-        taskList.swipeUp()
         let row = taskRow(named: name, state: state, in: app)
+        for _ in 0..<6 {
+            if row.exists && row.isHittable { break }
+            taskList.swipeUp()
+        }
+        for _ in 0..<6 {
+            if row.exists && row.isHittable { break }
+            taskList.swipeDown()
+        }
         guard require(
             row,
             in: app,
@@ -2492,9 +2819,9 @@ final class OTodoUITests: XCTestCase {
     ) -> XCUIElement {
         app.buttons.matching(
             NSPredicate(
-                format: "label CONTAINS %@ AND label CONTAINS %@",
-                name,
-                "State: \(state)"
+                format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@",
+                "task-row-",
+                "\(name). State: \(state)"
             )
         ).firstMatch
     }

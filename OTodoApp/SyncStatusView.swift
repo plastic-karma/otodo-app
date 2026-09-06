@@ -3,6 +3,7 @@ import SwiftUI
 struct SyncStatusView: View {
     @Bindable private var model: AppModel
     @State private var isReviewingConflicts = false
+    @State private var isReviewingRelationships = false
 
     init(model: AppModel) {
         self.model = model
@@ -51,6 +52,17 @@ struct SyncStatusView: View {
                 }
             }
 
+            Button {
+                isReviewingRelationships = true
+            } label: {
+                Label(
+                    hasRelationshipIssues ? "Review relationship issues" : "Relationships",
+                    systemImage: hasRelationshipIssues ? "exclamationmark.triangle" : "arrow.turn.down.right"
+                )
+                .font(.caption)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityIdentifier("sync-review-relationships")
             if let detailText {
                 Text(detailText)
                     .font(.caption2)
@@ -63,13 +75,26 @@ struct SyncStatusView: View {
         .sheet(isPresented: $isReviewingConflicts) {
             ConflictResolutionView(model: model)
         }
+        .sheet(isPresented: $isReviewingRelationships) {
+            TaskRelationshipReview(model: model)
+        }
+    }
+
+    private var hasRelationshipIssues: Bool {
+        !model.hierarchy.issues.isEmpty || !model.relationshipBlocks.isEmpty
     }
 
     private var requiresAttention: Bool {
-        !model.isOnline || !model.conflicts.isEmpty
+        !model.isOnline || !model.conflicts.isEmpty || hasRelationshipIssues
     }
 
     private var detailText: String? {
+        if !model.relationshipBlocks.isEmpty {
+            return "\(model.relationshipBlocks.count) relationship changes withheld; saved locally"
+        }
+        if !model.hierarchy.issues.isEmpty {
+            return "\(model.hierarchy.issues.count) workspace relationship issues"
+        }
         if !model.conflicts.isEmpty {
             return countText(
                 model.conflicts.count,
@@ -88,6 +113,9 @@ struct SyncStatusView: View {
     }
 
     private var primaryText: String {
+        if hasRelationshipIssues {
+            return "Relationships need attention"
+        }
         if !model.isOnline {
             return "Offline — changes stay on this device"
         }
@@ -104,6 +132,7 @@ struct SyncStatusView: View {
     }
 
     private var primarySymbol: String {
+        if hasRelationshipIssues { return "exclamationmark.triangle" }
         if !model.isOnline {
             return "wifi.slash"
         }
@@ -120,7 +149,7 @@ struct SyncStatusView: View {
     }
 
     private var primaryColor: Color {
-        if !model.isOnline || !model.conflicts.isEmpty {
+        if !model.isOnline || !model.conflicts.isEmpty || hasRelationshipIssues {
             return .orange
         }
         if model.isBusy || model.pendingChangeCount > 0 {

@@ -31,6 +31,8 @@ final class AppModel {
     private(set) var discoveredStorePaths: [String] = []
 
     private(set) var tasks: [TodoTask] = []
+    private(set) var hierarchy = TaskHierarchy(tasks: [])
+    private(set) var relationshipBlocks: [TaskRelationshipBlock] = []
     private(set) var configuration: StoreConfiguration?
     private(set) var projectChoices: [String] = []
     private(set) var tagChoices: [String] = []
@@ -271,6 +273,8 @@ final class AppModel {
         pendingChangeCount = 0
         conflictCount = 0
         conflicts = []
+        hierarchy = TaskHierarchy(tasks: [])
+        relationshipBlocks = []
         rootState = .authentication
 
         await cancelAuthorization()
@@ -522,7 +526,8 @@ final class AppModel {
                 dueTime: draft.dueTime,
                 recurrence: draft.recurrence,
                 recurrenceFrom: draft.recurrenceFrom,
-                body: draft.body
+                body: draft.body,
+                parentID: draft.parentID
             )
             guard sessionID == operationSession else { return }
             syncFollowUpRequested = true
@@ -612,7 +617,8 @@ final class AppModel {
                     dueTime: draft.dueTime,
                     recurrence: draft.recurrence,
                     recurrenceFrom: draft.recurrenceFrom,
-                    body: draft.body
+                    body: draft.body,
+                    parentID: draft.parentID
                 )
             )
             guard sessionID == operationSession else { return }
@@ -866,6 +872,8 @@ final class AppModel {
         pendingChangeCount = 0
         conflictCount = 0
         conflicts = []
+        hierarchy = TaskHierarchy(tasks: [])
+        relationshipBlocks = []
         isBusy = false
         statusMessage = nil
         errorMessage = clearingError.map(Self.message(for:))
@@ -939,6 +947,8 @@ final class AppModel {
         configuration = workspace.configuration
         projectChoices = workspace.knownProjectSlugs.sorted()
         tasks = workspace.tasks.map(\.task)
+        hierarchy = TaskHierarchy(tasks: tasks)
+        relationshipBlocks = workspace.relationshipBlocks
         tagChoices = Set(tasks.lazy.flatMap(\.tags)).sorted()
         conflicts = workspace.conflicts
         pendingChangeCount = workspace.pendingChanges.count
@@ -1142,14 +1152,15 @@ final class AppModel {
                 try fileManager.removeItem(at: workspaceRootURL)
             }
 
+            let includesSubtaskFixtures = ProcessInfo.processInfo.arguments.contains("-ui-testing-subtasks")
             let selection = try RepositorySelection(
                 owner: "ui-testing",
-                name: "seeded-workspace",
+                name: includesSubtaskFixtures ? "subtasks-workspace" : "seeded-workspace",
                 branch: "main",
                 storePath: ""
             )
             let configuration = try StoreConfiguration(
-                schemaVersion: 1,
+                schemaVersion: includesSubtaskFixtures ? 2 : 1,
                 tasksDirectory: "todos",
                 projectsDirectory: "projects",
                 obsidianLinkPrefix: "",
@@ -1179,6 +1190,21 @@ final class AppModel {
                         ("01ARZ3NDEKTSV4RRFFQ69G5FB1", "Later review", "todo", "work", try Self.uiTestDate(dayOffset: 14)),
                     ]
                 }
+                if includesSubtaskFixtures {
+                    seeds = [
+                        ("01ARZ3NDEKTSV4RRFFQ69G5FAV", "Hierarchy parent", "todo", "work", nil),
+                        ("01ARZ3NDEKTSV4RRFFQ69G5FAW", "Hierarchy child", "todo", "", try Self.uiTestDate()),
+                        ("01ARZ3NDEKTSV4RRFFQ69G5FAX", "Terminal parent", "done", "home", nil),
+                        ("01ARZ3NDEKTSV4RRFFQ69G5FAY", "Terminal parent child", "todo", "", try Self.uiTestDate()),
+                        ("01ARZ3NDEKTSV4RRFFQ69G5FAZ", "Missing parent child", "todo", "", try Self.uiTestDate()),
+                    ]
+                    if ProcessInfo.processInfo.arguments.contains("-ui-testing-subtasks-rootless") {
+                        seeds += [
+                            ("01ARZ3NDEKTSV4RRFFQ69G5FB0", "Cycle first", "todo", "home", nil),
+                            ("01ARZ3NDEKTSV4RRFFQ69G5FB1", "Cycle second", "todo", "home", nil),
+                        ]
+                    }
+                }
                 let codec = ObsidianTaskCodec()
                 let documents = try seeds.map { seed in
                     let id = try TaskID(rawValue: seed.id)
@@ -1187,7 +1213,7 @@ final class AppModel {
                         relativePath: "todos/\(id.rawValue).md",
                         name: seed.name,
                         state: seed.state,
-                        projectSlugs: [seed.project],
+                        projectSlugs: seed.project.isEmpty ? [] : [seed.project],
                         tags: seed.project == "work" ? ["focus"] : ["home"],
                         dueDate: seed.dueDate,
                         dueTime: includesAgendaFixtures && seed.name == "Future todo"
@@ -1200,7 +1226,9 @@ final class AppModel {
                         body: seed.name == "Future todo" ? "Review invoice 123\nSend receipt" : "",
                         extraProperties: [
                             YAMLProperty(name: "base", value: .string(configuration.todosBaseLink)),
-                        ]
+                        ],
+                        parentID: includesSubtaskFixtures
+                            ? try Self.uiTestParentID(for: seed.id) : nil
                     )
                     let content = try codec.serializeTask(task, configuration: configuration)
                     return TaskDocument(task: task, content: content, blobSHA: "seed-\(id.rawValue)")
@@ -1231,6 +1259,17 @@ final class AppModel {
             isBusy = false
             errorMessage = Self.message(for: error)
             statusMessage = nil
+        }
+    }
+
+    private static func uiTestParentID(for id: String) throws -> TaskID? {
+        switch id {
+        case "01ARZ3NDEKTSV4RRFFQ69G5FAW": try TaskID(rawValue: "01ARZ3NDEKTSV4RRFFQ69G5FAV")
+        case "01ARZ3NDEKTSV4RRFFQ69G5FAY": try TaskID(rawValue: "01ARZ3NDEKTSV4RRFFQ69G5FAX")
+        case "01ARZ3NDEKTSV4RRFFQ69G5FAZ": try TaskID(rawValue: "01ARZ3NDEKTSV4RRFFQ69G5FZZ")
+        case "01ARZ3NDEKTSV4RRFFQ69G5FB0": try TaskID(rawValue: "01ARZ3NDEKTSV4RRFFQ69G5FB1")
+        case "01ARZ3NDEKTSV4RRFFQ69G5FB1": try TaskID(rawValue: "01ARZ3NDEKTSV4RRFFQ69G5FB0")
+        default: nil
         }
     }
 

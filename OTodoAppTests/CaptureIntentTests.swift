@@ -114,4 +114,65 @@ final class CaptureIntentTests: XCTestCase {
         let afterRejectedCapture = try await service.loadWorkspace(selection: selection)
         XCTAssertEqual(afterRejectedCapture, afterSharing)
     }
+
+    func testIntentAndSharedCaptureRemainRootsInVersionTwoHierarchy() async throws {
+        let directory = try SharedWorkspaceStorage.prepareForApplication(isUITesting: true)
+        let selectionStore = RepositorySelectionStore(directoryURL: directory)
+        let previousSelection = try await selectionStore.load()
+        let selection = try RepositorySelection(
+            owner: "subtask-capture-testing", name: UUID().uuidString, branch: "main", storePath: ""
+        )
+        let root = directory.appendingPathComponent("workspaces", isDirectory: true)
+        addTeardownBlock {
+            if let previousSelection {
+                try await selectionStore.save(previousSelection)
+            } else {
+                try await selectionStore.clear()
+            }
+            let file = root.appendingPathComponent("\(FileWorkspaceStore.selectionKey(for: selection)).json")
+            if FileManager.default.fileExists(atPath: file.path) {
+                try FileManager.default.removeItem(at: file)
+            }
+            _ = try SharedWorkspaceStorage.prepareForApplication(isUITesting: false)
+        }
+        let configuration = try StoreConfiguration(
+            schemaVersion: 2, tasksDirectory: "todos", projectsDirectory: "projects",
+            obsidianLinkPrefix: "", defaultState: "todo",
+            states: [
+                try WorkflowState(id: "todo", name: "Pending", isTerminal: false),
+                try WorkflowState(id: "done", name: "Done", isTerminal: true),
+            ]
+        )
+        let persistence = FileWorkspaceStore(rootURL: root)
+        try await persistence.save(
+            WorkspaceState(
+                selection: selection, configuration: configuration, knownProjectSlugs: [],
+                tasks: [], baseHeadCommitSHA: "connected-head", baseRootTreeSHA: "connected-tree",
+                pendingChanges: [], conflicts: []
+            ), expectedRevision: nil
+        )
+        try await selectionStore.save(selection)
+        let service = TaskWorkspaceService(persistence: persistence, taskCodec: ObsidianTaskCodec())
+        let parent = try await service.addTask(selection: selection, name: "Existing terminal parent", state: "done")
+        let child = try await service.addTask(selection: selection, name: "Existing child", parentID: parent.id)
+
+        var intent = AddTodoIntent()
+        intent.text = "Root from Shortcut"
+        _ = try await intent.perform()
+        let shared = try await SharedTaskCapture.save(name: "Root from Share", body: "Source context")
+        let restored = try await TaskWorkspaceService(
+            persistence: FileWorkspaceStore(rootURL: root), taskCodec: ObsidianTaskCodec()
+        ).loadWorkspace(selection: selection)
+        let shortcut = try XCTUnwrap(restored.tasks.first { $0.task.name == "Root from Shortcut" }?.task)
+        let share = try XCTUnwrap(restored.tasks.first { $0.task.id == shared.id }?.task)
+        for task in [shortcut, share] {
+            XCTAssertNil(task.parentID)
+            XCTAssertTrue(try TaskFilterQuery.inbox.matches(
+                task, terminalStateIDs: ["done"], dates: TaskDateContext()
+            ))
+        }
+        XCTAssertEqual(restored.tasks.first { $0.task.id == child.id }?.task.parentID, parent.id)
+        XCTAssertEqual(restored.tasks.first { $0.task.id == parent.id }?.task.state, "done")
+        XCTAssertEqual(share.body, "Source context")
+    }
 }

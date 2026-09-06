@@ -27,7 +27,8 @@ let package = Package(
         .testTarget(
             name: "OTodoCoreTests",
             dependencies: ["OTodoCore"],
-            path: "Tests/OTodoCoreTests"
+            path: "Tests/OTodoCoreTests",
+            resources: [.process("Fixtures")]
         ),
     ]
 )

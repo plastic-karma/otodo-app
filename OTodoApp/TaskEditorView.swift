@@ -7,6 +7,7 @@ struct TaskEditorDraft: Equatable, Sendable {
     var state: String
     var projectSlugs: [String]
     var tags: [String]
+    var parentID: TaskID?
     var dueDate: CivilDate?
     var dueTime: CivilTime?
     var recurrence: String?
@@ -23,6 +24,7 @@ struct TaskEditorDraft: Equatable, Sendable {
         state = configuration.defaultState
         projectSlugs = []
         tags = []
+        parentID = nil
         dueDate = nil
         dueTime = nil
         recurrence = nil
@@ -36,6 +38,7 @@ struct TaskEditorDraft: Equatable, Sendable {
         state = task.state
         projectSlugs = task.projectSlugs
         tags = task.tags
+        parentID = task.parentID
         dueDate = task.dueDate
         dueTime = task.dueTime
         recurrence = task.recurrence
@@ -59,6 +62,8 @@ struct TaskEditorView: View {
     private let configuration: StoreConfiguration
     private let projectChoices: [String]
     private let tagChoices: [String]
+    private let hierarchy: TaskHierarchy
+    private let workspaceTasks: [TodoTask]
     private let onSave: @MainActor (TaskEditorDraft) async -> String?
 
     @State private var draft: TaskEditorDraft
@@ -77,17 +82,22 @@ struct TaskEditorView: View {
     @State private var didSaveAndContinue = false
     @State private var nameFocusRequest = 0
     @State private var requestsNameFocus = false
+    @State private var isParentPickerPresented = false
 
     init(
         draft: TaskEditorDraft,
         configuration: StoreConfiguration,
         projectChoices: [String],
         tagChoices: [String],
+        hierarchy: TaskHierarchy = TaskHierarchy(tasks: []),
+        workspaceTasks: [TodoTask] = [],
         onSave: @escaping @MainActor (TaskEditorDraft) async -> String?
     ) {
         self.configuration = configuration
         self.projectChoices = projectChoices
         self.tagChoices = tagChoices
+        self.hierarchy = hierarchy
+        self.workspaceTasks = workspaceTasks
         self.onSave = onSave
         _draft = State(initialValue: draft)
         _projectsText = State(initialValue: draft.projectSlugs.joined(separator: ", "))
@@ -151,6 +161,23 @@ struct TaskEditorView: View {
                         .accessibilityIdentifier("task-editor-state")
                     }
                     .id("task-editor-top")
+
+                    Section("Parent") {
+                        Button {
+                            requestsNameFocus = false
+                            isParentPickerPresented = true
+                        } label: {
+                            HStack {
+                                Label("Parent", systemImage: "arrow.turn.down.right")
+                                Spacer()
+                                Text(parentDescription)
+                                    .foregroundStyle(isParentMissing ? .red : .secondary)
+                                    .multilineTextAlignment(.trailing)
+                            }
+                        }
+                        .accessibilityIdentifier("task-editor-parent")
+                        .accessibilityValue(parentDescription)
+                    }
 
                     Section {
                         TextField("work, personal", text: $projectsText)
@@ -323,6 +350,27 @@ struct TaskEditorView: View {
                 }
             }
         }
+        .sheet(isPresented: $isParentPickerPresented) {
+            TaskParentPicker(
+                hierarchy: hierarchy,
+                tasks: workspaceTasks,
+                taskID: draft.preservedTask?.id,
+                parentID: $draft.parentID,
+                schemaVersion: configuration.schemaVersion
+            )
+        }
+    }
+
+    private var parentDescription: String {
+        guard let parentID = draft.parentID else { return "No Parent" }
+        guard let parent = hierarchy.task(for: parentID) else {
+            return "Missing parent · \(parentID.rawValue)"
+        }
+        return "\(parent.name) · \(parentID.rawValue)"
+    }
+
+    private var isParentMissing: Bool {
+        draft.parentID.map { hierarchy.task(for: $0) == nil } ?? false
     }
 
     @ViewBuilder
