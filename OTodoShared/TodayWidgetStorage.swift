@@ -2,7 +2,7 @@ import Foundation
 import OTodoCore
 
 enum TodayWidgetStorage {
-    static let appGroupIdentifier = "group.plastickarma.otodo"
+    static let appGroupIdentifier = SharedWorkspaceStorage.appGroupIdentifier
     static let widgetKind = "OTodoTodayWidget"
 
     private static let fileName = "today-widget.json"

@@ -29,11 +29,21 @@ Due reminders are opt-in from the Projects sidebar. When enabled, active dated t
 
 Open **Changelog** from the sidebar to review product features and visible improvements, newest first. Each entry shows its commit's exact UTC timestamp. The history is bundled with the app and available offline; CI and repository-maintenance changes are excluded.
 
+## Inbox and system capture
+
+**Inbox** is a first-class view of active todos with no assigned projects, including undated work. Open it from the Home filters or the sidebar. It is not an Inbox project or tag. Assign a project or complete a todo to remove it from Inbox; use the existing editor to organize projects, tags, and dates.
+
+Choose **OTodo** in the iOS Share sheet to capture text or a URL. Review the proposed title and Markdown context, then **Save**. Safari capture preserves the webpage title, link, and selected text. In Shortcuts, use OTodo's **Add Todo** action with supplied **Todo** text and an optional **Source URL**. Siri's “Add a todo in OTodo” phrase prompts for the text rather than opening an empty editor.
+
+System captures start without a project or deadline. After connecting a workspace, they save directly to the normal local workspace and outbox, including offline; OTodo reloads external captures and synchronizes through its normal path when activated. No separate capture database or direct GitHub writes are used.
+
+Open OTodo once after upgrading an existing installation. The app atomically moves its complete private workspace directory, including pending changes, saved filters, and repository selection, into the shared App Group before opening stores. Migration errors are shown instead of silently starting an empty workspace. App and extension saves coordinate revision checks with a cross-process lock.
+
 ## Saved filters
 
-Open **Filters** from the top-right of the workspace, then **+** to save a name and text query. Tap a filter to open it; star it to put it on the app's Home filter strip. Touch and hold a saved filter (or swipe left) to edit or delete it. **Today**, **Active**, and **All** are predefined queries: their definitions cannot change, but their Home stars can.
+Open **Filters** from the top-right of the workspace, then **+** to save a name and text query. Tap a filter to open it; star it to put it on the app's Home filter strip. Touch and hold a saved filter (or swipe left) to edit or delete it. **Today**, **Active**, **All**, and **Inbox** are predefined queries: their definitions cannot change, but their Home stars can.
 
-Filters are saved offline on this device, separately for each repository, branch, and store path. They do not alter the Obsidian store or sync through GitHub. Selecting a filter from the library clears the sidebar's project scope; selecting a Home filter retains that scope.
+Filters are saved offline on this device, separately for each repository, branch, and store path. They do not alter the Obsidian store or sync through GitHub. Selecting a filter from the library clears the sidebar's project scope; selecting a Home filter retains that scope except for Inbox, which always shows projectless work. Selecting a project from Inbox switches to that project's Active view.
 
 The language uses explicit boolean operators, inspired by [Todoist's text filters](https://www.todoist.com/help/articles/introduction-to-filters-V98wIH):
 
@@ -42,6 +52,7 @@ The language uses explicit boolean operators, inspired by [Todoist's text filter
 | `all` | Every todo, including terminal states |
 | `active` | Todos outside the configured terminal states |
 | `today` | Active todos due today or overdue |
+| `inbox` | Active todos with no assigned projects, regardless of due date |
 | `project:work AND tag:focus` | Exact project slug and tag |
 | `active AND NOT tag:waiting` | Active todos without the tag |
 | `(project:home OR project:work) AND today` | Today's focus in either project |
@@ -201,9 +212,12 @@ xcodebuild build \
   -project OTodo.xcodeproj \
   -scheme OTodo \
   -destination 'generic/platform=iOS Simulator' \
-  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_ALLOWED=YES \
+  CODE_SIGN_IDENTITY=- \
   GITHUB_CLIENT_ID="$GH_OAUTH_CLIENT_ID"
 ```
+
+Simulator builds use ad-hoc signing so App Group entitlements are available to the app and extensions. Disabling signing prevents shared workspace capture from running.
 
 To run or test, open `OTodo.xcodeproj`, select scheme `OTodo` and any installed iOS 17-or-newer iPhone simulator, then Run/Test. Regenerate the project after changing `project.yml`; do not hand-edit generated project settings.
 

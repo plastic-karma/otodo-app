@@ -15,13 +15,14 @@ The workflow cannot create the external Apple or GitHub registrations below. Com
 | Apple Team ID | `9492A97LWY` |
 | Explicit application bundle ID | `plastickarma.otodo` |
 | Explicit widget extension bundle ID | `plastickarma.otodo.widget` |
+| Explicit Share extension bundle ID | `plastickarma.otodo.share` |
 | Shared App Group | `group.plastickarma.otodo` |
 | GitHub workflow | `Release IPA` / `.github/workflows/release.yml` |
 | IPA artifact | `otodo-ipa`, retained for 30 days |
 | Public OAuth Actions variable | `GH_OAUTH_CLIENT_ID` |
 | Xcode OAuth build setting | `GITHUB_CLIENT_ID` |
 
-OTodo ships one Today widget extension. The application and widget share their snapshot through the App Group above.
+OTodo ships a Today widget and a Share extension. The application and widget share their snapshot through the App Group above; the application, Share extension, and Add Todo App Intent use the same durable workspace and outbox in that container.
 
 ## One-time Apple registration
 
@@ -44,8 +45,9 @@ Then register or update these two **App IDs → App** identifiers:
 | --- | --- |
 | `OTodo` | `plastickarma.otodo` |
 | `OTodo Today Widget` | `plastickarma.otodo.widget` |
+| `OTodo Share` | `plastickarma.otodo.share` |
 
-Enable the **App Groups** capability on both identifiers, choose **Configure**, and assign `group.plastickarma.otodo`. Existing provisioning profiles that predate this capability must be regenerated; the release workflow's automatic cloud signing creates current distribution profiles after the identifiers are configured. The widget does not need a separate App Store Connect app record.
+Enable the **App Groups** capability on all three identifiers, choose **Configure**, and assign `group.plastickarma.otodo`. Existing provisioning profiles that predate this capability must be regenerated; the release workflow's automatic cloud signing creates current distribution profiles after the identifiers are configured. Neither extension needs a separate App Store Connect app record.
 
 ### 3. Create the App Store Connect app record
 
@@ -75,7 +77,7 @@ After approval, the **Account Holder** or an **Admin** creates the Team Key:
 3. Select **Generate**, then record the **Key ID** and **Issuer ID**.
 4. Download `AuthKey_<KEYID>.p8`. Apple permits this private-key download only once. Store it in a password manager or other approved secret store.
 
-No `.p12`, distribution-certificate secret, or provisioning-profile secret is required. The workflow uses automatic cloud signing for team `9492A97LWY`, both bundle identifiers, and their shared App Group.
+No `.p12`, distribution-certificate secret, or provisioning-profile secret is required. The workflow uses automatic cloud signing for team `9492A97LWY`, all three bundle identifiers, and their shared App Group.
 
 ## One-time GitHub OAuth and repository setup
 
@@ -129,7 +131,7 @@ The release job checks these names before doing expensive work. A missing value 
 
 1. Ensure CI is green for the commit: Linux `Swift package tests` and macOS `iOS simulator`.
 2. Confirm the Apple Developer membership and App Store Connect agreements are current.
-3. Confirm the `plastickarma.otodo` and `plastickarma.otodo.widget` App IDs both use `group.plastickarma.otodo`, and that the main app's App Store Connect record still belongs to team `9492A97LWY`.
+3. Confirm the `plastickarma.otodo`, `plastickarma.otodo.widget`, and `plastickarma.otodo.share` App IDs all use `group.plastickarma.otodo`, and that the main app's App Store Connect record still belongs to team `9492A97LWY`.
 4. Choose a marketing version containing one to three dot-separated integers, such as `1.2.0`. Do not reuse an App Store Connect version train that is closed.
 5. Decide whether this is an artifact-only build or a TestFlight upload. A manual run follows **publish_testflight** regardless of whether its selected ref is a branch or tag; a pushed `v*` tag is never artifact-only.
 
@@ -212,8 +214,8 @@ Check all of the following:
 
 - the API key is an **Admin** Team Key, not an Individual Key with insufficient access;
 - it belongs to Apple team `9492A97LWY`;
-- the Developer portal contains the explicit App IDs `plastickarma.otodo` and `plastickarma.otodo.widget`;
-- both App IDs have the App Groups capability assigned to `group.plastickarma.otodo`;
+- the Developer portal contains the explicit App IDs `plastickarma.otodo`, `plastickarma.otodo.widget`, and `plastickarma.otodo.share`;
+- all three App IDs have the App Groups capability assigned to `group.plastickarma.otodo`;
 - the Developer Program membership and agreements are active; and
 - the team can create/use an Apple Distribution certificate.
 

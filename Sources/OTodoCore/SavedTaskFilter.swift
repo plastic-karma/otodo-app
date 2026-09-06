@@ -10,6 +10,7 @@ public struct SavedTaskFilter: Sendable, Codable, Equatable, Identifiable {
         SavedTaskFilter(builtInID: "today", name: "Today", query: "today"),
         SavedTaskFilter(builtInID: "active", name: "Active", query: "active"),
         SavedTaskFilter(builtInID: "all", name: "All", query: "all"),
+        SavedTaskFilter(builtInID: "inbox", name: "Inbox", query: "inbox"),
     ]
 
     public var isBuiltIn: Bool {

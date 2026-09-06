@@ -3,6 +3,75 @@ import XCTest
 @testable import OTodoCore
 
 final class WorkspaceTests: XCTestCase, @unchecked Sendable {
+    func testWorkspaceMigrationPreservesOfflineOutboxFiltersAndSelection() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let legacy = directory.appendingPathComponent("private", isDirectory: true)
+        let shared = directory.appendingPathComponent("group/workspace-data", isDirectory: true)
+        let legacyWorkspaces = legacy.appendingPathComponent("workspaces", isDirectory: true)
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let store = FileWorkspaceStore(rootURL: legacyWorkspaces)
+        try await store.save(
+            makeWorkspace(selection: selection, configuration: configuration),
+            expectedRevision: nil
+        )
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+        let captured = try await service.addTask(
+            selection: selection,
+            name: "Unsynced before upgrading",
+            body: "Keep this Markdown context\n"
+        )
+        let beforeMigration = try await service.loadWorkspace(selection: selection)
+        let customFilter = try SavedTaskFilter(
+            id: "capture-review", name: "Capture review", query: "inbox", isStarred: false
+        )
+        try await FileTaskFilterStore(rootURL: legacyWorkspaces.appendingPathComponent("filters"))
+            .save(SavedTaskFilter.defaults + [customFilter], selection: selection)
+        try JSONEncoder().encode(selection).write(
+            to: legacy.appendingPathComponent("repository-selection.json"), options: .atomic
+        )
+
+        try WorkspaceStorageMigration.prepare(legacyURL: legacy, destinationURL: shared)
+
+        let restoredSelection = try JSONDecoder().decode(
+            RepositorySelection.self,
+            from: Data(contentsOf: shared.appendingPathComponent("repository-selection.json"))
+        )
+        let sharedWorkspaces = shared.appendingPathComponent("workspaces", isDirectory: true)
+        let restoredService = TaskWorkspaceService(
+            persistence: FileWorkspaceStore(rootURL: sharedWorkspaces),
+            taskCodec: ObsidianTaskCodec()
+        )
+        let restored = try await restoredService.loadWorkspace(selection: restoredSelection)
+        XCTAssertEqual(restored, beforeMigration)
+        XCTAssertEqual(restored.tasks.first?.task, captured)
+        let filters = try await FileTaskFilterStore(
+            rootURL: sharedWorkspaces.appendingPathComponent("filters")
+        ).load(selection: restoredSelection)
+        XCTAssertEqual(filters.first(where: { $0.id == customFilter.id }), customFilter)
+
+        let second = try await restoredService.addTask(
+            selection: restoredSelection, name: "Captured after upgrading"
+        )
+        // A stale private cache must never overwrite newer shared edits.
+        try await FileWorkspaceStore(rootURL: legacyWorkspaces).save(
+            makeWorkspace(selection: selection, configuration: configuration), expectedRevision: nil
+        )
+        try WorkspaceStorageMigration.prepare(legacyURL: legacy, destinationURL: shared)
+        let durable = try await restoredService.loadWorkspace(selection: restoredSelection)
+        XCTAssertEqual(durable.tasks.map(\.task.id), [captured.id, second.id])
+        XCTAssertEqual(durable.pendingChanges.count, 2)
+        for document in durable.tasks {
+            XCTAssertEqual(
+                durable.pendingChanges.first(where: {
+                    $0.path == repositoryPath(restoredSelection, document.task.relativePath)
+                })?.content,
+                document.content
+            )
+        }
+    }
+
     func testFileWorkspaceStoreRoundTripsCompleteStateAndRejectsUnsupportedVersion() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

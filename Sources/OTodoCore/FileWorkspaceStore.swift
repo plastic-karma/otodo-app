@@ -80,6 +80,27 @@ public actor FileWorkspaceStore: WorkspacePersisting {
 
         try Self.persistenceLock.withLock {
             let fileManager = FileManager.default
+            do {
+                try fileManager.createDirectory(
+                    at: rootURL,
+                    withIntermediateDirectories: true,
+                    attributes: nil
+                )
+                try Self.setPermissions(0o700, at: rootURL)
+            } catch {
+                throw OTodoError.corruptLocalState(
+                    message: "Could not prepare workspace directory: \(error.localizedDescription)"
+                )
+            }
+
+            #if canImport(Darwin) || canImport(Glibc)
+            // Lock a stable file, not the JSON inode replaced by the atomic rename below.
+            // The process-local lock also serializes stores because POSIX record locks
+            // are owned by the process rather than by an individual file descriptor.
+            let lockDescriptor = try acquireWorkspaceLock()
+            defer { _ = close(lockDescriptor) }
+            #endif
+
             let destinationURL = workspaceURL(for: workspace.selection)
             let destinationExists = fileManager.fileExists(atPath: destinationURL.path)
 
@@ -117,13 +138,6 @@ public actor FileWorkspaceStore: WorkspacePersisting {
             }
 
             do {
-                try fileManager.createDirectory(
-                    at: rootURL,
-                    withIntermediateDirectories: true,
-                    attributes: nil
-                )
-                try Self.setPermissions(0o700, at: rootURL)
-
                 let temporaryURL = rootURL.appendingPathComponent(
                     ".\(Self.selectionKey(for: workspace.selection)).\(UUID().uuidString).tmp",
                     isDirectory: false
@@ -177,6 +191,42 @@ public actor FileWorkspaceStore: WorkspacePersisting {
             throw OTodoError.corruptLocalState(message: "Workspace root must be a file URL")
         }
     }
+
+    #if canImport(Darwin) || canImport(Glibc)
+    private func acquireWorkspaceLock() throws -> Int32 {
+        let lockURL = rootURL.appendingPathComponent(".workspace.lock", isDirectory: false)
+        do {
+            let descriptor = try lockURL.withUnsafeFileSystemRepresentation { path in
+                guard let path else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(EINVAL))
+                }
+                let descriptor = open(path, O_CREAT | O_RDWR | O_CLOEXEC, mode_t(0o600))
+                guard descriptor >= 0 else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                }
+                return descriptor
+            }
+            do {
+                guard fchmod(descriptor, mode_t(0o600)) == 0 else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                }
+                // A fresh descriptor starts at offset zero; length zero locks through EOF.
+                // Closing it releases the lock on both successful and failed transactions.
+                guard lockf(descriptor, F_LOCK, 0) == 0 else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                }
+                return descriptor
+            } catch {
+                _ = close(descriptor)
+                throw error
+            }
+        } catch {
+            throw OTodoError.corruptLocalState(
+                message: "Could not lock workspace for saving: \(error.localizedDescription)"
+            )
+        }
+    }
+    #endif
 
     private func loadPersistedWorkspace(
         at url: URL,

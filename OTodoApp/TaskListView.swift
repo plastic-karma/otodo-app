@@ -239,7 +239,7 @@ struct TaskListView: View {
                                 .font(.body.weight(.semibold))
                         }
                         .accessibilityLabel("Projects")
-                        .accessibilityHint("Shows project filters and changelog")
+                        .accessibilityHint("Shows Inbox, project filters, and changelog")
                         .accessibilityIdentifier("project-sidebar-toggle")
                     }
                     ToolbarItem(placement: .topBarTrailing) {
@@ -327,7 +327,7 @@ struct TaskListView: View {
                     guard model.errorMessage == nil else {
                         return model.errorMessage
                     }
-                    selectedProject = slug
+                    selectProject(slug)
                     return nil
                 }
                 .presentationDetents([.medium])
@@ -341,7 +341,7 @@ struct TaskListView: View {
         }
         .sheet(isPresented: $isFilterLibraryPresented) {
             TaskFiltersView(library: filterLibrary) { filter in
-                selectedFilterID = filter.id
+                selectFilter(filter.id)
                 selectedProject = nil
             }
         }
@@ -380,7 +380,7 @@ struct TaskListView: View {
             HStack(spacing: 8) {
                 ForEach(filterLibrary.filters.filter(\.isStarred)) { filter in
                     Button {
-                        selectedFilterID = filter.id
+                        selectFilter(filter.id)
                     } label: {
                         Text(filter.name)
                             .font(.subheadline.weight(
@@ -405,6 +405,20 @@ struct TaskListView: View {
         }
         .scrollIndicators(.hidden)
         .accessibilityIdentifier("task-filters")
+    }
+
+    private func selectFilter(_ id: String) {
+        selectedFilterID = id
+        if id == "inbox" {
+            selectedProject = nil
+        }
+    }
+
+    private func selectProject(_ project: String?) {
+        if selectedFilterID == "inbox" {
+            selectedFilterID = "active"
+        }
+        selectedProject = project
     }
 
     private func workspaceHeader(taskCount: Int) -> some View {
@@ -496,6 +510,8 @@ struct TaskListView: View {
         switch selectedFilter.id {
         case "today":
             return Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day())
+        case "inbox":
+            return "Active todos without a project"
         case "active":
             return "Todos still to do"
         case "all":
@@ -530,6 +546,7 @@ struct TaskListView: View {
 
             ScrollView {
                 LazyVStack(spacing: 2) {
+                    inboxButton
                     projectFilterButton(nil)
 
                     ForEach(model.projectChoices, id: \.self) { project in
@@ -730,18 +747,50 @@ struct TaskListView: View {
         }
     }
 
+    private var inboxButton: some View {
+        let isSelected = selectedFilterID == "inbox"
+
+        return Button {
+            selectFilter("inbox")
+            dismissProjectSidebar()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "tray")
+                    .foregroundStyle(OTodoTheme.accent)
+                    .frame(width: 24)
+                Text("Inbox")
+                    .font(.body.weight(isSelected ? .semibold : .regular))
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 8)
+                Image(systemName: "checkmark")
+                    .foregroundStyle(OTodoTheme.accent)
+                    .opacity(isSelected ? 1 : 0)
+            }
+            .padding(.horizontal, 11)
+            .frame(minHeight: 48)
+            .contentShape(Rectangle())
+            .background(
+                isSelected ? OTodoTheme.accent.opacity(0.08) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        .accessibilityIdentifier("inbox-open")
+    }
+
     private func projectFilterButton(_ project: String?) -> some View {
-        let isSelected = selectedProject == project
+        let isSelected = selectedProject == project && selectedFilterID != "inbox"
         let title = project.map(projectDisplayName) ?? "All Todos"
         let count = taskCount(for: project)
         let color = projectColor(project)
 
         return Button {
-            selectedProject = project
+            selectProject(project)
             dismissProjectSidebar()
         } label: {
             HStack(spacing: 12) {
-                Image(systemName: project == nil ? "tray" : "folder")
+                Image(systemName: project == nil ? "checklist" : "folder")
                     .font(.body)
                     .foregroundStyle(color)
                     .frame(width: 24)
@@ -834,7 +883,7 @@ struct TaskListView: View {
                     .font(.system(size: 32, weight: .light))
                     .foregroundStyle(OTodoTheme.accent)
 
-                Text("No matching todos")
+                Text(selectedFilterID == "inbox" ? "Inbox is clear" : "No matching todos")
                     .font(.title3.bold())
 
                 Text(emptyDescription)
@@ -859,6 +908,9 @@ struct TaskListView: View {
     }
 
     private var emptyDescription: String {
+        if selectedFilterID == "inbox" {
+            return "New todos without a project appear here, with or without a due date. Complete them or assign a project to clear your Inbox."
+        }
         if model.tasks.isEmpty {
             return "Add a todo to get started. Changes are saved locally when offline."
         }

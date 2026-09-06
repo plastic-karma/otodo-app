@@ -316,7 +316,7 @@ final class OTodoUITests: XCTestCase {
         menuScreenshot.lifetime = .keepAlways
         add(menuScreenshot)
 
-        newTodoAction.tap()
+        newTodoAction.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
 
         let editor = app.descendants(matching: .any)
             .matching(identifier: "task-editor")
@@ -1750,6 +1750,170 @@ final class OTodoUITests: XCTestCase {
             app.buttons["Cancel"].tap()
         }
     }
+
+    @MainActor
+    func testInboxIncludesUndatedTasksAndRemovesOrganizedOrCompletedTasks() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        let reset = "-ui-testing-reset-workspace"
+        app.launchArguments = ["-ui-testing", reset]
+        app.launch()
+        guard selectFilter("Active", in: app) else { return }
+        app.buttons["project-sidebar-toggle"].tap()
+        app.buttons["project-filter-work"].tap()
+        app.buttons["project-sidebar-toggle"].tap()
+        let inbox = app.buttons["inbox-open"]
+        guard require(inbox, in: app, description: "the first-class Inbox sidebar action") else { return }
+        inbox.tap()
+        XCTAssertFalse(taskRow(named: "Undated todo", state: "Pending", in: app).exists)
+        let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
+
+        for (name, hasDate) in [("Inbox undated", false), ("Inbox scheduled", true)] {
+            app.buttons["task-add"].tap()
+            guard require(editor, in: app, description: "a projectless todo editor") else { return }
+            let nameField = app.textFields["task-editor-name"]
+            nameField.tap()
+            nameField.typeText(name)
+            if hasDate {
+                app.switches["task-editor-due-date-toggle"].tap()
+            }
+            app.buttons["task-editor-save"].tap()
+            guard requireEditorDismissed(editor, after: "capturing an Inbox todo", in: app) else { return }
+        }
+
+        app.terminate()
+        app.launchArguments.removeAll { $0 == reset }
+        app.launch()
+        guard selectFilter("Inbox", in: app) else { return }
+        let undated = taskRow(named: "Inbox undated", state: "Pending", in: app)
+        let scheduled = taskRow(named: "Inbox scheduled", state: "Pending", in: app)
+        guard require(undated, in: app, description: "the undated Inbox todo after relaunch"),
+              require(scheduled, in: app, description: "the dated Inbox todo after relaunch")
+        else { return }
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Inbox includes both dated and undated projectless todos"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        undated.tap()
+        guard require(editor, in: app, description: "the Inbox triage editor") else { return }
+        app.buttons["home project"].tap()
+        let tags = app.textFields["task-editor-tags"]
+        tags.tap()
+        tags.typeText("triaged")
+        app.buttons["task-editor-save"].tap()
+        guard requireEditorDismissed(editor, after: "assigning a project and tag", in: app) else { return }
+        XCTAssertTrue(undated.waitForNonExistence(timeout: 8))
+        let completion = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "task-toggle-completion-")
+        ).firstMatch
+        guard require(completion, in: app, description: "the remaining Inbox todo completion circle") else { return }
+        completion.tap()
+        XCTAssertTrue(scheduled.waitForNonExistence(timeout: 8))
+
+        app.terminate()
+        app.launch()
+        guard selectFilter("Inbox", in: app) else { return }
+        XCTAssertFalse(undated.exists)
+        XCTAssertFalse(scheduled.exists)
+        app.buttons["project-sidebar-toggle"].tap()
+        app.buttons["project-filter-home"].tap()
+        XCTAssertTrue(app.buttons["task-filter-active"].isSelected)
+        guard require(undated, in: app, description: "the organized todo in its project") else { return }
+        undated.tap()
+        guard require(editor, in: app, description: "the saved triage fields") else { return }
+        XCTAssertEqual(app.buttons["home project"].value as? String, "Selected")
+        XCTAssertEqual(tags.value as? String, "triaged")
+        app.buttons["Cancel"].tap()
+        app.buttons["project-sidebar-toggle"].tap()
+        app.buttons["project-filter-all"].tap()
+        guard selectFilter("All", in: app) else { return }
+        _ = require(
+            taskRow(named: "Inbox scheduled", state: "Done", in: app),
+            in: app, description: "the completed todo outside Inbox"
+        )
+    }
+
+    @MainActor
+    func testSafariShareSavesSourceContextToInboxOffline() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        let reset = "-ui-testing-reset-workspace"
+        app.launchArguments = ["-ui-testing", reset]
+        app.launch()
+        guard selectFilter("Inbox", in: app) else { return }
+
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        safari.launch()
+        if safari.buttons["Continue"].waitForExistence(timeout: 3) {
+            safari.buttons["Continue"].tap()
+        }
+        let address = safari.textFields.matching(
+            NSPredicate(format: "identifier IN %@", ["TabBarItemTitle", "URL"])
+        ).firstMatch
+        guard require(address, in: safari, description: "Safari's address field") else { return }
+        address.tap()
+        let sourceURL = "https://example.com/?otodo-capture=27"
+        safari.typeText(sourceURL + "\n")
+        let pageTitle = safari.webViews.staticTexts["Example Domain"]
+        guard require(pageTitle, in: safari, description: "the source webpage", timeout: 20) else { return }
+        let shareButton = safari.buttons["Share"]
+        if !shareButton.isHittable {
+            let more = safari.buttons["More"]
+            guard require(more, in: safari, description: "Safari's page actions") else { return }
+            more.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            if !shareButton.waitForExistence(timeout: 2) {
+                // Safari's first-run More tip intercepts the initial tap.
+                pageTitle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                more.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            }
+        }
+        guard require(shareButton, in: safari, description: "Safari's Share action") else { return }
+        shareButton.tap()
+        let otodo = safari.cells.containing(.staticText, identifier: "OTodo").firstMatch
+        if !otodo.waitForExistence(timeout: 3) {
+            let more = safari.cells.matching(identifier: "shareCell")
+                .containing(.staticText, identifier: "More").firstMatch
+            guard require(more, in: safari, description: "the Share sheet's additional apps") else { return }
+            more.tap()
+        }
+        guard require(otodo, in: safari, description: "OTodo in the system Share sheet") else { return }
+        otodo.tap()
+
+        let captureName = safari.textFields["share-capture-name"]
+        guard require(captureName, in: safari, description: "the OTodo Share capture editor", timeout: 15) else { return }
+        XCTAssertEqual(captureName.value as? String, "Example Domain")
+        let context = safari.textViews["share-capture-context"]
+        guard require(context, in: safari, description: "the source Markdown context") else { return }
+        XCTAssertTrue((context.value as? String)?.contains(sourceURL) == true)
+        XCTAssertTrue((context.value as? String)?.contains("Example Domain") == true)
+        let screenshot = XCTAttachment(screenshot: safari.screenshot())
+        screenshot.name = "System Share capture preserves webpage title and URL"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        safari.buttons["share-capture-save"].tap()
+        XCTAssertTrue(captureName.waitForNonExistence(timeout: 10))
+
+        app.activate()
+        guard selectFilter("Inbox", in: app) else { return }
+        let captured = taskRow(named: "Example Domain", state: "Pending", in: app)
+        guard require(captured, in: app, description: "the externally captured Inbox todo") else { return }
+        app.terminate()
+        app.launchArguments.removeAll { $0 == reset }
+        app.launch()
+        guard selectFilter("Inbox", in: app) else { return }
+        guard require(captured, in: app, description: "the durable shared todo after relaunch") else { return }
+        captured.tap()
+        let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
+        guard require(editor, in: app, description: "the captured todo's original context") else { return }
+        XCTAssertEqual(app.switches["task-editor-due-date-toggle"].value as? String, "0")
+        let notes = app.textViews["Todo notes"]
+        if !notes.isHittable { editor.swipeUp() }
+        guard require(notes, in: app, description: "the saved Markdown notes") else { return }
+        XCTAssertTrue((notes.value as? String)?.contains(sourceURL) == true)
+        XCTAssertTrue((notes.value as? String)?.contains("Example Domain") == true)
+    }
+
     @MainActor
     private func selectFilter(
         _ name: String,
@@ -1844,7 +2008,7 @@ final class OTodoUITests: XCTestCase {
 
     @MainActor
     private func attachDiagnostics(in app: XCUIApplication, name: String) {
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         screenshot.name = name
         screenshot.lifetime = .keepAlways
         add(screenshot)

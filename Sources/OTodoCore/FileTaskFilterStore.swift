@@ -2,7 +2,7 @@ import Foundation
 
 /// Local-only saved filters, isolated by the complete repository selection.
 public actor FileTaskFilterStore {
-    private static let formatVersion = 1
+    private static let formatVersion = 2
     private static let persistenceLock = NSLock()
 
     private struct Envelope: Codable {
@@ -102,7 +102,7 @@ public actor FileTaskFilterStore {
 
         do {
             let envelope = try JSONDecoder().decode(Envelope.self, from: data)
-            guard envelope.version == Self.formatVersion else {
+            guard (1...Self.formatVersion).contains(envelope.version) else {
                 throw OTodoError.corruptLocalState(
                     message: "Unsupported task filter persistence version \(envelope.version)"
                 )
@@ -112,8 +112,15 @@ public actor FileTaskFilterStore {
                     message: "Task filter selection does not match its persistence key"
                 )
             }
-            try Self.validate(envelope.filters)
-            return envelope.filters
+            var filters = envelope.filters
+            if envelope.version == 1,
+               let inbox = SavedTaskFilter.defaults.first(where: { $0.id == "inbox" }),
+               !filters.contains(where: { $0.id == inbox.id })
+            {
+                filters.append(inbox)
+            }
+            try Self.validate(filters)
+            return filters
         } catch let error as OTodoError {
             if case .corruptLocalState = error { throw error }
             throw OTodoError.corruptLocalState(

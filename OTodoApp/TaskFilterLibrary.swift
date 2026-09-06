@@ -18,7 +18,7 @@ final class TaskFilterLibrary {
     @ObservationIgnored private var operationWaiters: [CheckedContinuation<Void, Never>] = []
 
     private static var builtInQueries: [String: TaskFilterQuery] {
-        ["today": .today, "active": .active, "all": .all]
+        ["today": .today, "active": .active, "all": .all, "inbox": .inbox]
     }
 
     init(store: FileTaskFilterStore) {

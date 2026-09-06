@@ -6,6 +6,7 @@ public struct TaskFilterQuery: Sendable {
     public static let all = TaskFilterQuery(expression: .all)
     public static let active = TaskFilterQuery(expression: .active)
     public static let today = TaskFilterQuery(expression: .today)
+    public static let inbox = TaskFilterQuery(expression: .inbox)
 
     public init(_ source: String) throws {
         guard source.utf8.prefix(16_385).count <= 16_384 else {
@@ -30,6 +31,7 @@ public struct TaskFilterQuery: Sendable {
         case all
         case active
         case today
+        case inbox
         case tag(String)
         case project(String)
         case name(NSRegularExpression)
@@ -47,6 +49,8 @@ public struct TaskFilterQuery: Sendable {
                 return !terminalStateIDs.contains(task.state)
             case .today:
                 return !terminalStateIDs.contains(task.state) && task.dueDate.map { $0.rawValue <= today } == true
+            case .inbox:
+                return task.projectSlugs.isEmpty && !terminalStateIDs.contains(task.state)
             case let .tag(value):
                 return task.tags.contains(value)
             case let .project(value):
@@ -173,7 +177,7 @@ public struct TaskFilterQuery: Sendable {
                 try advance()
                 return expression
             default:
-                throw lexer.error("Expected all, active, today, tag:value, project:value, name:/regex/, description:/regex/, NOT, or '('")
+                throw lexer.error("Expected all, active, today, inbox, tag:value, project:value, name:/regex/, description:/regex/, NOT, or '('")
             }
         }
     }
@@ -240,12 +244,13 @@ public struct TaskFilterQuery: Sendable {
             case "all": return .atom(.all)
             case "active": return .atom(.active)
             case "today": return .atom(.today)
+            case "inbox": return .atom(.inbox)
             default:
                 switch word.uppercased() {
                 case "AND": return .and
                 case "OR": return .or
                 case "NOT": return .not
-                default: throw error("Unknown expression '\(word)'; use all, active, today, or a supported field")
+                default: throw error("Unknown expression '\(word)'; use all, active, today, inbox, or a supported field")
                 }
             }
         }

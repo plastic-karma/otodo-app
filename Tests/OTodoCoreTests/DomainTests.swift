@@ -3,6 +3,40 @@ import XCTest
 @testable import OTodoCore
 
 final class DomainTests: XCTestCase {
+    func testTaskCaptureRejectsWhollyEmptyInput() {
+        XCTAssertThrowsError(try TaskCapture())
+        XCTAssertThrowsError(try TaskCapture(text: " \r\n\t", sourceTitle: "\n "))
+    }
+
+    func testTaskCaptureUsesFirstNonemptyLineAndPreservesFullMarkdownText() throws {
+        let text = "\r\n  Plan tomorrow\r\n\r\n- Keep **all** details\u{2028}Another line\n"
+        let capture = try TaskCapture(text: text)
+
+        XCTAssertEqual(capture.name, "Plan tomorrow")
+        XCTAssertNil(capture.name.rangeOfCharacter(from: .newlines))
+        XCTAssertEqual(capture.body, text)
+    }
+
+    func testTaskCapturePreservesURLWithoutLosingQueryOrFragment() throws {
+        let url = try XCTUnwrap(URL(string: "https://example.com/a_(b)?q=hello%20world&sort=new#section"))
+        let capture = try TaskCapture(sourceURL: url)
+
+        XCTAssertEqual(capture.name, url.absoluteString)
+        XCTAssertTrue(capture.body.contains("<\(url.absoluteString)>"))
+    }
+
+    func testTaskCaptureKeepsCombinedSourceTitleTextAndLink() throws {
+        let title = "\n Article [draft]\r\nExtended title"
+        let text = "A quoted paragraph.\n\n- More context"
+        let url = try XCTUnwrap(URL(string: "https://example.com/article"))
+        let capture = try TaskCapture(text: text, sourceTitle: title, sourceURL: url)
+
+        XCTAssertEqual(capture.name, "Article [draft]")
+        XCTAssertTrue(capture.body.contains(title))
+        XCTAssertTrue(capture.body.contains(text))
+        XCTAssertTrue(capture.body.contains("<\(url.absoluteString)>"))
+    }
+
     func testTaskIDNormalizesValidLowercaseULID() throws {
         let id = try TaskID(rawValue: "01arz3ndektsv4rrffq69g5fav")
         XCTAssertEqual(id.rawValue, "01ARZ3NDEKTSV4RRFFQ69G5FAV")

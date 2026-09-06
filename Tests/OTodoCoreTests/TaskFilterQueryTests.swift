@@ -74,6 +74,30 @@ final class TaskFilterQueryTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(try TaskFilterQuery("all").matches(tasks[4], terminalStateIDs: terminalStates, today: "2026-09-05"))
     }
 
+    func testInboxIncludesOnlyActiveProjectlessTasksRegardlessOfDueDate() throws {
+        let tasks = try [
+            task(),
+            task(dueDate: "2026-09-04"),
+            task(dueDate: "2026-09-05"),
+            task(dueDate: "2026-09-06"),
+            task(state: "archived"),
+            task(state: "cancelled", dueDate: "2026-09-06"),
+            task(projects: ["work"]),
+            task(projects: ["work", "home"], dueDate: "2026-09-05"),
+            task(state: "done"),
+        ]
+        let terminalStates: Set<String> = ["archived", "cancelled"]
+        for query in [TaskFilterQuery.inbox, try TaskFilterQuery("inbox")] {
+            XCTAssertEqual(
+                try tasks.map { try query.matches($0, terminalStateIDs: terminalStates, today: "2026-09-05") },
+                [true, true, true, true, false, false, false, false, true]
+            )
+        }
+        XCTAssertFalse(try TaskFilterQuery.inbox.matches(
+            tasks[0], terminalStateIDs: ["doing"], today: "2026-09-05"
+        ))
+    }
+
     func testRejectsMalformedExpressionsWithFilterValidationErrors() {
         for source in [
             "", " \n\t", "all active", "all(tag:x)", "tag:x NOT tag:y",

@@ -179,7 +179,7 @@ private struct TaskFilterEditorView: View {
 
                 Section("Query guide") {
                     Text("Combine terms with AND, OR, NOT (or &, |, !). Parentheses group terms; NOT binds first, then AND, then OR.")
-                    Text("all · active · today\nToday includes active overdue todos.")
+                    Text("all · active · today · inbox\nToday includes active overdue todos. Inbox includes active todos without a project, regardless of due date.")
                     Text("project:work AND tag:focus\nactive AND NOT tag:waiting\n(project:home OR project:work) AND today")
                         .font(.system(.footnote, design: .monospaced))
                     Text("name:/report/i\ndescription:/invoice|receipt/i")

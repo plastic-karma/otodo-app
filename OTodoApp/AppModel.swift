@@ -42,7 +42,7 @@ final class AppModel {
     @ObservationIgnored let filterStore: FileTaskFilterStore
     @ObservationIgnored private let taskService: TaskWorkspaceService
     @ObservationIgnored private let credentialStore: (any CredentialStoring)?
-    @ObservationIgnored private let repositorySelectionStore: RepositorySelectionStore?
+    @ObservationIgnored private let repositorySelectionStore: RepositorySelectionStore
     @ObservationIgnored private let oauthClient: GitHubOAuthClient?
     @ObservationIgnored private let connectivityMonitor: ConnectivityMonitor?
 
@@ -63,7 +63,7 @@ final class AppModel {
     init(
         infoDictionary: [String: Any] = Bundle.main.infoDictionary ?? [:],
         launchArguments: [String] = ProcessInfo.processInfo.arguments
-    ) {
+    ) throws {
 #if DEBUG
         let isUITesting = launchArguments.contains("-ui-testing")
 #else
@@ -76,24 +76,9 @@ final class AppModel {
         let clientID = Self.configuredClientID(in: infoDictionary)
         gitHubClientID = clientID
 
-        let rootURL: URL
-#if DEBUG
-        if isUITesting {
-            rootURL = URL.applicationSupportDirectory
-                .appendingPathComponent(
-                    "plastickarma.otodo-ui-testing",
-                    isDirectory: true
-                )
-        } else {
-            rootURL = URL.applicationSupportDirectory
-                .appendingPathComponent("plastickarma.otodo", isDirectory: true)
-                .appendingPathComponent("workspaces", isDirectory: true)
-        }
-#else
-        rootURL = URL.applicationSupportDirectory
-            .appendingPathComponent("plastickarma.otodo", isDirectory: true)
-            .appendingPathComponent("workspaces", isDirectory: true)
-#endif
+        let directoryURL = try SharedWorkspaceStorage.prepareForApplication(isUITesting: isUITesting)
+        let rootURL = directoryURL.appendingPathComponent("workspaces", isDirectory: true)
+        repositorySelectionStore = RepositorySelectionStore(directoryURL: directoryURL)
         workspaceRootURL = rootURL
         filterStore = FileTaskFilterStore(
             rootURL: rootURL.appendingPathComponent("filters", isDirectory: true)
@@ -109,7 +94,6 @@ final class AppModel {
 #if DEBUG
         if isUITesting {
             credentialStore = nil
-            repositorySelectionStore = nil
             oauthClient = nil
             connectivityMonitor = nil
             isOnline = false
@@ -117,7 +101,6 @@ final class AppModel {
         } else {
             let credentials = KeychainCredentialStore()
             credentialStore = credentials
-            repositorySelectionStore = RepositorySelectionStore()
             oauthClient = clientID.map {
                 GitHubOAuthClient(clientID: $0)
             }
@@ -129,7 +112,6 @@ final class AppModel {
 #else
         let credentials = KeychainCredentialStore()
         credentialStore = credentials
-        repositorySelectionStore = RepositorySelectionStore()
         oauthClient = clientID.map {
             GitHubOAuthClient(clientID: $0)
         }
@@ -154,7 +136,6 @@ final class AppModel {
         startConnectivityObservation()
         guard gitHubClientID != nil,
               let credentialStore,
-              let repositorySelectionStore,
               oauthClient != nil
         else {
             rootState = .missingOAuthConfiguration
@@ -252,7 +233,7 @@ final class AppModel {
 
     func startAuthorization() async {
         guard !isEndingSession else { return }
-        guard let oauthClient, let credentialStore, let repositorySelectionStore else {
+        guard let oauthClient, let credentialStore else {
             rootState = .missingOAuthConfiguration
             return
         }
@@ -411,8 +392,7 @@ final class AppModel {
               let repository = repositories.first(where: {
                   Self.repositoryID($0) == selectedRepositoryID
               }),
-              let authenticatedGitHub,
-              let repositorySelectionStore
+              let authenticatedGitHub
         else {
             errorMessage = "Choose a repository before connecting."
             return
@@ -768,12 +748,10 @@ final class AppModel {
         await activeSync?.value
 
         var clearingError: Error?
-        if let repositorySelectionStore {
-            do {
-                try await repositorySelectionStore.clear()
-            } catch {
-                clearingError = error
-            }
+        do {
+            try await repositorySelectionStore.clear()
+        } catch {
+            clearingError = error
         }
         if let credentialStore {
             do {
@@ -1136,6 +1114,7 @@ final class AppModel {
                 try await workspaceStore.save(workspace, expectedRevision: nil)
                 restored = try await taskService.loadWorkspace(selection: selection)
             }
+            try await repositorySelectionStore.save(selection)
             apply(restored)
             rootState = .workspace
             isOnline = false

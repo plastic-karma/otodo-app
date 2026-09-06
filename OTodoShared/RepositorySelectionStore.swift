@@ -9,8 +9,7 @@ actor RepositorySelectionStore {
     private let fileURL: URL
 
     init(
-        directoryURL: URL = URL.applicationSupportDirectory
-            .appendingPathComponent("plastickarma.otodo", isDirectory: true)
+        directoryURL: URL
     ) {
         self.directoryURL = directoryURL
         fileURL = directoryURL.appendingPathComponent(Self.fileName, isDirectory: false)

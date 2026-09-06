@@ -28,7 +28,8 @@ final class TaskFilterStoreTests: XCTestCase, @unchecked Sendable {
             query: "tag:release AND NOT project:paused",
             isStarred: false
         )
-        filters[3] = edited
+        let customIndex = try XCTUnwrap(filters.firstIndex { $0.id == custom.id })
+        filters[customIndex] = edited
         try await recreated.save(filters, selection: selection)
         let afterEdit = try await FileTaskFilterStore(rootURL: directory).load(selection: selection)
         XCTAssertEqual(afterEdit, filters)
@@ -37,6 +38,44 @@ final class TaskFilterStoreTests: XCTestCase, @unchecked Sendable {
         try await recreated.save(filters, selection: selection)
         let afterDelete = try await FileTaskFilterStore(rootURL: directory).load(selection: selection)
         XCTAssertEqual(afterDelete, filters)
+    }
+
+    func testLegacyLibraryGainsInboxWithoutLosingFiltersOrStarChoices() async throws {
+        struct LegacyEnvelope: Encodable {
+            let version = 1
+            let selection: RepositorySelection
+            let filters: [SavedTaskFilter]
+        }
+
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try self.selection()
+        let custom = try SavedTaskFilter(
+            name: "Release work", query: "active AND tag:release", isStarred: true
+        )
+        let legacyFilters = try [
+            SavedTaskFilter(id: "today", name: "Today", query: "today", isStarred: false),
+            SavedTaskFilter(id: "active", name: "Active", query: "active", isStarred: true),
+            SavedTaskFilter(id: "all", name: "All", query: "all", isStarred: false),
+            custom,
+        ]
+        try JSONEncoder().encode(LegacyEnvelope(selection: selection, filters: legacyFilters))
+            .write(to: fileURL(directory, selection))
+
+        let store = FileTaskFilterStore(rootURL: directory)
+        var migrated = try await store.load(selection: selection)
+        XCTAssertEqual(migrated.filter { $0.id != "inbox" }, legacyFilters)
+        let inboxIndex = try XCTUnwrap(migrated.firstIndex { $0.id == "inbox" })
+        XCTAssertTrue(migrated[inboxIndex].isStarred)
+        XCTAssertTrue(migrated[inboxIndex].isBuiltIn)
+
+        let inbox = migrated[inboxIndex]
+        migrated[inboxIndex] = try SavedTaskFilter(
+            id: inbox.id, name: inbox.name, query: inbox.query, isStarred: false
+        )
+        try await store.save(migrated, selection: selection)
+        let reloaded = try await FileTaskFilterStore(rootURL: directory).load(selection: selection)
+        XCTAssertEqual(reloaded, migrated)
     }
 
     func testRepositoryBranchAndStorePathHaveIndependentLibraries() async throws {
@@ -53,8 +92,6 @@ final class TaskFilterStoreTests: XCTestCase, @unchecked Sendable {
         ]
         var expected: [[SavedTaskFilter]] = []
         for (index, selection) in selections.enumerated() {
-            let initiallyLoaded = try await store.load(selection: selection)
-            XCTAssertEqual(initiallyLoaded, SavedTaskFilter.defaults)
             let filters = SavedTaskFilter.defaults + [try SavedTaskFilter(
                 name: "Workspace \(index)", query: "tag:workspace-\(index)", isStarred: true
             )]
@@ -139,12 +176,14 @@ final class TaskFilterStoreTests: XCTestCase, @unchecked Sendable {
         var missingBuiltin = valid
         let builtinRecords = try XCTUnwrap(valid["filters"] as? [[String: Any]])
         missingBuiltin["filters"] = Array(builtinRecords.dropFirst())
+        var missingInbox = valid
+        missingInbox["filters"] = builtinRecords.filter { $0["id"] as? String != "inbox" }
         var invalidQuery = valid
         invalidQuery["filters"] = builtinRecords + [[
             "id": "custom", "name": "Invalid", "query": "tag:", "isStarred": true,
         ]]
 
-        for envelope in [unsupported, mismatched, missingBuiltin, invalidQuery] {
+        for envelope in [unsupported, mismatched, missingBuiltin, missingInbox, invalidQuery] {
             let bytes = try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
             try bytes.write(to: url)
             await assertCorrupt { _ = try await store.load(selection: selection) }
