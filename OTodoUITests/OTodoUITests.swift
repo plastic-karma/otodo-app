@@ -2476,6 +2476,10 @@ final class OTodoUITests: XCTestCase {
             named: "Sibling one", state: "Pending", in: app, taskList: list,
             description: "the detached root restored offline"
         ) else { return }
+        let detachedScreenshot = XCTAttachment(screenshot: app.screenshot())
+        detachedScreenshot.name = "Detached child restored offline as an independent root"
+        detachedScreenshot.lifetime = .keepAlways
+        add(detachedScreenshot)
         XCTAssertFalse(detached.label.contains("Parent:"))
         XCTAssertFalse(detached.label.contains("Hierarchy level"))
         guard let sibling = requireTaskRow(
@@ -2737,12 +2741,19 @@ final class OTodoUITests: XCTestCase {
         line: UInt = #line
     ) -> XCUIElement? {
         let row = taskRow(named: name, state: state, in: app)
+        let navigationBar = app.navigationBars.firstMatch
+        let syncStatus = app.descendants(matching: .any).matching(identifier: "sync-status").firstMatch
+        func isUnobscured() -> Bool {
+            guard row.exists && row.isHittable else { return false }
+            return row.frame.minY >= navigationBar.frame.maxY
+                && row.frame.maxY <= syncStatus.frame.minY
+        }
         for _ in 0..<6 {
-            if row.exists && row.isHittable { break }
+            if isUnobscured() { break }
             taskList.swipeUp()
         }
         for _ in 0..<6 {
-            if row.exists && row.isHittable { break }
+            if isUnobscured() { break }
             taskList.swipeDown()
         }
         guard require(
@@ -2752,6 +2763,10 @@ final class OTodoUITests: XCTestCase {
             file: file,
             line: line
         ) else { return nil }
+        guard isUnobscured() else {
+            XCTFail("The todo remains obscured by the navigation bar or pinned sync footer", file: file, line: line)
+            return nil
+        }
         return row
     }
 
