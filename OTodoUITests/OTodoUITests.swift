@@ -866,6 +866,101 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testFilteredCreationPersistsProjectsAndTagsForSingleAndBulkTodos() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace"]
+        app.launch()
+
+        let openFilters = app.buttons["filters-open"]
+        guard require(openFilters, in: app, description: "the filter library entry") else { return }
+        openFilters.tap()
+        app.buttons["filter-add"].tap()
+        let filterName = app.textFields["filter-editor-name"]
+        guard require(filterName, in: app, description: "the new filter name") else { return }
+        filterName.tap()
+        filterName.typeText("Scoped creation")
+        let query = app.descendants(matching: .any)
+            .matching(identifier: "filter-editor-query").firstMatch
+        query.tap()
+        query.typeText("active AND project:work AND tag:focus AND NOT tag:waiting")
+        app.buttons["filter-editor-save"].tap()
+        let filterEditor = app.descendants(matching: .any)
+            .matching(identifier: "filter-editor").firstMatch
+        guard requireEditorDismissed(filterEditor, after: "saving the creation filter", in: app) else { return }
+        let saved = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "filter-open-", "Scoped creation")
+        ).firstMatch
+        guard require(saved, in: app, description: "the saved creation filter") else { return }
+        saved.tap()
+        let library = app.descendants(matching: .any)
+            .matching(identifier: "filter-library").firstMatch
+        XCTAssertTrue(library.waitForNonExistence(timeout: 8))
+
+        app.buttons["project-sidebar-toggle"].tap()
+        app.buttons["project-filter-home"].tap()
+        let addButton = app.buttons["task-add"]
+        addButton.tap()
+        let name = app.textFields["task-editor-name"]
+        guard require(name, in: app, description: "the context-prefilled todo editor") else { return }
+        XCTAssertEqual(app.buttons["home project"].value as? String, "Selected")
+        XCTAssertEqual(app.buttons["work project"].value as? String, "Selected")
+        let editor = app.descendants(matching: .any)
+            .matching(identifier: "task-editor").firstMatch
+        let tags = app.textFields["task-editor-tags"]
+        XCTAssertEqual(tags.value as? String, "focus", "Excluded tags must not be inherited")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "New todo inherits the filter and sidebar project"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        name.tap()
+        name.typeText("Scoped single")
+        app.buttons["task-editor-save"].tap()
+        guard requireEditorDismissed(editor, after: "creating a context-prefilled todo", in: app) else { return }
+        guard require(
+            taskRow(named: "Scoped single", state: "Pending", in: app),
+            in: app, description: "the created todo in the original filtered project view"
+        ) else { return }
+
+        addButton.press(forDuration: 1.2)
+        app.buttons["task-add-menu-bulk"].tap()
+        let bulkText = app.textViews["task-bulk-text"]
+        guard require(bulkText, in: app, description: "the scoped bulk editor") else { return }
+        bulkText.tap()
+        bulkText.typeText("Scoped batch one\nScoped batch two")
+        app.buttons["task-bulk-save"].tap()
+        let bulkEditor = app.descendants(matching: .any)
+            .matching(identifier: "task-bulk-editor").firstMatch
+        guard requireEditorDismissed(bulkEditor, after: "creating a context-prefilled batch", in: app) else { return }
+
+        app.terminate()
+        app.launchArguments = ["-ui-testing"]
+        app.launch()
+        guard require(openFilters, in: app, description: "the library after relaunch") else { return }
+        openFilters.tap()
+        guard require(saved, in: app, description: "the persisted creation filter") else { return }
+        saved.tap()
+        XCTAssertTrue(library.waitForNonExistence(timeout: 8))
+        app.buttons["project-sidebar-toggle"].tap()
+        app.buttons["project-filter-home"].tap()
+        let taskList = app.descendants(matching: .any)
+            .matching(identifier: "task-list").firstMatch
+        for taskName in ["Scoped single", "Scoped batch one", "Scoped batch two"] {
+            guard let row = requireTaskRow(
+                named: taskName, state: "Pending", in: app, taskList: taskList,
+                description: "the persisted \(taskName) with both projects and the filter tag"
+            ) else { return }
+            row.tap()
+            guard require(name, in: app, description: "the saved labels on \(taskName)") else { return }
+            XCTAssertEqual(app.buttons["home project"].value as? String, "Selected")
+            XCTAssertEqual(app.buttons["work project"].value as? String, "Selected")
+            XCTAssertEqual(tags.value as? String, "focus")
+            app.buttons["Cancel"].tap()
+            guard requireEditorDismissed(editor, after: "inspecting \(taskName)", in: app) else { return }
+        }
+    }
+
+    @MainActor
     func testSavedFiltersPersistEditsAndHomeStars() {
         continueAfterFailure = false
         let app = XCUIApplication()

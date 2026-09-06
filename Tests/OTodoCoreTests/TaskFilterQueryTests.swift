@@ -37,6 +37,83 @@ final class TaskFilterQueryTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(try matches(TaskFilterQuery(#"tag:"a" OR tag:"path\\other""#), task))
     }
 
+    func testCreationDefaultsCombineConjunctionsWithoutChangingDecodedLiterals() throws {
+        let query = try TaskFilterQuery(
+            #"project:beta AND (tag:urgent AND project:"alpha") AND tag:Urgent AND project:beta AND tag:"say\"hi" AND tag:"path\\name" AND tag:"a|b" AND tag:Urgent"#
+        )
+        let defaults = query.creationDefaults
+        XCTAssertEqual(defaults.projectSlugs, ["alpha", "beta"])
+        XCTAssertEqual(defaults.tags, ["Urgent", "a|b", #"path\name"#, #"say"hi"#, "urgent"])
+        let created = try task(projects: defaults.projectSlugs, tags: defaults.tags)
+        XCTAssertTrue(try matches(query, created))
+    }
+
+    func testCreationDefaultsKeepOnlyLabelsRequiredByEveryNestedAlternative() throws {
+        let query = try TaskFilterQuery(
+            "(project:alpha AND tag:focus AND (tag:left OR tag:right)) OR (tag:focus AND project:alpha AND project:beta)"
+        )
+        let defaults = query.creationDefaults
+        XCTAssertEqual(defaults.projectSlugs, ["alpha"])
+        XCTAssertEqual(defaults.tags, ["focus"])
+        let undecided = try task(projects: defaults.projectSlugs, tags: defaults.tags)
+        XCTAssertFalse(try matches(query, undecided))
+        XCTAssertTrue(try matches(query, task(projects: defaults.projectSlugs, tags: defaults.tags + ["right"])))
+        XCTAssertTrue(try matches(query, task(projects: defaults.projectSlugs + ["beta"], tags: defaults.tags)))
+    }
+
+    func testCreationDefaultsPreserveOuterRequirementsWithoutChoosingAnOrBranch() throws {
+        let query = try TaskFilterQuery("project:alpha AND (tag:home OR tag:work) AND tag:focus")
+        let defaults = query.creationDefaults
+        XCTAssertEqual(defaults.projectSlugs, ["alpha"])
+        XCTAssertEqual(defaults.tags, ["focus"])
+        XCTAssertFalse(try matches(query, task(projects: defaults.projectSlugs, tags: defaults.tags)))
+        XCTAssertTrue(try matches(query, task(projects: defaults.projectSlugs, tags: defaults.tags + ["work"])))
+        XCTAssertEqual(try TaskFilterQuery("project:alpha OR project:beta").creationDefaults.projectSlugs, [])
+    }
+
+    func testCreationDefaultsNeverInferLabelsFromExcludedSubtrees() throws {
+        let query = try TaskFilterQuery(
+            "project:alpha AND tag:focus AND NOT (project:beta OR tag:blocked) AND NOT NOT tag:manual"
+        )
+        let defaults = query.creationDefaults
+        XCTAssertEqual(defaults.projectSlugs, ["alpha"])
+        XCTAssertEqual(defaults.tags, ["focus"])
+        let created = try task(projects: defaults.projectSlugs, tags: defaults.tags + ["manual"])
+        XCTAssertTrue(try matches(query, created))
+        XCTAssertFalse(try matches(query, task(projects: defaults.projectSlugs, tags: defaults.tags + ["manual", "blocked"])))
+
+        let alternative = try TaskFilterQuery("tag:focus OR NOT tag:blocked")
+        XCTAssertEqual(alternative.creationDefaults.tags, [])
+        XCTAssertTrue(try matches(alternative, task()))
+    }
+
+    func testCreationDefaultsIgnoreNonLabelPredicatesAndTheirLiteralContents() throws {
+        let query = try TaskFilterQuery(
+            #"project:alpha AND tag:focus AND name:/tag:fake/ AND description:/project:fake/ AND (all OR active OR inbox OR today OR overdue OR tomorrow OR next-seven-days OR undated OR due:2026-09-05)"#
+        )
+        let defaults = query.creationDefaults
+        XCTAssertEqual(defaults.projectSlugs, ["alpha"])
+        XCTAssertEqual(defaults.tags, ["focus"])
+        XCTAssertTrue(try matches(query, task(
+            name: "tag:fake", projects: defaults.projectSlugs, tags: defaults.tags, body: "project:fake"
+        )))
+
+        let alternative = try TaskFilterQuery("tag:focus OR active")
+        XCTAssertEqual(alternative.creationDefaults.tags, [])
+        XCTAssertTrue(try matches(alternative, task()))
+    }
+
+    func testCreationDefaultsOmitUnsupportedTagsButKeepUnusedValidLiterals() throws {
+        let query = try TaskFilterQuery(
+            ##"tag:"has spaces" AND tag:"#prefixed" AND tag:"comma,value" AND tag:"[brackets]" AND tag:Unused AND tag:"résumé""##
+        )
+        let defaults = query.creationDefaults
+        XCTAssertEqual(defaults.tags, ["Unused", "résumé"])
+        let created = try task(projects: defaults.projectSlugs, tags: defaults.tags)
+        XCTAssertTrue(try matches(TaskFilterQuery("tag:Unused AND tag:résumé"), created))
+        XCTAssertFalse(try matches(query, created))
+    }
+
     func testRegexUsesUnicodeUTF16RangesAndPreservesDelimiterAndICUEscapes() throws {
         let task = try task(name: "日本 Café / v2", body: "folder\\file\nSECOND line\nlast")
         XCTAssertTrue(try matches(TaskFilterQuery(#"name:/日本\s+café \/ v\d$/i"#), task))

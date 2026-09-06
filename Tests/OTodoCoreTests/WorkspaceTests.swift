@@ -333,7 +333,7 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(afterEdit.pendingChanges[0].content, afterEdit.tasks[0].content)
     }
 
-    func testAddTasksPersistsParsedNamesAndOutboxUsingOneReferenceDate() async throws {
+    func testAddTasksPersistsFilterDefaultsParsedNamesAndOutboxUsingOneReferenceDate() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
@@ -353,10 +353,15 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
             taskCodec: ObsidianTaskCodec(),
             now: { clock.next() }
         )
+        let filter = try TaskFilterQuery("project:alpha AND tag:focus AND NOT tag:blocked")
+        let defaults = filter.creationDefaults
+        let dates = TaskDateContext(referenceDate: referenceDate, calendar: calendar)
 
         let added = try await service.addTasks(
             selection: selection,
             names: [" \t ", "  Buy milk tomorrow  ", "", "Call Alex tomorrow", "Read 2026-10-01"],
+            projectSlugs: defaults.projectSlugs,
+            tags: defaults.tags,
             calendar: calendar
         )
 
@@ -370,6 +375,8 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(durable.tasks.map(\.task), added)
         XCTAssertEqual(durable.pendingChanges.count, 3)
         for document in durable.tasks {
+            XCTAssertTrue(try filter.matches(document.task, terminalStateIDs: ["done"], dates: dates))
+            XCTAssertEqual(document.task.state, configuration.defaultState)
             let pending = try XCTUnwrap(durable.pendingChanges.first {
                 $0.path == repositoryPath(selection, document.task.relativePath)
             })
@@ -394,11 +401,64 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
 
         do {
-            _ = try await service.addTasks(selection: selection, names: ["Valid first task", "tomorrow"])
+            _ = try await service.addTasks(
+                selection: selection,
+                names: ["Valid first task", "tomorrow"],
+                projectSlugs: ["alpha"],
+                tags: ["focus"]
+            )
             XCTFail("Expected a date phrase without a task name to be rejected")
         } catch let error as OTodoError {
             guard case .validation(field: "name", message: _) = error else {
                 return XCTFail("Expected task name validation, got \(error)")
+            }
+        }
+
+        let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(durable, initial)
+    }
+
+    func testAddTasksRejectsUnknownProjectWithoutChangingWorkspace() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let initial = try makeWorkspace(selection: selection, configuration: makeConfiguration())
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+
+        do {
+            _ = try await service.addTasks(
+                selection: selection, names: ["First task", "Second task"], projectSlugs: ["missing"]
+            )
+            XCTFail("Expected an unknown project to be rejected")
+        } catch let error as OTodoError {
+            guard case .validation(field: "projects", message: _) = error else {
+                return XCTFail("Expected project validation, got \(error)")
+            }
+        }
+
+        let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(durable, initial)
+    }
+
+    func testAddTasksRejectsInvalidTagWithoutChangingWorkspace() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let initial = try makeWorkspace(selection: selection, configuration: makeConfiguration())
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+
+        do {
+            _ = try await service.addTasks(
+                selection: selection, names: ["First task", "Second task"], tags: ["has spaces"]
+            )
+            XCTFail("Expected an invalid tag to be rejected")
+        } catch let error as OTodoError {
+            guard case .validation(field: "tags", message: _) = error else {
+                return XCTFail("Expected tag validation, got \(error)")
             }
         }
 

@@ -296,11 +296,13 @@ public actor TaskWorkspaceService {
     public func addTasks(
         selection: RepositorySelection,
         names: [String],
+        projectSlugs: [String] = [],
+        tags: [String] = [],
         calendar: Calendar = .autoupdatingCurrent
     ) async throws -> [TodoTask] {
         let workspace = try await requireWorkspace(selection: selection)
         let state = workspace.configuration.defaultState
-        try Self.validate(state: state, projects: [], in: workspace)
+        try Self.validate(state: state, projects: projectSlugs, in: workspace)
 
         let timestamp = now()
         var occupied = Self.occupiedTaskLocations(in: workspace)
@@ -326,8 +328,8 @@ public actor TaskWorkspaceService {
                 relativePath: relativePath,
                 name: detected?.nameWithoutPhrase ?? name,
                 state: state,
-                projectSlugs: [],
-                tags: [],
+                projectSlugs: projectSlugs,
+                tags: tags,
                 dueDate: detected?.dueDate,
                 dueTime: nil,
                 recurrence: nil,

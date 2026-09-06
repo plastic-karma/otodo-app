@@ -21,6 +21,7 @@ struct TaskListView: View {
     @State private var isProjectEditorPresented = false
     @State private var isChangelogPresented = false
     @State private var isBulkEditorPresented = false
+    @State private var bulkCreationDefaults: (projectSlugs: [String], tags: [String]) = ([], [])
     @State private var reschedulePresentation: ReschedulePresentation?
     @State private var isUpcoming = false
     @State private var agendaSections: [TaskAgendaSection] = []
@@ -194,7 +195,7 @@ struct TaskListView: View {
                 .sheet(item: $editorPresentation) { presentation in
                     if let configuration = model.configuration {
                         TaskEditorView(
-                            draft: presentation.draft(configuration: configuration),
+                            draft: presentation.draft,
                             configuration: configuration,
                             projectChoices: model.projectChoices,
                             tagChoices: model.tagChoices
@@ -217,8 +218,15 @@ struct TaskListView: View {
                     }
                 }
                 .sheet(isPresented: $isBulkEditorPresented) {
-                    TaskBulkEditorView { names in
-                        await model.createTasks(names: names)
+                    TaskBulkEditorView(
+                        projectSlugs: bulkCreationDefaults.projectSlugs,
+                        tags: bulkCreationDefaults.tags
+                    ) { names in
+                        await model.createTasks(
+                            names: names,
+                            projectSlugs: bulkCreationDefaults.projectSlugs,
+                            tags: bulkCreationDefaults.tags
+                        )
                         return model.errorMessage
                     }
                     .presentationDetents([.large])
@@ -416,11 +424,12 @@ struct TaskListView: View {
     private var addTodoButton: some View {
         Menu {
             Button("New Todo", systemImage: "plus") {
-                editorPresentation = .create
+                presentNewTodo()
             }
             .accessibilityIdentifier("task-add-menu-todo")
 
             Button("Bulk Add", systemImage: "text.badge.plus") {
+                bulkCreationDefaults = creationDefaults
                 isBulkEditorPresented = true
             }
             .disabled(model.isBusy)
@@ -439,7 +448,7 @@ struct TaskListView: View {
                 .background(OTodoTheme.filledAccent, in: Circle())
                 .shadow(color: .black.opacity(0.12), radius: 5, y: 3)
         } primaryAction: {
-            editorPresentation = .create
+            presentNewTodo()
         }
         .menuOrder(.fixed)
         .disabled(model.configuration == nil)
@@ -448,6 +457,25 @@ struct TaskListView: View {
         .accessibilityHint("Tap to add a todo; touch and hold for bulk entry or a project")
         .accessibilityIdentifier("task-add")
     }
+    private var creationDefaults: (projectSlugs: [String], tags: [String]) {
+        let inferred = (try? TaskFilterQuery(selectedFilter.query))?.creationDefaults
+        var projects = Set(inferred?.projectSlugs ?? [])
+        if let selectedProject {
+            projects.insert(selectedProject)
+        }
+        projects.formIntersection(model.projectChoices)
+        return (projects.sorted(), inferred?.tags ?? [])
+    }
+
+    private func presentNewTodo() {
+        guard let configuration = model.configuration else { return }
+        let defaults = creationDefaults
+        var draft = TaskEditorDraft(configuration: configuration)
+        draft.projectSlugs = defaults.projectSlugs
+        draft.tags = defaults.tags
+        editorPresentation = .create(draft)
+    }
+
     private func presentPendingNewTodoRequest() {
         guard model.configuration != nil,
               quickActions.consumePendingNewTodoRequest()
@@ -461,7 +489,7 @@ struct TaskListView: View {
         isChangelogPresented = false
         isBulkEditorPresented = false
         reschedulePresentation = nil
-        editorPresentation = .create
+        presentNewTodo()
     }
 
 
@@ -873,7 +901,7 @@ struct TaskListView: View {
 
                 if model.configuration != nil {
                     Button("Add a Todo") {
-                        editorPresentation = .create
+                        presentNewTodo()
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.large)
@@ -1301,7 +1329,7 @@ private struct TaskFilterResult: Sendable {
 }
 
 private enum EditorPresentation: Identifiable {
-    case create
+    case create(TaskEditorDraft)
     case edit(TodoTask)
 
     var id: String {
@@ -1313,10 +1341,10 @@ private enum EditorPresentation: Identifiable {
         }
     }
 
-    func draft(configuration: StoreConfiguration) -> TaskEditorDraft {
+    var draft: TaskEditorDraft {
         switch self {
-        case .create:
-            return TaskEditorDraft(configuration: configuration)
+        case let .create(draft):
+            return draft
         case let .edit(task):
             return TaskEditorDraft(task: task)
         }

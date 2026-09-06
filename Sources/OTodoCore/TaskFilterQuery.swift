@@ -24,6 +24,14 @@ public struct TaskFilterQuery: Sendable {
         self.expression = expression
     }
 
+    /// Positive labels required by every branch, without choosing an alternative or interpreting exclusions.
+    /// Omits unsupported task tags; callers must restrict projects to their workspace's known slugs.
+    public var creationDefaults: (projectSlugs: [String], tags: [String]) {
+        let labels = expression.creationLabels
+        let tags = labels.tags.filter { (try? DomainValidation.validateTags([$0])) != nil }
+        return (projectSlugs: labels.projectSlugs.sorted(), tags: tags.sorted())
+    }
+
     public func matches(_ task: TodoTask, terminalStateIDs: Set<String>, dates: TaskDateContext) throws -> Bool {
         try Task.checkCancellation()
         let result = try expression.matches(task, terminalStateIDs: terminalStateIDs, dates: dates)
@@ -48,6 +56,38 @@ public struct TaskFilterQuery: Sendable {
         case not(Expression)
         case and([Expression])
         case or([Expression])
+
+        var creationLabels: (projectSlugs: Set<String>, tags: Set<String>) {
+            switch self {
+            case let .project(value):
+                return ([value], [])
+            case let .tag(value):
+                return ([], [value])
+            case let .and(expressions):
+                var labels: (projectSlugs: Set<String>, tags: Set<String>) = ([], [])
+                for expression in expressions {
+                    let required = expression.creationLabels
+                    labels.projectSlugs.formUnion(required.projectSlugs)
+                    labels.tags.formUnion(required.tags)
+                }
+                return labels
+            case let .or(expressions):
+                guard let first = expressions.first else { return ([], []) }
+                var labels = first.creationLabels
+                for expression in expressions.dropFirst() {
+                    let required = expression.creationLabels
+                    labels.projectSlugs.formIntersection(required.projectSlugs)
+                    labels.tags.formIntersection(required.tags)
+                    if labels.projectSlugs.isEmpty && labels.tags.isEmpty { break }
+                }
+                return labels
+            case .not:
+                // Ignore the entire subtree, including double negation, rather than infer labels from exclusions.
+                return ([], [])
+            case .all, .active, .today, .overdue, .tomorrow, .nextSevenDays, .undated, .due, .inbox, .name, .description:
+                return ([], [])
+            }
+        }
 
         func matches(_ task: TodoTask, terminalStateIDs: Set<String>, dates: TaskDateContext) throws -> Bool {
             try Task.checkCancellation()

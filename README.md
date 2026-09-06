@@ -68,6 +68,8 @@ The query editor suggests projects and tags from the current workspace as you ty
 
 Filters are saved offline on this device, separately for each repository, branch, and store path. They do not alter the Obsidian store or sync through GitHub. Selecting a filter from the library clears project scope in Todos but preserves it in Upcoming. Selecting a Home filter retains that scope except for Inbox, which always shows projectless work. Selecting a project from Inbox switches to that project's Active view.
 
+Creating a todo from a filtered view preselects its required projects and tags, plus the selected sidebar project. `AND` combines requirements; `OR` keeps only labels shared by every branch. Negated expressions and ambiguous alternatives are not used to guess labels. Only existing projects and valid tags are inherited. The normal editor keeps these fields editable, and **Save & Create Another** retains your choices. **Bulk Add** previews and applies the same labels to every todo in its atomic batch. Dates, names, and workflow states are not inferred from the filter; new todos still use the configured default state and normal name-based date detection.
+
 The language uses explicit boolean operators, inspired by [Todoist's text filters](https://www.todoist.com/help/articles/introduction-to-filters-V98wIH):
 
 | Query | Matches |

@@ -527,7 +527,7 @@ final class AppModel {
         }
     }
 
-    func createTasks(names: [String]) async {
+    func createTasks(names: [String], projectSlugs: [String] = [], tags: [String] = []) async {
         guard rootState == .workspace, let selection = workspaceSelection else {
             errorMessage = "No todo workspace is selected."
             return
@@ -543,6 +543,8 @@ final class AppModel {
             let created = try await taskService.addTasks(
                 selection: selection,
                 names: names,
+                projectSlugs: projectSlugs,
+                tags: tags,
                 calendar: TaskSchedule.calendar
             )
             guard sessionID == operationSession else { return }

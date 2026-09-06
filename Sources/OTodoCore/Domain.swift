@@ -750,7 +750,7 @@ public struct RemoteChange: Sendable, Codable, Equatable {
     }
 }
 
-private enum DomainValidation {
+enum DomainValidation {
     private static let coreProperties: Set<String> = [
         "id", "name", "state", "projects", "tags", "due_date", "due_time", "recurrence",
         "recurrence_from", "last_completed_date",
