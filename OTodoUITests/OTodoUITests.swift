@@ -1439,8 +1439,10 @@ final class OTodoUITests: XCTestCase {
 
         let pending = taskRow(named: "Seed todo", state: "Pending", in: app)
         guard require(pending, in: app, description: "the open todo") else { return }
+        let sidebar = app.descendants(matching: .any).matching(identifier: "project-sidebar").firstMatch
         guard requireProjectCounts([(nil, 4), ("home", 2), ("work", 2)], in: app) else { return }
         app.buttons["project-sidebar-close"].tap()
+        XCTAssertTrue(sidebar.waitForNonExistence(timeout: 8), "Closing Projects must restore task interactions")
         let circle = app.buttons["task-toggle-completion-01ARZ3NDEKTSV4RRFFQ69G5FAV"]
         guard require(circle, in: app, description: "the todo completion circle") else { return }
         circle.tap()
@@ -1467,6 +1469,7 @@ final class OTodoUITests: XCTestCase {
         countsScreenshot.lifetime = .keepAlways
         add(countsScreenshot)
         app.buttons["project-sidebar-close"].tap()
+        XCTAssertTrue(sidebar.waitForNonExistence(timeout: 8), "Closing Projects must restore task interactions")
 
         guard require(circle, in: app, description: "the completed todo circle") else { return }
         circle.tap()
@@ -1479,6 +1482,7 @@ final class OTodoUITests: XCTestCase {
         guard require(pending, in: app, description: "the reopened todo persisted in Today") else { return }
         guard requireProjectCounts([(nil, 4), ("home", 2), ("work", 2)], in: app) else { return }
         app.buttons["project-sidebar-close"].tap()
+        XCTAssertTrue(sidebar.waitForNonExistence(timeout: 8), "Closing Projects must restore task interactions")
         pending.tap()
         guard require(editor, in: app, description: "the editor opened by tapping the todo title") else { return }
         XCTAssertEqual(app.buttons["home project"].value as? String, "Selected")

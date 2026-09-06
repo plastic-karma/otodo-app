@@ -537,12 +537,16 @@ struct TaskListView: View {
 
                 Spacer()
 
-                Button("Close", systemImage: "xmark") {
+                Button {
                     dismissProjectSidebar()
+                } label: {
+                    Image(systemName: "xmark")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
-                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .frame(width: 44, height: 44)
+                .accessibilityLabel("Close")
                 .accessibilityIdentifier("project-sidebar-close")
             }
             .padding(.leading, 20)
