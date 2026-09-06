@@ -2294,10 +2294,11 @@ final class OTodoUITests: XCTestCase {
         app.buttons["Daily"].tap()
         let interval = app.textFields["task-editor-repeat-interval"]
         guard require(interval, in: app, description: "the repeat interval") else { return }
-        interval.tap()
+        // The number is right-aligned; tapping the blank center puts the caret before it.
+        interval.coordinate(withNormalizedOffset: CGVector(dx: 0.99, dy: 0.5)).tap()
         interval.typeText(XCUIKeyboardKey.delete.rawValue + "0")
         let save = app.buttons["task-editor-save"]
-        XCTAssertFalse(save.isEnabled, "A zero interval cannot be saved")
+        XCTAssertFalse(save.isEnabled, "A zero interval cannot be saved.\n\(app.debugDescription)")
         interval.typeText(XCUIKeyboardKey.delete.rawValue + "2")
         XCTAssertTrue(save.isEnabled)
         let settingsScreenshot = XCTAttachment(screenshot: app.screenshot())
