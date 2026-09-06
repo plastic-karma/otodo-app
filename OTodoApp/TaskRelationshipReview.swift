@@ -22,7 +22,6 @@ struct TaskRelationshipReview: View {
                             Text(issue.code).font(.caption.monospaced()).foregroundStyle(.secondary)
                             repairButton(for: issue.taskID)
                         }
-                        .accessibilityIdentifier("relationship-issue-\(issue.taskID.rawValue)-\(issue.code)")
                     }
                 }
                 Section("Relationship changes withheld from sync") {

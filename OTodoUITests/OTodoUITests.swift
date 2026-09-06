@@ -1883,7 +1883,14 @@ final class OTodoUITests: XCTestCase {
             nameField.tap()
             nameField.typeText(name)
             if hasDate {
-                app.switches["task-editor-due-date-toggle"].tap()
+                nameField.typeText("\n")
+                let dueDateToggle = app.switches["task-editor-due-date-toggle"]
+                for _ in 0..<6 {
+                    if dueDateToggle.exists && dueDateToggle.isHittable { break }
+                    editor.swipeUp()
+                }
+                guard require(dueDateToggle, in: app, description: "the Inbox todo's schedule control") else { return }
+                dueDateToggle.tap()
             }
             app.buttons["task-editor-save"].tap()
             guard requireEditorDismissed(editor, after: "capturing an Inbox todo", in: app) else { return }
@@ -2408,6 +2415,7 @@ final class OTodoUITests: XCTestCase {
         XCTAssertTrue((app.buttons["task-editor-parent"].value as? String ?? "").contains(parentID))
         name.tap()
         name.typeText("Sibling one")
+        name.typeText("\n")
         app.buttons["task-editor-save-another"].tap()
         guard require(
             app.descendants(matching: .any).matching(identifier: "task-editor-saved-confirmation").firstMatch,
@@ -2512,6 +2520,7 @@ final class OTodoUITests: XCTestCase {
         guard require(name, in: app, description: "the explicit child draft") else { return }
         name.tap()
         name.typeText("Child before global shortcut")
+        name.typeText("\n")
         app.buttons["task-editor-save-another"].tap()
         guard require(
             app.descendants(matching: .any).matching(identifier: "task-editor-saved-confirmation").firstMatch,
@@ -2684,9 +2693,7 @@ final class OTodoUITests: XCTestCase {
             file: file, line: line
         ) else { return false }
         appIcon.press(forDuration: 1.2)
-        let newTodoAction = springboard.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@", "New Todo"))
-            .firstMatch
+        let newTodoAction = springboard.buttons["plastickarma.otodo.new-todo"]
         guard require(
             newTodoAction, in: springboard, description: "the New Todo Home Screen quick action",
             file: file, line: line
@@ -2695,7 +2702,7 @@ final class OTodoUITests: XCTestCase {
         menuScreenshot.name = "New Todo Home Screen quick action"
         menuScreenshot.lifetime = .keepAlways
         add(menuScreenshot)
-        newTodoAction.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        newTodoAction.tap()
         return true
     }
 
