@@ -6,6 +6,7 @@ let package = Package(
     name: "OTodoCore",
     platforms: [
         .iOS(.v17),
+        .watchOS(.v10),
     ],
     products: [
         .library(name: "OTodoCore", targets: ["OTodoCore"]),

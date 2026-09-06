@@ -209,7 +209,7 @@ jobs:
 
           if [ "$status" -ne 0 ]; then
             if grep -qiE "cloud signing|no profiles for|provisioning profile|maximum number of certificates" "$log"; then
-              echo "::error::Cloud signing failed. Confirm the Admin App Store Connect API key belongs to team 9492A97LWY and can provision plastickarma.otodo, plastickarma.otodo.widget, and plastickarma.otodo.share with App Group group.plastickarma.otodo."
+              echo "::error::Cloud signing failed. Confirm the Admin App Store Connect API key belongs to team 9492A97LWY and can provision plastickarma.otodo, plastickarma.otodo.widget, plastickarma.otodo.share, plastickarma.otodo.watchkitapp, and plastickarma.otodo.watchkitapp.widget with App Group group.plastickarma.otodo."
             else
               echo "::error::Release archive failed; see the xcodebuild output above."
             fi
@@ -267,6 +267,38 @@ jobs:
             || [ "$archived_share_build" != "$archived_build" ] \
             || [ "$archived_share_version" != "$archived_version" ]; then
             echo "::error::Embedded Share extension identity or version does not match the application."
+            exit 1
+          fi
+          for component in \
+            "Watch/OTodoWatch.app:plastickarma.otodo.watchkitapp" \
+            "Watch/OTodoWatch.app/PlugIns/OTodoWatchWidget.appex:plastickarma.otodo.watchkitapp.widget"; do
+            relative_path="${component%%:*}"
+            expected_identifier="${component#*:}"
+            bundle_path="$ARCHIVE_PATH/Products/Applications/OTodo.app/$relative_path"
+            component_info="$bundle_path/Info.plist"
+            if [ ! -f "$component_info" ]; then
+              echo "::error::Archive is missing $relative_path."
+              exit 1
+            fi
+            component_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$component_info")"
+            component_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$component_info")"
+            component_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$component_info")"
+            component_platform="$(/usr/libexec/PlistBuddy -c 'Print :DTPlatformName' "$component_info")"
+            component_executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$component_info")"
+            if [ "$component_identifier" != "$expected_identifier" ] \
+              || [ "$component_build" != "$archived_build" ] \
+              || [ "$component_version" != "$archived_version" ] \
+              || [ "$component_platform" != "watchos" ] \
+              || [ ! -s "$bundle_path/$component_executable" ]; then
+              echo "::error::$relative_path must contain a watchOS executable with the matching application version and expected identity."
+              exit 1
+            fi
+          done
+          watch_info="$ARCHIVE_PATH/Products/Applications/OTodo.app/Watch/OTodoWatch.app/Info.plist"
+          watch_application="$(/usr/libexec/PlistBuddy -c 'Print :WKApplication' "$watch_info")"
+          watch_companion="$(/usr/libexec/PlistBuddy -c 'Print :WKCompanionAppBundleIdentifier' "$watch_info")"
+          if [ "$watch_application" != "true" ] || [ "$watch_companion" != "$archived_app_identifier" ]; then
+            echo "::error::The embedded Watch app must be a single-target companion of OTodo."
             exit 1
           fi
           echo "ARCHIVED_MARKETING_VERSION=$archived_version" >> "$GITHUB_ENV"

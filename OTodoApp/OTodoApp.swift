@@ -1,4 +1,5 @@
 import SwiftUI
+import OTodoCore
 
 @main
 @MainActor
@@ -9,6 +10,7 @@ struct OTodoApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @State private var startup: Result<AppModel, Error> = Result { try AppModel() }
     @State private var notifications = TaskNotificationManager()
+    @State private var watchSync = PhoneWatchSync()
 
     var body: some Scene {
         WindowGroup {
@@ -31,6 +33,16 @@ struct OTodoApp: App {
                         }
                     }
                     .onChange(of: model.tasks) { _, _ in
+                        Task { @MainActor in
+                            await synchronizeSystemSurfaces(model: model)
+                        }
+                    }
+                    .onChange(of: model.configuration) { _, _ in
+                        Task { @MainActor in
+                            await synchronizeSystemSurfaces(model: model)
+                        }
+                    }
+                    .onChange(of: model.workspaceSelection) { _, _ in
                         Task { @MainActor in
                             await synchronizeSystemSurfaces(model: model)
                         }
@@ -60,8 +72,12 @@ struct OTodoApp: App {
 
 
     private func synchronizeSystemSurfaces(model: AppModel) async {
+        let workspaceAvailable = model.workspaceSelection != nil
+        let tasks = workspaceAvailable ? model.tasks : []
         let states = model.configuration?.states ?? []
-        TodayWidgetCoordinator.synchronize(tasks: model.tasks, states: states)
-        await notifications.synchronize(tasks: model.tasks, states: states)
+        let snapshot = TodayWidgetSnapshotBuilder.make(tasks: tasks, states: states)
+        TodayWidgetCoordinator.synchronize(snapshot: snapshot)
+        watchSync.synchronize(snapshot: snapshot, workspaceAvailable: workspaceAvailable)
+        await notifications.synchronize(tasks: tasks, states: states)
     }
 }

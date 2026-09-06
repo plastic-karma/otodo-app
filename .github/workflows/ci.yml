@@ -127,26 +127,38 @@ jobs:
           if not isinstance(info.get("UILaunchScreen"), dict):
               raise SystemExit("UILaunchScreen must be a dictionary")
 
-          with open("OTodoWidget/Info.plist", "rb") as source:
-              widget_info = plistlib.load(source)
-
           expected_widget_metadata = {
               "CFBundleDisplayName": "OTodo",
               "CFBundleShortVersionString": "$(MARKETING_VERSION)",
               "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
           }
-          for key, expected in expected_widget_metadata.items():
-              if widget_info.get(key) != expected:
-                  raise SystemExit(f"Widget {key} must be {expected}")
+          for widget_path in ("OTodoWidget/Info.plist", "OTodoWatchWidget/Info.plist"):
+              with open(widget_path, "rb") as source:
+                  widget_info = plistlib.load(source)
+              for key, expected in expected_widget_metadata.items():
+                  if widget_info.get(key) != expected:
+                      raise SystemExit(f"{widget_path}: {key} must be {expected}")
+              extension = widget_info.get("NSExtension")
+              if not isinstance(extension, dict) or extension.get("NSExtensionPointIdentifier") != "com.apple.widgetkit-extension":
+                  raise SystemExit(f"{widget_path} must be a WidgetKit extension")
 
-          extension = widget_info.get("NSExtension")
-          if not isinstance(extension, dict) or extension.get("NSExtensionPointIdentifier") != "com.apple.widgetkit-extension":
-              raise SystemExit("Widget NSExtensionPointIdentifier must be com.apple.widgetkit-extension")
+          with open("OTodoWatch/Info.plist", "rb") as source:
+              watch_info = plistlib.load(source)
+          for key, expected in {
+              **expected_version_settings,
+              "WKApplication": True,
+              "WKCompanionAppBundleIdentifier": "plastickarma.otodo",
+              "WKRunsIndependentlyOfCompanionApp": False,
+          }.items():
+              if watch_info.get(key) != expected:
+                  raise SystemExit(f"Watch {key} must be {expected}")
 
           expected_groups = ["group.plastickarma.otodo"]
           for entitlements_path in (
               "OTodoApp/OTodo.entitlements",
               "OTodoWidget/OTodoWidget.entitlements",
+              "OTodoWatch/OTodoWatch.entitlements",
+              "OTodoWatchWidget/OTodoWatchWidget.entitlements",
           ):
               with open(entitlements_path, "rb") as source:
                   entitlements = plistlib.load(source)
@@ -235,4 +247,98 @@ jobs:
           name: iOS-test-results
           path: ${{ runner.temp }}/xcode-results/*.xcresult
           if-no-files-found: warn
+          retention-days: 7
+
+  watchos-simulator:
+    name: Apple Watch companion
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      PROJECT: OTodo.xcodeproj
+      GH_OAUTH_CLIENT_ID: ${{ vars.GH_OAUTH_CLIENT_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Select newest installed Xcode
+        run: |
+          set -euo pipefail
+          newest="$(python3 <<'PY'
+          import glob
+          import plistlib
+
+          xcodes = []
+          for app in glob.glob("/Applications/Xcode*.app"):
+              try:
+                  with open(f"{app}/Contents/Info.plist", "rb") as info:
+                      value = plistlib.load(info)["CFBundleShortVersionString"]
+                  version = tuple(int(part) for part in value.split("."))
+              except (KeyError, OSError, TypeError, ValueError):
+                  continue
+              xcodes.append((version, app))
+          print(max(xcodes)[1] if xcodes else "")
+          PY
+          )"
+          if [ -z "$newest" ]; then
+            echo "::error::No Xcode installation was found on the runner."
+            exit 1
+          fi
+          sudo xcode-select --switch "$newest/Contents/Developer"
+          xcodebuild -version
+
+      - name: Install XcodeGen 2.46.0
+        env:
+          XCODEGEN_VERSION: 2.46.0
+          XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/xcodegen.zip"
+          install_dir="$RUNNER_TEMP/xcodegen-tool"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "$archive" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
+          echo "${XCODEGEN_SHA256}  ${archive}" | shasum -a 256 --check
+          mkdir -p "$install_dir"
+          unzip -q "$archive" -d "$install_dir"
+          chmod +x "$install_dir/xcodegen/bin/xcodegen"
+          echo "$install_dir/xcodegen/bin" >> "$GITHUB_PATH"
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Prepare paired iPhone and Watch simulators
+        run: python3 .github/scripts/watch_smoke.py prepare --output "$RUNNER_TEMP/watch-smoke"
+
+      - name: Build iPhone with embedded Watch app and complication
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project "$PROJECT" \
+            -scheme OTodo \
+            -destination "platform=iOS Simulator,id=$WATCH_PHONE_SIMULATOR_ID" \
+            -derivedDataPath "$RUNNER_TEMP/WatchDerivedData" \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_IDENTITY=- \
+            GITHUB_CLIENT_ID="$GH_OAUTH_CLIENT_ID"
+
+      - name: Verify live companion delivery and offline Watch relaunch
+        run: |
+          python3 .github/scripts/watch_smoke.py verify \
+            --output "$RUNNER_TEMP/watch-smoke" \
+            --derived-data "$RUNNER_TEMP/WatchDerivedData"
+
+      - name: Collect Watch diagnostics
+        if: ${{ !cancelled() }}
+        run: python3 .github/scripts/watch_smoke.py diagnostics --output "$RUNNER_TEMP/watch-smoke"
+
+      - name: Upload Watch simulator evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: watch-smoke
+          path: ${{ runner.temp }}/watch-smoke
+          if-no-files-found: error
           retention-days: 7

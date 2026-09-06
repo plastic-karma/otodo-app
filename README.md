@@ -99,6 +99,16 @@ Date literals must be valid `YYYY-MM-DD` Gregorian dates; ranges require both en
 
 Name and description patterns use ICU regular expressions between `/` delimiters. Escape a literal slash as `\/`. Optional flags are `i` (ignore case), `m` (line anchors), and `s` (dot matches newlines); omit them for case-sensitive matching. Invalid syntax is shown in the editor and cannot be saved. Compiled queries are cached; matching runs off the UI thread and is cancelled when the selected query or tasks change.
 
+## Apple Watch
+
+Install OTodo on your paired Apple Watch (watchOS 10 or later), then open OTodo on iPhone with a connected workspace. The Watch app shows open todos in **Overdue** and **Today** sections across all projects. Tap a row to read its full name, due date, and optional exact time. Editing remains on iPhone.
+
+Add **OTodo → Today & Overdue** to a compatible watch-face complication slot. Circular and corner layouts show the combined count; inline and rectangular layouts show separate Today and Overdue counts. The rectangular layout also shows the first overdue or today's todo. Tapping the complication opens the Watch list.
+
+Workspace changes are sent through WatchConnectivity and saved atomically on Watch; no GitHub credentials or direct GitHub access are needed there. The saved snapshot includes future dated todos, so they move into Today and Overdue at local day boundaries even when the phone is unavailable. Completed and undated todos are excluded. **Saved on Watch** shows when the snapshot last changed, and **Refresh from iPhone** requests the latest available data. Delivery depends on the paired devices and watchOS scheduling; the Watch displays its last received snapshot while disconnected.
+
+CI builds both Watch targets and exercises live delivery, offline relaunch, and the complication deep link on paired simulators. Watch-face placement, large-file transfers, and expedited complication updates require a physical paired device check.
+
 ## Requirements
 
 - Swift 6.1 for the Swift package and Linux development
@@ -106,6 +116,7 @@ Name and description patterns use ICU regular expressions between `/` delimiters
 - XcodeGen **2.46.0** to generate `OTodo.xcodeproj` from `project.yml`
 - Python 3.9 or newer and Git with complete repository history for iOS app builds
 - iOS 17 or later to run OTodo
+- watchOS 10 or later and a paired iPhone for the optional Watch companion
 
 The application scheme is `OTodo`, the generated project is `OTodo.xcodeproj`, and the application bundle identifier is `plastickarma.otodo`.
 
