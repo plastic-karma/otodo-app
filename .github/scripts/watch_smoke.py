@@ -83,12 +83,6 @@ def prepare(output):
     devices = {"phone": phone, "watch": watch}
     (output / "devices.json").write_text(json.dumps(devices, indent=2))
     run("xcrun", "simctl", "pair", watch, phone)
-    pairs = json.loads(run("xcrun", "simctl", "list", "pairs", "--json", capture=True))["pairs"]
-    pair = next(
-        identifier for identifier, devices in pairs.items()
-        if devices["watch"]["udid"] == watch and devices["phone"]["udid"] == phone
-    )
-    run("xcrun", "simctl", "pair_activate", pair)
     for device in (phone, watch):
         run("xcrun", "simctl", "bootstatus", device, "-b")
     with open(os.environ["GITHUB_ENV"], "a") as environment:
