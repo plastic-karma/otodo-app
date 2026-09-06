@@ -5,7 +5,7 @@ struct HighlightedTaskNameField: UIViewRepresentable {
     @Binding var text: String
     let highlightRange: NSRange?
     let accessibilityIdentifier: String
-    @Binding var isFocused: Bool
+    @Binding var requestsFocus: Bool
 
     @MainActor
     func makeCoordinator() -> Coordinator {
@@ -31,6 +31,9 @@ struct HighlightedTaskNameField: UIViewRepresentable {
             action: #selector(Coordinator.textDidChange(_:)),
             for: .editingChanged
         )
+        textField.didFulfillFocusRequest = { [weak coordinator = context.coordinator] in
+            coordinator?.parent.requestsFocus = false
+        }
         return textField
     }
 
@@ -38,13 +41,9 @@ struct HighlightedTaskNameField: UIViewRepresentable {
     func updateUIView(_ textField: NameTextField, context: Context) {
         context.coordinator.parent = self
         textField.isEnabled = context.environment.isEnabled
-        textField.wantsFocus = isFocused
-        defer {
-            if isFocused {
-                textField.focusIfPossible()
-            } else if textField.isFirstResponder {
-                textField.resignFirstResponder()
-            }
+        textField.wantsFocus = requestsFocus
+        if requestsFocus {
+            textField.setNeedsLayout()
         }
         let validHighlightRange = validatedHighlightRange
         guard textField.attributedText?.string != text
@@ -112,15 +111,22 @@ struct HighlightedTaskNameField: UIViewRepresentable {
     @MainActor
     final class NameTextField: UITextField {
         var wantsFocus = false
+        var didFulfillFocusRequest: (() -> Void)?
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
-            focusIfPossible()
+            if wantsFocus { setNeedsLayout() }
         }
 
-        func focusIfPossible() {
-            if wantsFocus, window != nil, !isFirstResponder {
-                becomeFirstResponder()
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            // Form cells can be re-enabled or moved on screen without another window attachment.
+            guard wantsFocus, isEnabled, window != nil else { return }
+            guard isFirstResponder || becomeFirstResponder() else { return }
+            wantsFocus = false
+            // Report fulfillment after UIKit finishes layout; later user focus changes are independent.
+            DispatchQueue.main.async { [weak self] in
+                self?.didFulfillFocusRequest?()
             }
         }
     }
@@ -136,14 +142,6 @@ struct HighlightedTaskNameField: UIViewRepresentable {
 
         @objc func textDidChange(_ textField: UITextField) {
             parent.text = textField.text ?? ""
-        }
-
-        func textFieldDidBeginEditing(_ textField: UITextField) {
-            if !parent.isFocused { parent.isFocused = true }
-        }
-
-        func textFieldDidEndEditing(_ textField: UITextField) {
-            if parent.isFocused { parent.isFocused = false }
         }
 
         func textFieldShouldReturn(_ textField: UITextField) -> Bool {

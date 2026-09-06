@@ -67,7 +67,7 @@ struct TaskEditorView: View {
     @State private var saveError: String?
     @State private var didSaveAndContinue = false
     @State private var nameFocusRequest = 0
-    @State private var isNameFocused = false
+    @State private var requestsNameFocus = false
 
     init(
         draft: TaskEditorDraft,
@@ -107,7 +107,7 @@ struct TaskEditorView: View {
                             text: $draft.name,
                             highlightRange: detectedDueDatePhrase?.utf16Range,
                             accessibilityIdentifier: "task-editor-name",
-                            isFocused: $isNameFocused
+                            requestsFocus: $requestsNameFocus
                         )
                         .onChange(of: draft.name) { _, name in
                             detectedDueDatePhrase = Self.detectDueDatePhrase(in: name)
@@ -414,7 +414,7 @@ struct TaskEditorView: View {
         value.tags = TaskEditorDraft.parseCommaSeparated(tagsText)
         value.dueDate = detectedDueDatePhrase?.dueDate ?? selectedDueDate
         value.dueTime = selectedDueTime
-        isNameFocused = false
+        requestsNameFocus = false
         isSaving = true
         saveError = nil
         didSaveAndContinue = false
@@ -436,7 +436,7 @@ struct TaskEditorView: View {
                 hasPendingRelativeDueDate = false
                 didSaveAndContinue = true
                 nameFocusRequest += 1
-                isNameFocused = true
+                requestsNameFocus = true
             } else {
                 dismiss()
             }
