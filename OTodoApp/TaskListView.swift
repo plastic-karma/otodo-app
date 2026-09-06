@@ -891,8 +891,9 @@ struct TaskListView: View {
                     .font(.system(size: 32, weight: .light))
                     .foregroundStyle(OTodoTheme.accent)
 
-                Text(selectedFilterID == "inbox" ? "Inbox is clear" : "No matching todos")
+                Text(selectedFilterID == "inbox" ? "Inbox is clear" : "Room for what’s next")
                     .font(.title3.bold())
+                    .multilineTextAlignment(.center)
 
                 Text(emptyDescription)
                     .font(.subheadline)

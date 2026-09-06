@@ -1049,6 +1049,13 @@ final class OTodoUITests: XCTestCase {
         saved.tap()
         XCTAssertTrue(library.waitForNonExistence(timeout: 8))
         XCTAssertTrue(future.waitForNonExistence(timeout: 8), "Editing must invalidate the compiled query")
+        guard require(
+            app.buttons["Add a Todo"], in: app, description: "the empty filtered view's add action"
+        ) else { return }
+        let emptyScreenshot = XCTAttachment(screenshot: app.screenshot())
+        emptyScreenshot.name = "Encouraging empty filtered view"
+        emptyScreenshot.lifetime = .keepAlways
+        add(emptyScreenshot)
 
         openFilters.tap()
         let star = app.buttons["filter-star-\(id)"]
