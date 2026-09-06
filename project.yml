@@ -186,6 +186,7 @@ targets:
         WKRunsIndependentlyOfCompanionApp: false
         CFBundleURLTypes:
           - CFBundleURLName: plastickarma.otodo.watchkitapp
+            CFBundleTypeRole: Editor
             CFBundleURLSchemes:
               - otodo-watch
         ITSAppUsesNonExemptEncryption: false

@@ -137,6 +137,7 @@ def verify(output, derived_data):
             info = plistlib.load(source)
         if info["CFBundleIdentifier"] != expected_id or not (bundle / info["CFBundleExecutable"]).is_file():
             raise RuntimeError(f"Missing executable or incorrect identity in {bundle}")
+        shutil.copy2(bundle / "Info.plist", output / f"{expected_id}-Info.plist")
 
     run("xcrun", "simctl", "install", phone, phone_app)
     run("xcrun", "simctl", "install", watch, watch_app)
