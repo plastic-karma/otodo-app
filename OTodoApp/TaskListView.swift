@@ -185,6 +185,9 @@ struct TaskListView: View {
                         }
                     }
                     ToolbarItem(placement: .topBarTrailing) {
+                        sortMenu
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
                         Button("Filters", systemImage: "line.3.horizontal.decrease") {
                             isFilterLibraryPresented = true
                         }
@@ -343,6 +346,24 @@ struct TaskListView: View {
             presentPendingNewTodoRequest()
         }
 
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            Picker("Sort by", selection: $model.taskSortOrder) {
+                ForEach(TaskSortOrder.allCases, id: \.self) { order in
+                    Text(order.title)
+                        .tag(order)
+                        .accessibilityIdentifier("task-sort-\(order.rawValue)")
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Label("Sort todos", systemImage: "arrow.up.arrow.down")
+        }
+        .labelStyle(.iconOnly)
+        .accessibilityValue(model.taskSortOrder.title)
+        .accessibilityIdentifier("task-sort")
     }
 
     private var selectedFilter: SavedTaskFilter {
@@ -964,6 +985,7 @@ struct TaskListView: View {
             filterID: selectedFilter.id,
             query: selectedFilter.query,
             selectedProject: selectedProject,
+            sortOrder: model.taskSortOrder,
             dates: dates,
             isUpcoming: isUpcoming,
             workspaceKey: model.workspaceSelection.map(FileWorkspaceStore.selectionKey(for:)),
@@ -1023,42 +1045,7 @@ struct TaskListView: View {
             }
             return try query.matches(task, terminalStateIDs: terminalStates, dates: input.dates)
         }
-        result.sort { lhs, rhs in
-            switch (lhs.dueDate, rhs.dueDate) {
-            case let (left?, right?) where left != right:
-                return left < right
-            case (_?, nil):
-                return true
-            case (nil, _?):
-                return false
-            default:
-                break
-            }
-
-            switch (lhs.dueTime, rhs.dueTime) {
-            case let (left?, right?) where left != right:
-                return left < right
-            case (nil, _?):
-                return true
-            case (_?, nil):
-                return false
-            default:
-                break
-            }
-
-            let lhsStateIndex = stateOrder[lhs.state] ?? Int.max
-            let rhsStateIndex = stateOrder[rhs.state] ?? Int.max
-            if lhsStateIndex != rhsStateIndex {
-                return lhsStateIndex < rhsStateIndex
-            }
-
-            let lhsName = lhs.name.utf8
-            let rhsName = rhs.name.utf8
-            if !lhsName.elementsEqual(rhsName) {
-                return lhsName.lexicographicallyPrecedes(rhsName)
-            }
-            return lhs.id < rhs.id
-        }
+        input.sortOrder.sort(&result, stateOrder: stateOrder)
         return TaskFilterResult(
             tasks: result,
             sections: input.isUpcoming
@@ -1332,6 +1319,7 @@ private struct TaskFilterInput: Equatable, Sendable {
     let filterID: String
     let query: String
     let selectedProject: String?
+    let sortOrder: TaskSortOrder
     let dates: TaskDateContext
     let isUpcoming: Bool
     let workspaceKey: String?

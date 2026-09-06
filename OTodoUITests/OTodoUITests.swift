@@ -2187,6 +2187,77 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testTodoSortingPersistsAcrossRelaunchAndKeepsProjectScope() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        let reset = "-ui-testing-reset-workspace"
+        app.launchArguments = ["-ui-testing", reset]
+        app.launch()
+        guard selectFilter("Active", in: app) else { return }
+
+        func assertBefore(_ firstName: String, _ secondName: String, line: UInt = #line) {
+            let first = taskRow(named: firstName, state: "Pending", in: app)
+            let second = taskRow(named: secondName, state: "Pending", in: app)
+            let ordered = XCTNSPredicateExpectation(
+                predicate: NSPredicate { _, _ in
+                    first.exists && second.exists && first.isHittable && second.isHittable
+                        && first.frame.minY < second.frame.minY
+                },
+                object: nil
+            )
+            XCTAssertEqual(
+                XCTWaiter.wait(for: [ordered], timeout: 8), .completed,
+                "\(firstName) must appear before \(secondName)", line: line
+            )
+        }
+
+        assertBefore("Overdue todo", "Seed todo")
+        let sort = app.buttons["task-sort"]
+        guard require(sort, in: app, description: "the todo sorting menu") else { return }
+        for (choice, first, second) in [
+            ("Created date (newest first)", "Undated todo", "Future todo"),
+            ("Alphabetical (A–Z)", "Future todo", "Overdue todo"),
+        ] {
+            sort.tap()
+            let option = app.buttons[choice]
+            guard require(option, in: app, description: "the \(choice) sorting choice") else { return }
+            if choice == "Created date (newest first)" {
+                let screenshot = XCTAttachment(screenshot: app.screenshot())
+                screenshot.name = "Todo sorting choices"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+            }
+            option.tap()
+            assertBefore(first, second)
+            XCTAssertTrue(app.buttons["task-filter-active"].isSelected)
+        }
+
+        app.buttons["project-sidebar-toggle"].tap()
+        let work = app.buttons["project-filter-work"]
+        guard require(work, in: app, description: "the Work project scope") else { return }
+        work.tap()
+        assertBefore("Future todo", "Undated todo")
+        sort.tap()
+        app.buttons["Created date (newest first)"].tap()
+        assertBefore("Undated todo", "Future todo")
+        XCTAssertFalse(taskRow(named: "Overdue todo", state: "Pending", in: app).exists)
+
+        app.terminate()
+        app.launchArguments.removeAll { $0 == reset }
+        app.launch()
+        guard selectFilter("Active", in: app) else { return }
+        assertBefore("Undated todo", "Future todo")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Newest-created todo order restored after relaunch"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        app.buttons["task-sort"].tap()
+        app.buttons["Due date (earliest first)"].tap()
+        assertBefore("Overdue todo", "Seed todo")
+    }
+
+    @MainActor
     private func selectFilter(
         _ name: String,
         in app: XCUIApplication,

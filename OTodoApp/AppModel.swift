@@ -12,6 +12,14 @@ final class AppModel {
         case workspace
     }
 
+    private static let sortOrderDefaultsKey = "todos.sort-order"
+
+    var taskSortOrder: TaskSortOrder {
+        didSet {
+            UserDefaults.standard.set(taskSortOrder.rawValue, forKey: Self.sortOrderDefaultsKey)
+        }
+    }
+
     private(set) var rootState: RootState
     let gitHubClientID: String?
 
@@ -72,6 +80,12 @@ final class AppModel {
         self.isUITesting = isUITesting
         resetsUITestingWorkspace =
             isUITesting && launchArguments.contains("-ui-testing-reset-workspace")
+        if resetsUITestingWorkspace {
+            UserDefaults.standard.removeObject(forKey: Self.sortOrderDefaultsKey)
+        }
+        taskSortOrder = TaskSortOrder(
+            rawValue: UserDefaults.standard.string(forKey: Self.sortOrderDefaultsKey) ?? ""
+        ) ?? .dueDate
 
         let clientID = Self.configuredClientID(in: infoDictionary)
         gitHubClientID = clientID
