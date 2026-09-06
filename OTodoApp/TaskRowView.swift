@@ -22,7 +22,13 @@ struct TaskRowView: View {
             .disabled(isCompletionDisabled)
             .accessibilityLabel(
                 isSelected.map { "\($0 ? "Deselect" : "Select") \(task.name)" }
-                    ?? (workflowState?.isTerminal == true ? "Reopen \(task.name)" : "Complete \(task.name)")
+                    ?? (workflowState?.isTerminal == true ? "Reopen \(task.name)" :
+                        task.recurrence == nil ? "Complete \(task.name)" : "Complete occurrence of \(task.name)")
+            )
+            .accessibilityHint(
+                isSelected == nil && workflowState?.isTerminal != true && task.recurrence != nil
+                    ? "Schedules the next occurrence and keeps this todo open"
+                    : ""
             )
             .accessibilityValue(isSelected.map { $0 ? "Selected" : "Not selected" }
                 ?? (workflowState?.name ?? task.state))
@@ -45,6 +51,15 @@ struct TaskRowView: View {
                         Text(workflowState?.name ?? task.state)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                    }
+
+                    if task.recurrence != nil {
+                        Label(
+                            workflowState?.isTerminal == true ? "Series finished" : "Repeats",
+                            systemImage: "repeat"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     }
 
                     if let duePresentation {
@@ -194,6 +209,9 @@ struct TaskRowView: View {
         var values = [task.name, "State: \(workflowState?.name ?? task.state)"]
         if workflowState?.isTerminal == true {
             values.append("Terminal state")
+        }
+        if task.recurrence != nil {
+            values.append(workflowState?.isTerminal == true ? "Series finished" : "Recurring todo")
         }
         if let dueDate = task.dueDate {
             let timeSuffix = task.dueTime.map { " at \($0.rawValue)" } ?? ""

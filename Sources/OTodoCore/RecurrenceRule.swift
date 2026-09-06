@@ -178,6 +178,84 @@ public struct RecurrenceRule: Sendable, Equatable, Codable, CustomStringConverti
         }
     }
 
+    /// Advances one record, skipping missed occurrences rather than creating catch-up tasks.
+    public func nextDue(
+        currentDue: CivilDate,
+        completedOn: CivilDate,
+        mode: RecurrenceFrom
+    ) throws -> CivilDate {
+        guard interval > 0 else {
+            throw Self.invalid("INTERVAL must be a positive integer")
+        }
+        let anchor = Self.dateComponents(mode == .schedule ? currentDue : completedOn)
+        let threshold = Self.dateComponents(mode == .schedule ? max(currentDue, completedOn) : completedOn)
+        let anchorDay = Self.dayIndex(anchor)
+        let thresholdDay = Self.dayIndex(threshold)
+
+        switch frequency {
+        case .daily:
+            let periods = try Self.add(UInt64(thresholdDay - anchorDay) / interval, 1)
+            let offset = try Self.multiply(periods, interval)
+            return try Self.date(dayIndex: Self.offsetDay(anchorDay, by: offset))
+        case .weekly:
+            let anchorWeekday = Self.weekday(anchor)
+            let anchorWeek = anchorDay - anchorWeekday.ordinal
+            let elapsedWeeks = UInt64((thresholdDay - anchorWeek) / 7)
+            var period = elapsedWeeks / interval
+            for _ in 0 ..< 2 {
+                let offset = try Self.multiply(Self.multiply(period, interval), 7)
+                let week = try Self.offsetDay(anchorWeek, by: offset)
+                for index in 0 ..< max(1, byDay.count) {
+                    let weekday = byDay.isEmpty ? anchorWeekday : byDay[index]
+                    let candidate = week + weekday.ordinal
+                    if candidate > thresholdDay {
+                        return try Self.date(dayIndex: candidate)
+                    }
+                }
+                period = try Self.add(period, 1)
+            }
+        case .monthly:
+            let anchorMonth = anchor.year * 12 + anchor.month - 1
+            let thresholdMonth = threshold.year * 12 + threshold.month - 1
+            var period = UInt64(thresholdMonth - anchorMonth) / interval
+            // Gregorian month/day validity repeats after 4,800 months.
+            let cycle = 4_800 / Self.gcd(interval, 4_800) + 1
+            for _ in 0 ..< cycle {
+                let month = try Self.add(UInt64(anchorMonth), Self.multiply(period, interval))
+                guard month < 120_000 else { throw Self.dateOverflow() }
+                let year = Int(month / 12)
+                let monthOfYear = Int(month % 12) + 1
+                for index in 0 ..< max(1, byMonthDay.count) {
+                    let day = byMonthDay.isEmpty ? anchor.day : byMonthDay[index]
+                    if let candidate = Self.validDayIndex(year: year, month: monthOfYear, day: day),
+                       candidate > thresholdDay {
+                        return try Self.date(dayIndex: candidate)
+                    }
+                }
+                period = try Self.add(period, 1)
+            }
+        case .yearly:
+            var period = UInt64(threshold.year - anchor.year) / interval
+            let cycle = 400 / Self.gcd(interval, 400) + 1
+            for _ in 0 ..< cycle {
+                let year = try Self.add(UInt64(anchor.year), Self.multiply(period, interval))
+                guard year <= 9_999 else { throw Self.dateOverflow() }
+                for monthIndex in 0 ..< max(1, byMonth.count) {
+                    let month = byMonth.isEmpty ? anchor.month : byMonth[monthIndex]
+                    for dayIndex in 0 ..< max(1, byMonthDay.count) {
+                        let day = byMonthDay.isEmpty ? anchor.day : byMonthDay[dayIndex]
+                        if let candidate = Self.validDayIndex(year: Int(year), month: month, day: day),
+                           candidate > thresholdDay {
+                            return try Self.date(dayIndex: candidate)
+                        }
+                    }
+                }
+                period = try Self.add(period, 1)
+            }
+        }
+        throw Self.invalid("Recurrence selections never produce a valid calendar date")
+    }
+
     public static func validatePresence(
         recurrence: String?,
         recurrenceFrom: RecurrenceFrom?,
@@ -272,6 +350,13 @@ public struct RecurrenceRule: Sendable, Equatable, Codable, CustomStringConverti
     private static func weekday(
         _ components: (year: Int, month: Int, day: Int)
     ) -> RecurrenceWeekday {
+        let daysSinceUnixEpoch = dayIndex(components)
+        let mondayOrdinal = ((daysSinceUnixEpoch + 3) % 7 + 7) % 7
+        return RecurrenceWeekday.allCases[mondayOrdinal]
+    }
+
+    /// Proleptic Gregorian days relative to 1970-01-01, including year zero.
+    private static func dayIndex(_ components: (year: Int, month: Int, day: Int)) -> Int {
         var adjustedYear = components.year
         if components.month <= 2 { adjustedYear -= 1 }
         let era = adjustedYear >= 0 ? adjustedYear / 400 : (adjustedYear - 399) / 400
@@ -279,9 +364,69 @@ public struct RecurrenceRule: Sendable, Equatable, Codable, CustomStringConverti
         let adjustedMonth = components.month + (components.month > 2 ? -3 : 9)
         let dayOfYear = (153 * adjustedMonth + 2) / 5 + components.day - 1
         let dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear
-        let daysSinceUnixEpoch = era * 146_097 + dayOfEra - 719_468
-        let mondayOrdinal = ((daysSinceUnixEpoch + 3) % 7 + 7) % 7
-        return RecurrenceWeekday.allCases[mondayOrdinal]
+        return era * 146_097 + dayOfEra - 719_468
+    }
+
+    private static func validDayIndex(year: Int, month: Int, day: Int) -> Int? {
+        let daysInMonth: Int
+        switch month {
+        case 1, 3, 5, 7, 8, 10, 12: daysInMonth = 31
+        case 4, 6, 9, 11: daysInMonth = 30
+        case 2:
+            let leap = year.isMultiple(of: 4) && (!year.isMultiple(of: 100) || year.isMultiple(of: 400))
+            daysInMonth = leap ? 29 : 28
+        default: return nil
+        }
+        guard (1 ... daysInMonth).contains(day) else { return nil }
+        return dayIndex((year, month, day))
+    }
+
+    private static func offsetDay(_ day: Int, by offset: UInt64) throws -> Int {
+        let maximum = dayIndex((9_999, 12, 31))
+        guard offset <= UInt64(maximum - day) else { throw dateOverflow() }
+        return day + Int(offset)
+    }
+
+    private static func date(dayIndex day: Int) throws -> CivilDate {
+        guard day >= dayIndex((0, 1, 1)), day <= dayIndex((9_999, 12, 31)) else {
+            throw dateOverflow()
+        }
+        let shifted = day + 719_468
+        let era = shifted >= 0 ? shifted / 146_097 : (shifted - 146_096) / 146_097
+        let dayOfEra = shifted - era * 146_097
+        let yearOfEra = (dayOfEra - dayOfEra / 1_460 + dayOfEra / 36_524 - dayOfEra / 146_096) / 365
+        var year = yearOfEra + era * 400
+        let dayOfYear = dayOfEra - (365 * yearOfEra + yearOfEra / 4 - yearOfEra / 100)
+        let adjustedMonth = (5 * dayOfYear + 2) / 153
+        let dayOfMonth = dayOfYear - (153 * adjustedMonth + 2) / 5 + 1
+        let month = adjustedMonth + (adjustedMonth < 10 ? 3 : -9)
+        if month <= 2 { year += 1 }
+        return try CivilDate(rawValue: String(format: "%04d-%02d-%02d", year, month, dayOfMonth))
+    }
+
+    private static func add(_ lhs: UInt64, _ rhs: UInt64) throws -> UInt64 {
+        let (value, overflow) = lhs.addingReportingOverflow(rhs)
+        guard !overflow else { throw dateOverflow() }
+        return value
+    }
+
+    private static func multiply(_ lhs: UInt64, _ rhs: UInt64) throws -> UInt64 {
+        let (value, overflow) = lhs.multipliedReportingOverflow(by: rhs)
+        guard !overflow else { throw dateOverflow() }
+        return value
+    }
+
+    private static func gcd(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+        var left = lhs
+        var right = rhs
+        while right != 0 {
+            (left, right) = (right, left % right)
+        }
+        return left
+    }
+
+    private static func dateOverflow() -> OTodoError {
+        invalid("Recurrence has no next date in the supported calendar range")
     }
 
     private static func invalid(_ message: String) -> OTodoError {

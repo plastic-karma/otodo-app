@@ -1822,6 +1822,14 @@ final class OTodoUITests: XCTestCase {
         relative.tap()
         relative.typeText("in 6 hours")
         app.buttons["task-editor-relative-due-apply"].tap()
+        let repeatPicker = app.buttons["task-editor-repeat"]
+        for _ in 0..<6 {
+            if repeatPicker.exists && repeatPicker.isHittable { break }
+            editor.swipeUp()
+        }
+        guard require(repeatPicker, in: app, description: "the first todo's repeat setting") else { return }
+        repeatPicker.tap()
+        app.buttons["Daily"].tap()
 
         let createAnother = app.buttons["task-editor-save-another"]
         guard require(createAnother, in: app, description: "Save & Create Another") else { return }
@@ -1854,6 +1862,10 @@ final class OTodoUITests: XCTestCase {
                 named: taskName, state: "Pending", in: app, taskList: taskList,
                 description: "the persisted \(taskName) todo"
             ) else { return }
+            XCTAssertEqual(
+                task.label.contains("Recurring todo"), hasDate,
+                "Save & Create Another must clear recurrence with the schedule"
+            )
             task.tap()
             guard require(editor, in: app, description: "the saved repeated-entry todo") else { return }
             XCTAssertEqual(app.textFields["task-editor-name"].value as? String, taskName)
@@ -2255,6 +2267,115 @@ final class OTodoUITests: XCTestCase {
         app.buttons["task-sort"].tap()
         app.buttons["Due date (earliest first)"].tap()
         assertBefore("Overdue todo", "Seed todo")
+    }
+
+    @MainActor
+    func testRecurringOccurrencePersistsAndSeriesCanFinish() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        let reset = "-ui-testing-reset-workspace"
+        app.launchArguments = ["-ui-testing", reset]
+        app.launch()
+        guard selectFilter("Active", in: app) else { return }
+        app.buttons["task-add"].tap()
+
+        let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
+        let name = app.textFields["task-editor-name"]
+        guard require(name, in: app, description: "the recurring todo name") else { return }
+        name.tap()
+        name.typeText("Recurring review in 100 days")
+        let repeatPicker = app.buttons["task-editor-repeat"]
+        for _ in 0..<6 {
+            if repeatPicker.exists && repeatPicker.isHittable { break }
+            editor.swipeUp()
+        }
+        guard require(repeatPicker, in: app, description: "the repeat frequency picker") else { return }
+        repeatPicker.tap()
+        app.buttons["Daily"].tap()
+        let interval = app.textFields["task-editor-repeat-interval"]
+        guard require(interval, in: app, description: "the repeat interval") else { return }
+        interval.tap()
+        interval.typeText(XCUIKeyboardKey.delete.rawValue + "0")
+        let save = app.buttons["task-editor-save"]
+        XCTAssertFalse(save.isEnabled, "A zero interval cannot be saved")
+        interval.typeText(XCUIKeyboardKey.delete.rawValue + "2")
+        XCTAssertTrue(save.isEnabled)
+        let settingsScreenshot = XCTAttachment(screenshot: app.screenshot())
+        settingsScreenshot.name = "Create a recurring todo with a two-day interval"
+        settingsScreenshot.lifetime = .keepAlways
+        add(settingsScreenshot)
+        save.tap()
+        guard requireEditorDismissed(editor, after: "creating a recurring todo", in: app) else { return }
+
+        let taskList = app.descendants(matching: .any).matching(identifier: "task-list").firstMatch
+        guard let row = requireTaskRow(
+            named: "Recurring review", state: "Pending", in: app, taskList: taskList,
+            description: "the new recurring todo"
+        ) else { return }
+        let taskID = String(row.identifier.dropFirst("task-row-".count))
+        let dueRange = try XCTUnwrap(row.label.range(of: "Due: "))
+        let initialDue = String(row.label[dueRange.upperBound...].prefix(10))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        let initialDate = try XCTUnwrap(formatter.date(from: initialDue))
+        let nextDate = try XCTUnwrap(calendar.date(byAdding: .day, value: 2, to: initialDate))
+        let nextDue = formatter.string(from: nextDate)
+
+        let circle = app.buttons["task-toggle-completion-\(taskID)"]
+        guard require(circle, in: app, description: "the occurrence completion circle") else { return }
+        circle.tap()
+        let advanced = app.buttons.matching(NSPredicate(
+            format: "identifier == %@ AND label CONTAINS %@ AND label CONTAINS %@",
+            "task-row-\(taskID)", "State: Pending", "Due: \(nextDue)"
+        )).firstMatch
+        guard require(advanced, in: app, description: "the same open todo at its next due date") else { return }
+        XCTAssertFalse(editor.exists, "Occurrence completion must not open the title editor")
+
+        app.terminate()
+        app.launchArguments.removeAll { $0 == reset }
+        app.launch()
+        guard selectFilter("Active", in: app) else { return }
+        taskList.swipeUp()
+        guard require(advanced, in: app, description: "the persisted next occurrence after relaunch") else { return }
+        advanced.tap()
+        guard require(editor, in: app, description: "the recurring todo opened by its title") else { return }
+        XCTAssertEqual(name.value as? String, "Recurring review")
+        for _ in 0..<6 {
+            if interval.exists && interval.isHittable { break }
+            editor.swipeUp()
+        }
+        guard require(interval, in: app, description: "the persisted editable recurrence") else { return }
+        XCTAssertEqual(interval.value as? String, "2")
+        app.buttons["Cancel"].tap()
+        guard requireEditorDismissed(editor, after: "inspecting the next occurrence", in: app) else { return }
+        advanced.press(forDuration: 1.2)
+        let finish = app.buttons["task-context-finish-series-\(taskID)"]
+        guard require(finish, in: app, description: "the explicit finish-series action") else { return }
+        let actionsScreenshot = XCTAttachment(screenshot: app.screenshot())
+        actionsScreenshot.name = "Recurring todo offers occurrence completion and finish series"
+        actionsScreenshot.lifetime = .keepAlways
+        add(actionsScreenshot)
+        finish.tap()
+        XCTAssertTrue(advanced.waitForNonExistence(timeout: 8))
+
+        app.terminate()
+        app.launch()
+        guard selectFilter("All", in: app) else { return }
+        guard let finished = requireTaskRow(
+            named: "Recurring review", state: "Done", in: app, taskList: taskList,
+            description: "the finished series persisted after relaunch"
+        ) else { return }
+        XCTAssertEqual(finished.identifier, "task-row-\(taskID)")
+        XCTAssertTrue(finished.label.contains("Due: \(nextDue)"), "Finishing the series must not advance its schedule")
+        let finishedScreenshot = XCTAttachment(screenshot: app.screenshot())
+        finishedScreenshot.name = "Finished recurring series persisted without another occurrence"
+        finishedScreenshot.lifetime = .keepAlways
+        add(finishedScreenshot)
     }
 
     @MainActor

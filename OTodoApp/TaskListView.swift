@@ -1192,12 +1192,21 @@ struct TaskListView: View {
                     Button {
                         toggleCompletion(task)
                     } label: {
-                        Label("Done", systemImage: "checkmark")
+                        Label(task.recurrence == nil ? "Done" : "Complete occurrence", systemImage: "checkmark")
                     }
                     .disabled(model.isBusy)
                     .accessibilityIdentifier(
                         "task-context-complete-\(task.id.rawValue)"
                     )
+                }
+                if canComplete, task.recurrence != nil {
+                    Button {
+                        finishSeries(task)
+                    } label: {
+                        Label("Finish series", systemImage: "stop.circle")
+                    }
+                    .disabled(model.isBusy)
+                    .accessibilityIdentifier("task-context-finish-series-\(task.id.rawValue)")
                 }
                 Button {
                     reschedulePresentation = ReschedulePresentation(tasks: [task])
@@ -1233,7 +1242,7 @@ struct TaskListView: View {
                     Button {
                         toggleCompletion(task)
                     } label: {
-                        Label("Done", systemImage: "checkmark")
+                        Label(task.recurrence == nil ? "Done" : "Complete occurrence", systemImage: "checkmark")
                     }
                     .tint(OTodoTheme.mint)
                     .disabled(model.isBusy)
@@ -1300,6 +1309,22 @@ struct TaskListView: View {
 
     private func toggleCompletion(_ task: TodoTask) {
         guard let targetState = completionTarget(for: task) else { return }
+        Task { @MainActor in
+            guard !model.isBusy else { return }
+            if state(for: task.state)?.isTerminal == true {
+                var draft = TaskEditorDraft(task: task)
+                draft.state = targetState
+                await model.updateTask(id: task.id, draft: draft)
+            } else {
+                await model.completeTask(task)
+            }
+        }
+    }
+
+    private func finishSeries(_ task: TodoTask) {
+        guard task.recurrence != nil,
+              state(for: task.state)?.isTerminal != true,
+              let targetState = completionState?.id else { return }
         Task { @MainActor in
             guard !model.isBusy else { return }
             var draft = TaskEditorDraft(task: task)

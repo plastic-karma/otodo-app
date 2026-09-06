@@ -19,7 +19,7 @@ Tap **+** to add a todo. Touch and hold **+** to choose **New Todo**, **Bulk Add
 
 **Bulk Add** accepts one todo per nonblank line. Due dates come only from phrases in each name; the detected phrase is removed on save. The entire batch is validated and saved together on the device, so an invalid line cannot leave a partially created batch.
 
-In the **New Todo** editor, **Save & Create Another** saves without closing, confirms the save, and returns focus to a fresh name. It keeps the selected state, projects, and tags, but clears notes and all date/time inputs. Normal **Save** still saves and closes; editing an existing todo does not offer repeated creation.
+In the **New Todo** editor, **Save & Create Another** saves without closing, confirms the save, and returns focus to a fresh name. It keeps the selected state, projects, and tags, but clears notes, recurrence, and all date/time inputs. Normal **Save** still saves and closes; editing an existing todo does not offer repeated creation.
 
 Add OTodo's **Today** widget to the Home Screen to see active todos due today or overdue without opening the app. The widget refreshes when OTodo's tasks change and at the next local day boundary.
 
@@ -61,6 +61,16 @@ Sections never duplicate a task and exclude configured terminal states. They are
 Tap **Select**, choose several rows (or **Select all** for the current scope), then **Reschedule**. The shared calendar and relative-date controls support a weekly review without opening each todo. Bulk edits initially keep every date and time; explicitly set or remove either field. A date-only edit keeps each todo's own time. Relative days/weeks/months/years change dates, while minutes/hours set both date and time. Removing dates also removes times; recurring todos still require dates.
 
 The entire batch is validated and saved atomically to the normal durable outbox, including offline. Names, states, projects, tags, notes, recurrence metadata, and custom front matter are preserved. A stale/conflicted task or invalid schedule prevents the whole batch from saving. No external calendar or generated recurring occurrences are involved.
+
+## Recurring todos
+
+In the todo editor, choose **Repeat → Daily, Weekly, Monthly, or Yearly**, enter a positive interval, and set a due date. Weekly rules can select weekdays; monthly and yearly rules can select days of the month; yearly rules can also select months. Empty selections use the anchor date's corresponding values. The current due date must match explicit selections before the todo can be saved.
+
+**Count from → Scheduled date** retains the scheduled cadence and skips missed occurrences. **Completion date** starts from the day you complete the occurrence. Calendar dates that do not exist are skipped rather than shortened: a monthly January 31 occurrence advances to March 31, and a February 29 yearly occurrence waits for a leap year.
+
+Tap the circle or choose **Done** to complete the current occurrence. OTodo advances the same task record, keeps its exact due time, notes, projects, tags, and custom front matter, records the completion date, and returns it to the configured default state. The next date is strictly after the completion day (and after the current due date when counting from schedule). The change is durable offline and uses the normal coalesced outbox; reminders, Today widgets, and Watch snapshots then reflect the next due date.
+
+Touch and hold an open recurring todo and choose **Finish series**, or select a terminal State in the editor, to end the series without scheduling another occurrence. Reopening restores the existing date and rule. **Repeat → None** removes the rule, anchor, and completion history and makes it a one-off todo. Invalid rules, dates outside the supported calendar, stale edits, or unresolved conflicts leave the saved task unchanged.
 
 ## Saved filters
 
@@ -171,7 +181,7 @@ The exact record contract is:
 - Project slugs match `[a-z0-9][a-z0-9-]*` and are unique per task. Project links must be `[[<obsidian_link_prefix>/<projects_directory>/<slug>]]`, with the empty prefix omitting that first component.
 - Tags must be unique, nonempty strings without whitespace, control characters, commas, brackets, or braces, and cannot begin with `#`.
 - `id` frontmatter is rejected. Other frontmatter properties and the Markdown body are preserved when OTodo edits a task. Core fields are emitted canonically.
-- Recurrence supports `FREQ=DAILY|WEEKLY|MONTHLY|YEARLY`, positive `INTERVAL`, non-ordinal `BYDAY` for weekly rules, `BYMONTHDAY=1..31` for monthly/yearly rules, and `BYMONTH=1..12` for yearly rules. A recurring task requires both `due_date` and `recurrence_from`, and its due date must match its selection clauses. The current UI preserves existing recurrence fields but does not edit them or calculate a next occurrence.
+- Recurrence supports `FREQ=DAILY|WEEKLY|MONTHLY|YEARLY`, positive `INTERVAL`, non-ordinal `BYDAY` for weekly rules, `BYMONTHDAY=1..31` for monthly/yearly rules, and `BYMONTH=1..12` for yearly rules. A recurring task requires both `due_date` and `recurrence_from`, and its due date must match its selection clauses. The editor supports these fields; occurrence completion advances the same record and updates `last_completed_date`.
 - The configuration limit is 1 MiB; each selected task/project record is limited to 8 MiB; at most 10,000 selected files and 64 MiB of decoded selected content are loaded.
 
 `Sources/OTodoCore/Resources/schema.json` is the bundled structural schema. Runtime validation additionally enforces the configuration, paths, project existence, dates, times, recurrence subset, and filename identity described above.

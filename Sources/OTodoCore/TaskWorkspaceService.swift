@@ -7,6 +7,8 @@ public struct TaskUpdate: Sendable, Equatable {
     public var tags: [String]
     public var dueDate: CivilDate?
     public var dueTime: CivilTime?
+    public var recurrence: String?
+    public var recurrenceFrom: RecurrenceFrom?
     public var body: String
 
     public init(
@@ -16,6 +18,8 @@ public struct TaskUpdate: Sendable, Equatable {
         tags: [String],
         dueDate: CivilDate?,
         dueTime: CivilTime? = nil,
+        recurrence: String?,
+        recurrenceFrom: RecurrenceFrom?,
         body: String
     ) {
         self.name = name
@@ -24,6 +28,8 @@ public struct TaskUpdate: Sendable, Equatable {
         self.tags = tags
         self.dueDate = dueDate
         self.dueTime = dueTime
+        self.recurrence = recurrence
+        self.recurrenceFrom = recurrenceFrom
         self.body = body
     }
 
@@ -35,6 +41,8 @@ public struct TaskUpdate: Sendable, Equatable {
             tags: task.tags,
             dueDate: task.dueDate,
             dueTime: task.dueTime,
+            recurrence: task.recurrence,
+            recurrenceFrom: task.recurrenceFrom,
             body: task.body
         )
     }
@@ -384,25 +392,98 @@ public actor TaskWorkspaceService {
         update: TaskUpdate
     ) async throws -> TodoTask {
         let workspace = try await requireWorkspace(selection: selection)
-        guard let taskIndex = workspace.tasks.firstIndex(where: { $0.task.id == id }) else {
+        let taskIndex = try Self.editableTaskIndex(id: id, expectedTask: expectedTask, in: workspace)
+        return try await persistTaskUpdate(
+            update,
+            lastCompletedDate: update.recurrence == nil ? nil : expectedTask.lastCompletedDate,
+            taskIndex: taskIndex,
+            in: workspace
+        )
+    }
+
+    /// Completes an occurrence in place, or moves a one-off task to its terminal state.
+    public func completeTask(
+        selection: RepositorySelection,
+        expectedTask: TodoTask,
+        completedOn: CivilDate
+    ) async throws -> TodoTask {
+        let workspace = try await requireWorkspace(selection: selection)
+        let taskIndex = try Self.editableTaskIndex(
+            id: expectedTask.id, expectedTask: expectedTask, in: workspace
+        )
+        guard let state = workspace.configuration.states.first(where: { $0.id == expectedTask.state }) else {
+            throw OTodoError.validation(field: "state", message: "State is not configured")
+        }
+        guard !state.isTerminal else {
+            throw OTodoError.validation(field: "state", message: "Completion requires a nonterminal task")
+        }
+        guard let done = workspace.configuration.states.first(where: { $0.id == "done" && $0.isTerminal })
+            ?? workspace.configuration.states.first(where: \.isTerminal)
+        else {
+            throw OTodoError.validation(field: "state", message: "Completion requires a configured terminal state")
+        }
+        var update = TaskUpdate(task: expectedTask)
+        var lastCompletedDate = expectedTask.lastCompletedDate
+        if let rule = try RecurrenceRule.validatePresence(
+            recurrence: expectedTask.recurrence,
+            recurrenceFrom: expectedTask.recurrenceFrom,
+            dueDate: expectedTask.dueDate,
+            lastCompletedDate: lastCompletedDate
+        ), let due = expectedTask.dueDate, let mode = expectedTask.recurrenceFrom {
+            if let lastCompletedDate, completedOn < lastCompletedDate {
+                throw OTodoError.validation(
+                    field: "last_completed_date",
+                    message: "Completion date cannot be earlier than last_completed_date"
+                )
+            }
+            update.dueDate = try rule.nextDue(currentDue: due, completedOn: completedOn, mode: mode)
+            update.state = workspace.configuration.defaultState
+            lastCompletedDate = completedOn
+        } else {
+            update.state = done.id
+        }
+        return try await persistTaskUpdate(
+            update, lastCompletedDate: lastCompletedDate, taskIndex: taskIndex, in: workspace
+        )
+    }
+
+    private static func editableTaskIndex(
+        id: TaskID,
+        expectedTask: TodoTask,
+        in workspace: WorkspaceState
+    ) throws -> Int {
+        guard let index = workspace.tasks.firstIndex(where: { $0.task.id == id }) else {
             throw OTodoError.notFound(resource: "task \(id.rawValue)")
         }
-        guard workspace.tasks[taskIndex].task == expectedTask else {
-            throw OTodoError.conflict(
-                message: "Task \(id.rawValue) changed since editing began"
-            )
+        guard workspace.tasks[index].task == expectedTask else {
+            throw OTodoError.conflict(message: "Task \(id.rawValue) changed since editing began")
         }
-        try Self.validate(state: update.state, projects: update.projectSlugs, in: workspace)
+        let path = repositoryPath(
+            selection: workspace.selection, storeRelativePath: expectedTask.relativePath
+        )
+        guard !workspace.conflicts.contains(where: { $0.path == path }) else {
+            throw OTodoError.conflict(message: "Resolve the conflict at \(path) before editing")
+        }
+        return index
+    }
 
+    private func persistTaskUpdate(
+        _ update: TaskUpdate,
+        lastCompletedDate: CivilDate?,
+        taskIndex: Int,
+        in workspace: WorkspaceState
+    ) async throws -> TodoTask {
+        try Self.validate(state: update.state, projects: update.projectSlugs, in: workspace)
+        _ = try RecurrenceRule.validatePresence(
+            recurrence: update.recurrence,
+            recurrenceFrom: update.recurrenceFrom,
+            dueDate: update.dueDate,
+            lastCompletedDate: lastCompletedDate
+        )
         let original = workspace.tasks[taskIndex]
         let repositoryPath = Self.repositoryPath(
-            selection: workspace.selection,
-            storeRelativePath: original.task.relativePath
+            selection: workspace.selection, storeRelativePath: original.task.relativePath
         )
-        guard !workspace.conflicts.contains(where: { $0.path == repositoryPath }) else {
-            throw OTodoError.conflict(message: "Resolve the conflict at \(repositoryPath) before editing")
-        }
-
         let editedTask = try TodoTask(
             id: original.task.id,
             relativePath: original.task.relativePath,
@@ -412,9 +493,9 @@ public actor TaskWorkspaceService {
             tags: update.tags,
             dueDate: update.dueDate,
             dueTime: update.dueTime,
-            recurrence: original.task.recurrence,
-            recurrenceFrom: original.task.recurrenceFrom,
-            lastCompletedDate: original.task.lastCompletedDate,
+            recurrence: update.recurrence,
+            recurrenceFrom: update.recurrenceFrom,
+            lastCompletedDate: lastCompletedDate,
             body: update.body,
             extraProperties: original.task.extraProperties
         )
@@ -558,6 +639,8 @@ public actor TaskWorkspaceService {
         tags: [String],
         dueDate: CivilDate?,
         dueTime: CivilTime? = nil,
+        recurrence: String?,
+        recurrenceFrom: RecurrenceFrom?,
         body: String
     ) async throws -> TodoTask {
         try await editTask(
@@ -571,6 +654,8 @@ public actor TaskWorkspaceService {
                 tags: tags,
                 dueDate: dueDate,
                 dueTime: dueTime,
+                recurrence: recurrence,
+                recurrenceFrom: recurrenceFrom,
                 body: body
             )
         )

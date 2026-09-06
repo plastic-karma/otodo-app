@@ -9,6 +9,8 @@ struct TaskEditorDraft: Equatable, Sendable {
     var tags: [String]
     var dueDate: CivilDate?
     var dueTime: CivilTime?
+    var recurrence: String?
+    var recurrenceFrom: RecurrenceFrom?
     var body: String
 
     // Keeping the source value with the draft makes an edit a lossless value operation.
@@ -23,6 +25,8 @@ struct TaskEditorDraft: Equatable, Sendable {
         tags = []
         dueDate = nil
         dueTime = nil
+        recurrence = nil
+        recurrenceFrom = nil
         body = ""
         preservedTask = nil
     }
@@ -34,6 +38,8 @@ struct TaskEditorDraft: Equatable, Sendable {
         tags = task.tags
         dueDate = task.dueDate
         dueTime = task.dueTime
+        recurrence = task.recurrence
+        recurrenceFrom = task.recurrenceFrom
         body = task.body
         preservedTask = task
     }
@@ -63,6 +69,9 @@ struct TaskEditorView: View {
     @State private var dueDate: Date
     @State private var hasPendingRelativeDueDate = false
     @State private var detectedDueDatePhrase: DetectedDueDatePhrase?
+    @State private var recurrenceError: String?
+    @State private var recurrenceRule: RecurrenceRule?
+    @State private var initialRecurrenceSettings: TaskRecurrenceFields.Settings
     @State private var isSaving = false
     @State private var saveError: String?
     @State private var didSaveAndContinue = false
@@ -89,6 +98,16 @@ struct TaskEditorView: View {
         _detectedDueDatePhrase = State(
             initialValue: Self.detectDueDatePhrase(in: draft.name)
         )
+        var parsedRule: RecurrenceRule?
+        var recurrenceError: String?
+        do {
+            parsedRule = try draft.recurrence.map { try RecurrenceRule(parsing: $0) }
+        } catch {
+            recurrenceError = error.localizedDescription
+        }
+        _recurrenceRule = State(initialValue: parsedRule)
+        _recurrenceError = State(initialValue: recurrenceError)
+        _initialRecurrenceSettings = State(initialValue: .init(rule: parsedRule, anchor: draft.recurrenceFrom))
     }
 
     var body: some View {
@@ -234,6 +253,15 @@ struct TaskEditorView: View {
                         Text(dueDateHelpText)
                     }
 
+                    TaskRecurrenceFields(
+                        recurrence: $draft.recurrence,
+                        recurrenceFrom: $draft.recurrenceFrom,
+                        parsedRule: $recurrenceRule,
+                        validationError: $recurrenceError,
+                        initialSettings: initialRecurrenceSettings
+                    )
+                    .id(nameFocusRequest)
+
                     Section("Notes") {
                         TextEditor(text: $draft.body)
                             .frame(minHeight: 160)
@@ -245,6 +273,7 @@ struct TaskEditorView: View {
                             Label(message, systemImage: "exclamationmark.triangle")
                                 .foregroundStyle(.red)
                                 .accessibilityLabel("Cannot save. \(message)")
+                                .accessibilityIdentifier("task-editor-validation")
                         }
                     }
                 }
@@ -392,11 +421,17 @@ struct TaskEditorView: View {
         if hasDueDate, selectedDueDate == nil {
             return "Choose a valid due date."
         }
-        if draft.preservedTask?.recurrence != nil,
-           !hasDueDate,
-           detectedDueDatePhrase == nil
-        {
-            return "Recurring todos require a due date."
+        if let recurrenceError { return recurrenceError }
+        if let recurrenceRule {
+            guard draft.recurrenceFrom != nil else { return "Choose how to count repeats." }
+            guard let date = detectedDueDatePhrase?.dueDate ?? selectedDueDate else {
+                return "Recurring todos require a due date."
+            }
+            if !recurrenceRule.matches(date) {
+                return "The due date must match the repeat selections."
+            }
+        } else if draft.recurrenceFrom != nil {
+            return "Choose a repeat rule or clear its anchor."
         }
         return nil
     }
@@ -429,6 +464,11 @@ struct TaskEditorView: View {
                 draft.body = ""
                 draft.dueDate = nil
                 draft.dueTime = nil
+                draft.recurrence = nil
+                draft.recurrenceFrom = nil
+                recurrenceError = nil
+                recurrenceRule = nil
+                initialRecurrenceSettings = .init(rule: nil, anchor: nil)
                 hasDueDate = false
                 hasDueTime = false
                 dueDate = TaskSchedule.date(from: nil, time: nil)
@@ -497,5 +537,223 @@ struct TaskEditorView: View {
 
     private static func isLowercaseLetterOrDigit(_ value: UInt8) -> Bool {
         (97 ... 122).contains(value) || (48 ... 57).contains(value)
+    }
+}
+
+/// Recurrence input owns its transient text and selections, just like relative-date input.
+/// Only recurrence edits publish a new rule; opening an imported task preserves its source rule.
+private struct TaskRecurrenceFields: View {
+    @Binding private var recurrence: String?
+    @Binding private var recurrenceFrom: RecurrenceFrom?
+    @Binding private var parsedRule: RecurrenceRule?
+    @Binding private var validationError: String?
+    @State private var settings: Settings
+
+    fileprivate struct Settings: Equatable {
+        var frequency: RecurrenceFrequency?
+        var interval: String
+        var weekdays: Set<RecurrenceWeekday>
+        var monthDays: Set<Int>
+        var months: Set<Int>
+        var anchor: RecurrenceFrom
+
+        init(rule: RecurrenceRule?, anchor: RecurrenceFrom?) {
+            frequency = rule?.frequency
+            interval = rule.map { String($0.interval) } ?? "1"
+            weekdays = Set(rule?.byDay ?? [])
+            monthDays = Set(rule?.byMonthDay ?? [])
+            months = Set(rule?.byMonth ?? [])
+            self.anchor = anchor ?? .schedule
+        }
+    }
+
+    init(
+        recurrence: Binding<String?>,
+        recurrenceFrom: Binding<RecurrenceFrom?>,
+        parsedRule: Binding<RecurrenceRule?>,
+        validationError: Binding<String?>,
+        initialSettings: Settings
+    ) {
+        _recurrence = recurrence
+        _recurrenceFrom = recurrenceFrom
+        _parsedRule = parsedRule
+        _validationError = validationError
+        _settings = State(initialValue: initialSettings)
+    }
+
+    var body: some View {
+        Section {
+            Picker("Repeat", selection: $settings.frequency) {
+                Text("None").tag(nil as RecurrenceFrequency?)
+                ForEach(RecurrenceFrequency.allCases, id: \.self) { frequency in
+                    Text(frequency.rawValue.capitalized).tag(Optional(frequency))
+                }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("task-editor-repeat")
+
+            if let frequency = settings.frequency {
+                HStack {
+                    Text("Every")
+                    TextField("1", text: $settings.interval)
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .accessibilityLabel("Repeat interval")
+                        .accessibilityIdentifier("task-editor-repeat-interval")
+                    Text(intervalUnit(for: frequency))
+                        .foregroundStyle(.secondary)
+                }
+
+                if frequency == .weekly {
+                    Menu {
+                        ForEach(RecurrenceWeekday.allCases, id: \.self) { weekday in
+                            Toggle(weekdayName(weekday), isOn: selection(weekday, in: $settings.weekdays))
+                                .accessibilityIdentifier("task-editor-repeat-weekday-\(weekday.rawValue)")
+                        }
+                    } label: {
+                        selectionLabel(
+                            "Weekdays",
+                            value: settings.weekdays.isEmpty ? "Anchor weekday" :
+                                RecurrenceWeekday.allCases.filter { settings.weekdays.contains($0) }
+                                    .map { weekdayName($0) }.joined(separator: ", ")
+                        )
+                    }
+                    .accessibilityIdentifier("task-editor-repeat-weekdays")
+                }
+
+                if frequency == .monthly || frequency == .yearly {
+                    Menu {
+                        ForEach(1 ... 31, id: \.self) { day in
+                            Toggle(String(day), isOn: selection(day, in: $settings.monthDays))
+                                .accessibilityIdentifier("task-editor-repeat-month-day-\(day)")
+                        }
+                    } label: {
+                        selectionLabel(
+                            "Days of month",
+                            value: settings.monthDays.isEmpty ? "Anchor day" :
+                                settings.monthDays.sorted().map(String.init).joined(separator: ", ")
+                        )
+                    }
+                    .accessibilityIdentifier("task-editor-repeat-month-days")
+                }
+
+                if frequency == .yearly {
+                    Menu {
+                        ForEach(1 ... 12, id: \.self) { month in
+                            Toggle(monthName(month), isOn: selection(month, in: $settings.months))
+                                .accessibilityIdentifier("task-editor-repeat-month-\(month)")
+                        }
+                    } label: {
+                        selectionLabel(
+                            "Months",
+                            value: settings.months.isEmpty ? "Anchor month" :
+                                settings.months.sorted().map { monthName($0) }.joined(separator: ", ")
+                        )
+                    }
+                    .accessibilityIdentifier("task-editor-repeat-months")
+                }
+
+                Picker("Count from", selection: $settings.anchor) {
+                    Text("Scheduled date").tag(RecurrenceFrom.schedule)
+                    Text("Completion date").tag(RecurrenceFrom.completion)
+                }
+                .pickerStyle(.menu)
+                .accessibilityIdentifier("task-editor-repeat-anchor")
+            }
+        } header: {
+            Text("Repeat")
+        } footer: {
+            if settings.frequency != nil {
+                Text(
+                    (settings.anchor == .schedule
+                        ? "Completing an occurrence keeps the original schedule and skips missed dates."
+                        : "Completing an occurrence starts the interval from the day you complete it.")
+                    + " A due date matching any selections is required. Empty selections use the anchor date. Impossible dates are skipped, never shortened."
+                    + " Choose a terminal State to finish the series without scheduling another occurrence."
+                )
+            } else {
+                Text("None makes this a one-off todo and clears its completion history.")
+            }
+        }
+        .onChange(of: settings) { _, _ in publishRule() }
+    }
+
+    private func publishRule() {
+        guard let frequency = settings.frequency else {
+            parsedRule = nil
+            recurrence = nil
+            recurrenceFrom = nil
+            validationError = nil
+            return
+        }
+        guard let interval = UInt64(settings.interval), interval > 0 else {
+            validationError = "Repeat interval must be a positive whole number."
+            return
+        }
+        do {
+            let rule = try RecurrenceRule(
+                frequency: frequency,
+                interval: interval,
+                byDay: frequency == .weekly ? Array(settings.weekdays) : [],
+                byMonthDay: frequency == .monthly || frequency == .yearly ? Array(settings.monthDays) : [],
+                byMonth: frequency == .yearly ? Array(settings.months) : []
+            )
+            parsedRule = rule
+            recurrence = rule.description
+            recurrenceFrom = settings.anchor
+            validationError = nil
+        } catch {
+            validationError = error.localizedDescription
+        }
+    }
+
+    private func selection<Value: Hashable>(
+        _ value: Value,
+        in values: Binding<Set<Value>>
+    ) -> Binding<Bool> {
+        Binding(
+            get: { values.wrappedValue.contains(value) },
+            set: { selected in
+                if selected {
+                    values.wrappedValue.insert(value)
+                } else {
+                    values.wrappedValue.remove(value)
+                }
+            }
+        )
+    }
+
+    private func selectionLabel(_ title: String, value: String) -> some View {
+        HStack {
+            Text(title).foregroundStyle(.primary)
+            Spacer()
+            Text(value).foregroundStyle(.secondary).multilineTextAlignment(.trailing)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func intervalUnit(for frequency: RecurrenceFrequency) -> String {
+        switch frequency {
+        case .daily: "day(s)"
+        case .weekly: "week(s)"
+        case .monthly: "month(s)"
+        case .yearly: "year(s)"
+        }
+    }
+
+    private func weekdayName(_ weekday: RecurrenceWeekday) -> String {
+        switch weekday {
+        case .monday: "Monday"
+        case .tuesday: "Tuesday"
+        case .wednesday: "Wednesday"
+        case .thursday: "Thursday"
+        case .friday: "Friday"
+        case .saturday: "Saturday"
+        case .sunday: "Sunday"
+        }
+    }
+
+    private func monthName(_ month: Int) -> String {
+        TaskSchedule.calendar.monthSymbols[month - 1]
     }
 }

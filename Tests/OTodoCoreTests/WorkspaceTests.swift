@@ -312,6 +312,8 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
                 tags: ["edited"],
                 dueDate: try CivilDate(rawValue: "2026-10-04"),
                 dueTime: try CivilTime(rawValue: "14:45"),
+                recurrence: nil,
+                recurrenceFrom: nil,
                 body: editedBody
             )
         )
@@ -940,6 +942,8 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
                 projectSlugs: ["alpha"],
                 tags: ["first"],
                 dueDate: nil,
+                recurrence: nil,
+                recurrenceFrom: nil,
                 body: "First body\n"
             )
         )
@@ -966,6 +970,8 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
                 projectSlugs: ["beta"],
                 tags: ["latest"],
                 dueDate: try CivilDate(rawValue: "2027-01-02"),
+                recurrence: nil,
+                recurrenceFrom: nil,
                 body: "Latest body\n"
             )
         )
@@ -1024,6 +1030,8 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
                 projectSlugs: ["alpha"],
                 tags: ["edited"],
                 dueDate: nil,
+                recurrence: nil,
+                recurrenceFrom: nil,
                 body: "Edited body\n"
             )
         )
@@ -1136,6 +1144,8 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
             projectSlugs: ["alpha"],
             tags: ["edited"],
             dueDate: try CivilDate(rawValue: "2027-02-03"),
+            recurrence: nil,
+            recurrenceFrom: nil,
             body: "User body\n"
         )
 
@@ -1214,6 +1224,8 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
                     projectSlugs: ["alpha"],
                     tags: [],
                     dueDate: nil,
+                    recurrence: nil,
+                    recurrenceFrom: nil,
                     body: "Must not persist"
                 )
             )
@@ -1238,6 +1250,8 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
                     projectSlugs: ["unknown-project"],
                     tags: [],
                     dueDate: nil,
+                    recurrence: nil,
+                    recurrenceFrom: nil,
                     body: "Must not persist"
                 )
             )
@@ -1694,6 +1708,283 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         let durable = try await store.load(selection: selection)
         XCTAssertEqual(durable, resolved)
     }
+
+    func testRecurringCompletionPersistsSameRecordAndCoalescesOfflineOutbox() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let original = try makeDocument(
+            id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"), name: "Recurring",
+            state: "doing", projectSlugs: ["alpha"], tags: ["focus"],
+            dueDate: CivilDate(rawValue: "2026-09-01"), dueTime: CivilTime(rawValue: "14:35"),
+            recurrence: "FREQ=DAILY;INTERVAL=3", recurrenceFrom: .schedule,
+            extraProperties: [YAMLProperty(name: "custom", value: .sequence([.string("Keep me")]))],
+            body: "Exact **Markdown**\n\n- [ ] Checklist\n", blobSHA: "original-blob",
+            configuration: configuration
+        )
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(
+            makeWorkspace(selection: selection, configuration: configuration, tasks: [original]),
+            expectedRevision: nil
+        )
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+        let first = try await service.completeTask(
+            selection: selection, expectedTask: original.task, completedOn: CivilDate(rawValue: "2026-09-09")
+        )
+        var expected = original.task
+        expected.state = "backlog"
+        expected.dueDate = try CivilDate(rawValue: "2026-09-10")
+        expected.lastCompletedDate = try CivilDate(rawValue: "2026-09-09")
+        XCTAssertEqual(first, expected)
+        let afterFirst = try await loadRequired(store, selection: selection)
+        let firstPending = try XCTUnwrap(afterFirst.pendingChanges.first)
+        let second = try await service.completeTask(
+            selection: selection, expectedTask: first, completedOn: CivilDate(rawValue: "2026-09-14")
+        )
+        expected.dueDate = try CivilDate(rawValue: "2026-09-16")
+        expected.lastCompletedDate = try CivilDate(rawValue: "2026-09-14")
+        XCTAssertEqual(second, expected)
+        let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(durable.tasks.map(\.task), [expected])
+        XCTAssertEqual(durable.pendingChanges.count, 1)
+        let pending = try XCTUnwrap(durable.pendingChanges.first)
+        XCTAssertEqual(pending.path, repositoryPath(selection, original.task.relativePath))
+        XCTAssertEqual(pending.baseBlobSHA, "original-blob")
+        XCTAssertEqual(pending.id, firstPending.id)
+        XCTAssertEqual(pending.createdAt, firstPending.createdAt)
+        let serialized = try XCTUnwrap(pending.content)
+        let replayed = try ObsidianTaskCodec().parseTask(
+            id: original.task.id, relativePath: original.task.relativePath,
+            text: serialized, configuration: configuration
+        )
+        XCTAssertEqual(replayed, expected)
+    }
+
+    func testRecurrenceEditingFinishingReopeningAndRemovalKeepDistinctSemantics() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(makeWorkspace(selection: selection, configuration: configuration), expectedRevision: nil)
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+        let oneOff = try await service.addTask(
+            selection: selection, name: "Repeat explicitly", dueDate: CivilDate(rawValue: "2026-09-01")
+        )
+        var update = TaskUpdate(task: oneOff)
+        update.recurrence = "FREQ=DAILY;INTERVAL=3"
+        update.recurrenceFrom = .completion
+        let recurring = try await service.editTask(
+            selection: selection, id: oneOff.id, expectedTask: oneOff, update: update
+        )
+        let completed = try await service.completeTask(
+            selection: selection, expectedTask: recurring, completedOn: CivilDate(rawValue: "2026-09-09")
+        )
+        XCTAssertEqual(completed.dueDate, try CivilDate(rawValue: "2026-09-12"))
+        update = TaskUpdate(task: completed)
+        update.recurrence = "FREQ=WEEKLY;BYDAY=SA"
+        update.recurrenceFrom = .schedule
+        update.state = "done"
+        let finished = try await service.editTask(
+            selection: selection, id: completed.id, expectedTask: completed, update: update
+        )
+        XCTAssertEqual(finished.dueDate, completed.dueDate)
+        XCTAssertEqual(finished.lastCompletedDate, completed.lastCompletedDate)
+        XCTAssertEqual(finished.state, "done")
+        XCTAssertEqual(finished.recurrence, "FREQ=WEEKLY;INTERVAL=1;BYDAY=SA")
+        update = TaskUpdate(task: finished)
+        update.state = "backlog"
+        let reopened = try await service.editTask(
+            selection: selection, id: finished.id, expectedTask: finished, update: update
+        )
+        XCTAssertEqual(reopened.dueDate, completed.dueDate)
+        XCTAssertEqual(reopened.lastCompletedDate, completed.lastCompletedDate)
+        update = TaskUpdate(task: reopened)
+        update.recurrence = nil
+        update.recurrenceFrom = nil
+        let removed = try await service.editTask(
+            selection: selection, id: reopened.id, expectedTask: reopened, update: update
+        )
+        XCTAssertNil(removed.recurrence)
+        XCTAssertNil(removed.recurrenceFrom)
+        XCTAssertNil(removed.lastCompletedDate)
+        let done = try await service.completeTask(
+            selection: selection, expectedTask: removed, completedOn: CivilDate(rawValue: "2026-09-14")
+        )
+        XCTAssertEqual(done.state, "done")
+        XCTAssertEqual(done.dueDate, removed.dueDate)
+        XCTAssertNil(done.lastCompletedDate)
+        update = TaskUpdate(task: done)
+        update.state = "backlog"
+        let reopenedOneOff = try await service.editTask(
+            selection: selection, id: done.id, expectedTask: done, update: update
+        )
+        XCTAssertEqual(reopenedOneOff, removed)
+        let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(durable.tasks.map(\.task), [removed])
+    }
+
+    func testCompletionRejectsTerminalBackwardsAndOverflowDatesAtomically() async throws {
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        for (state, due, last, completed, field) in [
+            ("done", "2026-09-10", "2026-09-09", "2026-09-10", "state"),
+            ("backlog", "2026-09-10", "2026-09-09", "2026-09-08", "last_completed_date"),
+            ("backlog", "9999-12-31", "9999-12-30", "9999-12-31", "recurrence"),
+        ] {
+            let directory = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let document = try makeDocument(
+                id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"), name: "Unchanged", state: state,
+                dueDate: CivilDate(rawValue: due), recurrence: "FREQ=DAILY", recurrenceFrom: .schedule,
+                lastCompletedDate: CivilDate(rawValue: last), configuration: configuration
+            )
+            let initial = try makeWorkspace(selection: selection, configuration: configuration, tasks: [document])
+            let store = FileWorkspaceStore(rootURL: directory)
+            try await store.save(initial, expectedRevision: nil)
+            let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+            do {
+                _ = try await service.completeTask(
+                    selection: selection, expectedTask: document.task, completedOn: CivilDate(rawValue: completed)
+                )
+                XCTFail("Expected completion rejection")
+            } catch let error as OTodoError {
+                guard case let .validation(actualField, _) = error else {
+                    return XCTFail("Expected validation, got \(error)")
+                }
+                XCTAssertEqual(actualField, field)
+            }
+            let durable = try await loadRequired(store, selection: selection)
+            XCTAssertEqual(durable, initial)
+        }
+    }
+
+    func testCompletionRejectsStaleConflictedAndFailedSavesWithoutMutation() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let document = try makeDocument(
+            id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"), name: "Unchanged",
+            dueDate: CivilDate(rawValue: "2026-09-07"),
+            recurrence: "FREQ=WEEKLY;BYDAY=MO", recurrenceFrom: .schedule,
+            blobSHA: "original-blob", configuration: configuration
+        )
+        let initial = try makeWorkspace(selection: selection, configuration: configuration, tasks: [document])
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+        let today = try CivilDate(rawValue: "2026-09-09")
+        var stale = document.task
+        stale.name = "Stale task"
+        await assertConflict {
+            _ = try await service.completeTask(selection: selection, expectedTask: stale, completedOn: today)
+        }
+        let failingService = TaskWorkspaceService(
+            persistence: CapacityLimitedWorkspaceStore(store: store, maximumTaskCount: 0),
+            taskCodec: ObsidianTaskCodec()
+        )
+        do {
+            _ = try await failingService.completeTask(selection: selection, expectedTask: document.task, completedOn: today)
+            XCTFail("Expected storage failure")
+        } catch let error as OTodoError {
+            guard case .corruptLocalState = error else {
+                return XCTFail("Expected storage failure, got \(error)")
+            }
+        }
+        let afterFailure = try await loadRequired(store, selection: selection)
+        XCTAssertEqual(afterFailure, initial)
+        let conflict = try SyncConflict(
+            path: repositoryPath(selection, document.task.relativePath),
+            baseBlobSHA: "original-blob", remoteBlobSHA: "remote-blob",
+            localContent: document.content, remoteContent: document.content
+        )
+        let conflicted = try makeWorkspace(
+            selection: selection, configuration: configuration, tasks: [document],
+            conflicts: [conflict], revision: 1
+        )
+        try await store.save(conflicted, expectedRevision: initial.revision)
+        await assertConflict {
+            _ = try await service.completeTask(selection: selection, expectedTask: document.task, completedOn: today)
+        }
+        // A snapshot loaded before a concurrent sync must not overwrite the new conflict.
+        let staleWorkspaceService = TaskWorkspaceService(
+            persistence: SnapshotWorkspaceStore(store: store, snapshot: initial),
+            taskCodec: ObsidianTaskCodec()
+        )
+        await assertConflict {
+            _ = try await staleWorkspaceService.completeTask(
+                selection: selection, expectedTask: document.task, completedOn: today
+            )
+        }
+        let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(durable, conflicted)
+    }
+
+    func testCompletionUsesPreferredDoneThenConfiguredTerminalFallback() async throws {
+        let selection = try makeSelection()
+        for terminalIDs in [["cancelled", "done"], ["archived"]] {
+            let directory = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let configuration = try StoreConfiguration(
+                schemaVersion: 1, tasksDirectory: "Tasks", projectsDirectory: "Projects",
+                obsidianLinkPrefix: "", defaultState: "backlog",
+                states: [WorkflowState(id: "backlog", name: "Backlog", isTerminal: false)] +
+                    terminalIDs.map { try WorkflowState(id: $0, name: $0, isTerminal: true) }
+            )
+            let store = FileWorkspaceStore(rootURL: directory)
+            try await store.save(makeWorkspace(selection: selection, configuration: configuration), expectedRevision: nil)
+            let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+            let task = try await service.addTask(selection: selection, name: "One-off")
+            let completed = try await service.completeTask(
+                selection: selection, expectedTask: task, completedOn: CivilDate(rawValue: "2026-09-09")
+            )
+            XCTAssertEqual(completed.state, terminalIDs.contains("done") ? "done" : "archived")
+            XCTAssertNil(completed.dueDate)
+            XCTAssertNil(completed.recurrence)
+        }
+    }
+
+    func testInvalidRecurrenceEditsLeaveHistoryAndOutboxUntouched() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let document = try makeDocument(
+            id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"), name: "Keep schedule",
+            dueDate: CivilDate(rawValue: "2026-09-07"), dueTime: CivilTime(rawValue: "09:30"),
+            recurrence: "FREQ=WEEKLY;BYDAY=MO", recurrenceFrom: .schedule,
+            lastCompletedDate: CivilDate(rawValue: "2026-08-31"), configuration: configuration
+        )
+        let initial = try makeWorkspace(selection: selection, configuration: configuration, tasks: [document])
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+        var missingDue = TaskUpdate(task: document.task)
+        missingDue.dueDate = nil
+        missingDue.dueTime = nil
+        var mismatchedSelection = TaskUpdate(task: document.task)
+        mismatchedSelection.recurrence = "FREQ=WEEKLY;BYDAY=TU"
+        var missingMode = TaskUpdate(task: document.task)
+        missingMode.recurrenceFrom = nil
+        var malformed = TaskUpdate(task: document.task)
+        malformed.recurrence = "FREQ=MONTHLY;INTERVAL=0"
+        for update in [missingDue, mismatchedSelection, missingMode, malformed] {
+            do {
+                _ = try await service.editTask(
+                    selection: selection, id: document.task.id, expectedTask: document.task, update: update
+                )
+                XCTFail("Expected invalid recurrence edit rejection")
+            } catch let error as OTodoError {
+                guard case .validation = error else {
+                    return XCTFail("Expected validation, got \(error)")
+                }
+            }
+            let durable = try await loadRequired(store, selection: selection)
+            XCTAssertEqual(durable, initial)
+        }
+    }
 }
 
 private func loadRequired(
@@ -1754,6 +2045,19 @@ private struct CapacityLimitedWorkspaceStore: WorkspacePersisting {
         guard workspace.tasks.count <= maximumTaskCount else {
             throw OTodoError.corruptLocalState(message: "Injected storage capacity failure")
         }
+        try await store.save(workspace, expectedRevision: expectedRevision)
+    }
+}
+
+private struct SnapshotWorkspaceStore: WorkspacePersisting {
+    let store: FileWorkspaceStore
+    let snapshot: WorkspaceState
+
+    func load(selection: RepositorySelection) async throws -> WorkspaceState? {
+        snapshot
+    }
+
+    func save(_ workspace: WorkspaceState, expectedRevision: UInt64?) async throws {
         try await store.save(workspace, expectedRevision: expectedRevision)
     }
 }
