@@ -96,7 +96,8 @@ def group_directory(device, bundle):
 
 
 def wait_for_snapshot(path, expected=None, pid=None):
-    deadline = time.monotonic() + 180
+    # Cold paired simulators can take over three minutes to deliver the first reply.
+    deadline = time.monotonic() + 300
     while time.monotonic() < deadline:
         if pid is not None:
             os.kill(pid, 0)
