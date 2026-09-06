@@ -46,7 +46,7 @@ final class WatchSnapshotReceiver: NSObject, WCSessionDelegate {
         }
         let session = WCSession.default
         session.delegate = self
-        pendingObservation = session.observe(\.hasContentPending, options: [.new]) { [weak self] _, _ in
+        pendingObservation = session.observe(\.hasContentPending, options: [.new]) { @Sendable [weak self] _, _ in
             Task { @MainActor [weak self] in
                 self?.completeBackgroundTasksIfReady()
             }
@@ -64,10 +64,10 @@ final class WatchSnapshotReceiver: NSObject, WCSessionDelegate {
         guard isReachable, !isRequesting else { return }
         wantsRefresh = false
         isRequesting = true
-        session.sendMessage([WatchSnapshotStorage.requestKey: true], replyHandler: { [weak self] reply in
+        session.sendMessage([WatchSnapshotStorage.requestKey: true], replyHandler: { @Sendable [weak self] reply in
             let data = reply[WatchSnapshotStorage.contextKey] as? Data
             self?.enqueue(data: data, isReply: true)
-        }, errorHandler: { [weak self] error in
+        }, errorHandler: { @Sendable [weak self] error in
             let message = error.localizedDescription
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -82,7 +82,7 @@ final class WatchSnapshotReceiver: NSObject, WCSessionDelegate {
     func retainBackgroundTask(_ task: WKWatchConnectivityRefreshBackgroundTask) {
         let identifier = UUID()
         backgroundTasks[identifier] = task
-        task.expirationHandler = { [weak self] in
+        task.expirationHandler = { @Sendable [weak self] in
             Task { @MainActor [weak self] in
                 self?.backgroundTasks.removeValue(forKey: identifier)?.setTaskCompletedWithSnapshot(false)
             }
