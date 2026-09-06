@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import plistlib
 import shlex
+import shutil
 import subprocess
 import time
 
@@ -94,9 +95,11 @@ def group_directory(device, bundle):
     return Path(run("xcrun", "simctl", "get_app_container", device, bundle, APP_GROUP, capture=True))
 
 
-def wait_for_snapshot(path, expected=None):
+def wait_for_snapshot(path, expected=None, pid=None):
     deadline = time.monotonic() + 180
     while time.monotonic() < deadline:
+        if pid is not None:
+            os.kill(pid, 0)
         try:
             value = json.loads(path.read_text())
         except FileNotFoundError:
@@ -145,8 +148,9 @@ def verify(output, derived_data):
         raise RuntimeError("The companion snapshot lost exact due times")
 
     watch_pid = launch(watch, WATCH_BUNDLE)
+    screenshot(watch, watch_pid, output / "watch-initial-launch.png")
     watch_cache = group_directory(watch, WATCH_BUNDLE) / "workspace-data/watch-snapshot/snapshot.json"
-    received = wait_for_snapshot(watch_cache, expected=phone_snapshot)
+    received = wait_for_snapshot(watch_cache, expected=phone_snapshot, pid=watch_pid)
     screenshot(watch, watch_pid, output / "watch-live-today-overdue.png")
     print("SMOKE PASS: real WCSession delivery retained all active dated tasks, future dates, and exact times", flush=True)
 
@@ -175,10 +179,14 @@ def diagnostics(output):
     for role, device in json.loads(devices_path.read_text()).items():
         with open(output / f"{role}-watch-sync.log", "w") as log:
             subprocess.run([
-                "xcrun", "simctl", "spawn", device, "log", "show", "--last", "10m", "--style", "compact",
-                "--predicate", 'subsystem BEGINSWITH "plastickarma.otodo"',
+                "xcrun", "simctl", "spawn", device, "log", "show", "--last", "10m", "--style", "compact", "--info", "--debug",
+                "--predicate", 'process == "OTodo" OR process == "OTodoWatch" OR process == "wcd" OR subsystem BEGINSWITH "plastickarma.otodo" OR subsystem == "com.apple.WatchConnectivity"',
             ], stdout=log, stderr=subprocess.STDOUT, check=False, text=True)
         subprocess.run(["xcrun", "simctl", "io", device, "screenshot", str(output / f"{role}-final.png")], check=False)
+    reports = Path.home() / "Library/Logs/DiagnosticReports"
+    for report in reports.glob("OTodoWatch*"):
+        if report.is_file():
+            shutil.copy2(report, output / report.name)
 
 
 def main():
