@@ -160,17 +160,15 @@ def verify(output, derived_data):
     # the restarted Watch must use only its atomically persisted local snapshot.
     run("xcrun", "simctl", "shutdown", phone)
     watch_pid = launch(watch, WATCH_BUNDLE)
-    run("xcrun", "simctl", "openurl", watch, "otodo-watch://today")
     if json.loads(watch_cache.read_text()) != received:
         raise RuntimeError("The Watch lost its cached snapshot while the phone was unavailable")
     screenshot(watch, watch_pid, output / "watch-offline-relaunch.png")
-    print("SMOKE PASS: Watch relaunch and complication deep link work with the phone shut down", flush=True)
+    print("SMOKE PASS: Watch relaunch retains its saved todos with the phone shut down", flush=True)
     (output / "result.json").write_text(json.dumps({
         "liveConnectivity": "passed",
         "offlineRelaunch": "passed",
-        "deepLink": "passed",
         "activeDatedTaskNames": sorted(EXPECTED_NAMES),
-        "physicalDeviceChecks": ["WCSession large-file delivery", "expedited complication updates", "watch-face placement"],
+        "physicalDeviceChecks": ["WCSession large-file delivery", "expedited complication updates", "watch-face placement and complication tap routing"],
     }, indent=2))
 
 

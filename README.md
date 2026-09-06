@@ -117,7 +117,7 @@ Add **OTodo → Today & Overdue** to a compatible watch-face complication slot. 
 
 Workspace changes are sent through WatchConnectivity and saved atomically on Watch; no GitHub credentials or direct GitHub access are needed there. The saved snapshot includes future dated todos, so they move into Today and Overdue at local day boundaries even when the phone is unavailable. Completed and undated todos are excluded. **Saved on Watch** shows when the snapshot last changed, and **Refresh from iPhone** requests the latest available data. Delivery depends on the paired devices and watchOS scheduling; the Watch displays its last received snapshot while disconnected.
 
-CI builds both Watch targets and exercises live delivery, offline relaunch, and the complication deep link on paired simulators. Watch-face placement, large-file transfers, and expedited complication updates require a physical paired device check.
+CI builds both Watch targets and exercises live delivery and offline relaunch on paired simulators. Watch-face placement and complication tap routing, large-file transfers, and expedited complication updates require a physical paired device check.
 
 ## Requirements
 

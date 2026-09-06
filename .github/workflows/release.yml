@@ -345,7 +345,7 @@ jobs:
             if grep -qi "Cloud signing permission error" "$log"; then
               echo "::error::Export failed with a cloud-signing permission error. The App Store Connect API key must have the Admin role so Xcode can create an Apple Distribution certificate."
             elif grep -qiE "cloud signing|no profiles for|provisioning profile" "$log"; then
-              echo "::error::Cloud signing failed during export. Confirm team 9492A97LWY can provision plastickarma.otodo, plastickarma.otodo.widget, and plastickarma.otodo.share with App Group group.plastickarma.otodo for App Store distribution."
+              echo "::error::Cloud signing failed during export. Confirm team 9492A97LWY can provision plastickarma.otodo, plastickarma.otodo.widget, plastickarma.otodo.share, plastickarma.otodo.watchkitapp, and plastickarma.otodo.watchkitapp.widget with App Group group.plastickarma.otodo for App Store distribution."
             else
               echo "::error::IPA export failed with both 'app-store-connect' and legacy 'app-store' methods; see the xcodebuild output above."
             fi
