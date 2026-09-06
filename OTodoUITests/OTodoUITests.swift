@@ -2283,7 +2283,7 @@ final class OTodoUITests: XCTestCase {
         let name = app.textFields["task-editor-name"]
         guard require(name, in: app, description: "the recurring todo name") else { return }
         name.tap()
-        name.typeText("Recurring review in 100 days")
+        name.typeText("Recurring review in 100 days\n")
         let repeatPicker = app.buttons["task-editor-repeat"]
         for _ in 0..<6 {
             if repeatPicker.exists && repeatPicker.isHittable { break }
