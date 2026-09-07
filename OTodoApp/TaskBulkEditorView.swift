@@ -1,3 +1,4 @@
+import OTodoCore
 import SwiftUI
 
 struct TaskBulkEditorView: View {
@@ -67,7 +68,26 @@ struct TaskBulkEditorView: View {
                 } header: {
                     Text("One todo per line")
                 } footer: {
-                    Text("Blank lines are ignored. Put dates in the name, like “Call mum Wed” or “Buy milk tomorrow”. Other names use this view’s default date, when present.")
+                    Text("Blank lines are ignored. Put dates and times in names, like “Call mum Wed at 3 pm” or “Buy milk 18:30”. A time alone means today. Other names use this view’s default date, when present.")
+                }
+                if !entries.isEmpty {
+                    Section("Preview") {
+                        ForEach(Array(entries.enumerated()), id: \.offset) { index, entry in
+                            let name = String(entry).trimmingCharacters(in: .whitespacesAndNewlines)
+                            let detected = try? DueDatePhraseDetector.detect(in: name, calendar: TaskSchedule.calendar)
+                            let date = detected?.resolvedDueDate(selectedDate: defaultDueDate) ?? defaultDueDate
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(detected?.nameWithoutPhrase ?? name)
+                                Text(date.map {
+                                    "\($0.rawValue)\(detected?.dueTime.map { " at \($0.rawValue)" } ?? "")"
+                                } ?? "No due date")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityIdentifier("task-bulk-preview-\(index)")
+                        }
+                    }
                 }
             }
             .accessibilityIdentifier("task-bulk-editor")

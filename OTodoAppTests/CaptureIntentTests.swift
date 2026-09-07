@@ -45,7 +45,7 @@ final class CaptureIntentTests: XCTestCase {
         try await selectionStore.save(selection)
 
         var intent = AddTodoIntent()
-        intent.text = "Review next Tue\nKeep the original Markdown context."
+        intent.text = "Review next Tue at 14:30\nKeep the original Markdown context."
         intent.sourceURL = try XCTUnwrap(URL(string: "https://example.com/review?source=shortcut#notes"))
         _ = try await intent.perform()
 
@@ -54,7 +54,7 @@ final class CaptureIntentTests: XCTestCase {
         )
         let saved = try await service.loadWorkspace(selection: selection)
         let document = try XCTUnwrap(saved.tasks.first)
-        XCTAssertEqual(document.task.name, "Review next Tue")
+        XCTAssertEqual(document.task.name, "Review next Tue at 14:30")
         XCTAssertTrue(document.task.body.contains(intent.text))
         XCTAssertTrue(document.task.body.contains(try XCTUnwrap(intent.sourceURL).absoluteString))
         XCTAssertTrue(document.task.projectSlugs.isEmpty)
@@ -75,7 +75,7 @@ final class CaptureIntentTests: XCTestCase {
         let pageURL = "https://example.com/page#selection"
         let page: NSDictionary = [
             NSExtensionJavaScriptPreprocessingResultsKey: [
-                "title": "Safari source", "url": pageURL, "selection": "Selected in Safari",
+                "title": "Safari source today at 3 pm", "url": pageURL, "selection": "Selected in Safari",
             ],
         ]
         source.attachments = [
@@ -92,12 +92,13 @@ final class CaptureIntentTests: XCTestCase {
         let sharedTask = try await SharedTaskCapture.save(name: capture.name, body: capture.body)
         let afterSharing = try await service.loadWorkspace(selection: selection)
         let sharedDocument = try XCTUnwrap(afterSharing.tasks.first(where: { $0.task.id == sharedTask.id }))
-        XCTAssertEqual(sharedDocument.task.name, "Safari source")
+        XCTAssertEqual(sharedDocument.task.name, "Safari source today at 3 pm")
         for context in [text, "Shared source", "Selected source context", firstURL.absoluteString, secondURL.absoluteString, pageURL, "Selected in Safari", "Another selected passage"] {
             XCTAssertTrue(sharedDocument.task.body.contains(context), "Shared context must not be dropped")
         }
         XCTAssertTrue(sharedDocument.task.projectSlugs.isEmpty)
         XCTAssertNil(sharedDocument.task.dueDate)
+        XCTAssertNil(sharedDocument.task.dueTime)
         XCTAssertEqual(afterSharing.pendingChanges.count, 2)
         XCTAssertEqual(
             afterSharing.pendingChanges.first(where: { $0.path == sharedDocument.task.relativePath })?.content,

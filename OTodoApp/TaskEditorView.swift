@@ -150,7 +150,7 @@ struct TaskEditorView: View {
 
                         HighlightedTaskNameField(
                             text: $draft.name,
-                            highlightRange: detectedDueDatePhrase?.utf16Range,
+                            highlightRanges: detectedDueDatePhrase?.utf16Ranges ?? [],
                             accessibilityIdentifier: "task-editor-name",
                             requestsFocus: $requestsNameFocus
                         )
@@ -160,7 +160,7 @@ struct TaskEditorView: View {
 
                         if let detectedDueDatePhrase {
                             let explanation =
-                                "Due \(detectedDueDatePhrase.dueDate.rawValue) · “\(detectedDueDatePhrase.phrase)” will be removed when saved"
+                                "Due \(resolvedDueDate?.rawValue ?? detectedDueDatePhrase.dueDate.rawValue)\(resolvedDueTime.map { " at \($0.rawValue)" } ?? "") · “\(detectedDueDatePhrase.phrases.joined(separator: "” and “"))” will be removed when saved"
                             Label(explanation, systemImage: "calendar.badge.checkmark")
                                 .font(.footnote)
                                 .foregroundStyle(OTodoTheme.accent)
@@ -336,9 +336,9 @@ struct TaskEditorView: View {
 
     private var scheduleSummary: String {
         var parts: [String] = []
-        if let date = detectedDueDatePhrase?.dueDate ?? selectedDueDate {
+        if let date = resolvedDueDate {
             parts.append(date.rawValue)
-            if let time = selectedDueTime { parts.append(time.rawValue) }
+            if let time = resolvedDueTime { parts.append(time.rawValue) }
         } else {
             parts.append("No due date")
         }
@@ -590,7 +590,7 @@ struct TaskEditorView: View {
         if let recurrenceError { return recurrenceError }
         if let recurrenceRule {
             guard draft.recurrenceFrom != nil else { return "Choose how to count repeats." }
-            guard let date = detectedDueDatePhrase?.dueDate ?? selectedDueDate else {
+            guard let date = resolvedDueDate else {
                 return "Recurring todos require a due date."
             }
             if !recurrenceRule.matches(date) {
@@ -613,8 +613,8 @@ struct TaskEditorView: View {
         value.name = detectedDueDatePhrase?.nameWithoutPhrase ?? draft.name
         value.projectSlugs = TaskEditorDraft.parseCommaSeparated(projectsText)
         value.tags = TaskEditorDraft.parseCommaSeparated(tagsText)
-        value.dueDate = detectedDueDatePhrase?.dueDate ?? selectedDueDate
-        value.dueTime = selectedDueTime
+        value.dueDate = resolvedDueDate
+        value.dueTime = resolvedDueTime
         requestsNameFocus = false
         notesFocused = false
         isSaving = true
@@ -665,9 +665,17 @@ struct TaskEditorView: View {
         return TaskSchedule.civilTime(from: dueDate)
     }
 
+    private var resolvedDueDate: CivilDate? {
+        detectedDueDatePhrase?.resolvedDueDate(selectedDate: selectedDueDate) ?? selectedDueDate
+    }
+
+    private var resolvedDueTime: CivilTime? {
+        detectedDueDatePhrase?.dueTime ?? selectedDueTime
+    }
+
     private var dueDateHelpText: String {
         if let detectedDueDatePhrase {
-            return "The highlighted phrase sets \(detectedDueDatePhrase.dueDate.rawValue) when saved."
+            return "The highlighted phrases set \(resolvedDueDate?.rawValue ?? detectedDueDatePhrase.dueDate.rawValue)\(resolvedDueTime.map { " at \($0.rawValue)" } ?? "") when saved. A time-only phrase keeps your selected calendar date."
         }
         guard hasDueDate else {
             return "This todo has no due date."

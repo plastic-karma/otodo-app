@@ -3,7 +3,7 @@ import UIKit
 
 struct HighlightedTaskNameField: UIViewRepresentable {
     @Binding var text: String
-    let highlightRange: NSRange?
+    let highlightRanges: [NSRange]
     let accessibilityIdentifier: String
     @Binding var requestsFocus: Bool
 
@@ -45,10 +45,10 @@ struct HighlightedTaskNameField: UIViewRepresentable {
         if requestsFocus {
             textField.setNeedsLayout()
         }
-        let validHighlightRange = validatedHighlightRange
+        let validHighlightRanges = validatedHighlightRanges
         let font = UIFont.preferredFont(forTextStyle: .title2)
         guard textField.attributedText?.string != text
-                || context.coordinator.appliedHighlightRange != validHighlightRange
+                || context.coordinator.appliedHighlightRanges != validHighlightRanges
                 || textField.font != font
         else {
             return
@@ -70,7 +70,7 @@ struct HighlightedTaskNameField: UIViewRepresentable {
             string: text,
             attributes: baseAttributes
         )
-        if let validHighlightRange {
+        for validHighlightRange in validHighlightRanges {
             attributedText.addAttributes(
                 [
                     .backgroundColor: UIColor.systemPurple.withAlphaComponent(0.18),
@@ -83,7 +83,7 @@ struct HighlightedTaskNameField: UIViewRepresentable {
         textField.font = font
         textField.defaultTextAttributes = baseAttributes
         textField.attributedText = attributedText
-        context.coordinator.appliedHighlightRange = validHighlightRange
+        context.coordinator.appliedHighlightRanges = validHighlightRanges
 
         if let selectionOffsets,
            let start = textField.position(
@@ -99,16 +99,12 @@ struct HighlightedTaskNameField: UIViewRepresentable {
         }
     }
 
-    private var validatedHighlightRange: NSRange? {
-        guard let highlightRange,
-              highlightRange.location != NSNotFound,
-              highlightRange.location >= 0,
-              highlightRange.length >= 0,
-              NSMaxRange(highlightRange) <= text.utf16.count
-        else {
-            return nil
+    private var validatedHighlightRanges: [NSRange] {
+        let length = text.utf16.count
+        return highlightRanges.filter {
+            $0.location != NSNotFound && $0.location >= 0 && $0.length >= 0
+                && $0.location <= length && $0.length <= length - $0.location
         }
-        return highlightRange
     }
 
     @MainActor
@@ -137,7 +133,7 @@ struct HighlightedTaskNameField: UIViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, UITextFieldDelegate {
         var parent: HighlightedTaskNameField
-        var appliedHighlightRange: NSRange?
+        var appliedHighlightRanges: [NSRange] = []
 
         init(parent: HighlightedTaskNameField) {
             self.parent = parent

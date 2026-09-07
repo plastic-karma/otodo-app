@@ -19,12 +19,12 @@ final class DueDatePhraseDetectorTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(detection.phrase, "tomorrow")
+        XCTAssertEqual(detection.phrases, ["tomorrow"])
         XCTAssertEqual(detection.dueDate.rawValue, "2026-09-05")
         XCTAssertEqual(detection.nameWithoutPhrase, "📌 Call mum")
         XCTAssertEqual(
-            (input as NSString).substring(with: detection.utf16Range),
-            "tomorrow"
+            detection.utf16Ranges.map { (input as NSString).substring(with: $0) },
+            ["tomorrow"]
         )
     }
 
@@ -41,7 +41,7 @@ final class DueDatePhraseDetectorTests: XCTestCase {
             ))
             XCTAssertEqual(detection.dueDate.rawValue, "2026-09-03")
             XCTAssertEqual(detection.nameWithoutPhrase, "📌 Call mum")
-            XCTAssertEqual((input as NSString).substring(with: detection.utf16Range), phrase)
+            XCTAssertEqual(detection.utf16Ranges.map { (input as NSString).substring(with: $0) }, [phrase])
         }
         for input in ["Todd calls", "todayish", "tod2", "antoday", "étodé"] {
             XCTAssertNil(try DueDatePhraseDetector.detect(
@@ -88,10 +88,10 @@ final class DueDatePhraseDetectorTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(detection.phrase, "Wed")
+        XCTAssertEqual(detection.phrases, ["Wed"])
         XCTAssertEqual(detection.dueDate.rawValue, "2026-09-09")
         XCTAssertEqual(detection.nameWithoutPhrase, "📌 Call mum after lunch")
-        XCTAssertEqual((input as NSString).substring(with: detection.utf16Range), "Wed")
+        XCTAssertEqual(detection.utf16Ranges.map { (input as NSString).substring(with: $0) }, ["Wed"])
     }
 
     func testDetectsRelativeDaysWeeksAndMonths() throws {
@@ -139,7 +139,6 @@ final class DueDatePhraseDetectorTests: XCTestCase {
             "Visit Tomorrowland",
             "Plan wedding",
             "Check Mon2 schedule",
-            "Wait in 3 hours",
             "Wait in 0 days",
             "Someday maybe",
             "Discuss next quarter",
