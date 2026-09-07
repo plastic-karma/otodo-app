@@ -144,6 +144,8 @@ All release runs share one workflow-global concurrency group covering signing, u
 
 The Watch companion job installs the embedded watchOS app and its complication on a paired simulator, verifies real WatchConnectivity delivery, then shuts down the phone and verifies a new Watch process reads its cached snapshot. Its attempt-specific `watch-smoke-*` artifact includes screenshots, bounded command timings, app-owned progress and pre-shutdown phone diagnostics. [WidgetKit activates its containing app directly](https://developer.apple.com/documentation/widgetkit/linking-to-specific-app-scenes-from-your-widget-or-live-activity); `simctl openurl` is not a proxy for a watch-face interaction. Physical devices are still required to check watch-face placement and complication tap routing, large-file transfers, and expedited complication updates. Shared source and built-product validation covers all five components, actual signed App Groups, executable/platform/companion identity, and matching versions/builds before export.
 
+For simulators, Xcode can leave the ordinary codesign entitlement dictionary empty: effective simulator permissions are linked into each executable's `__TEXT,__entitlements` Mach-O section. CI verifies the code signature and those sections for every architecture, then runs the hosted/live App Group checks. Physical-device archives use their actual codesign entitlement dictionary. Neither path accepts only a source-plist declaration as proof.
+
 ## Run manually: artifact only
 
 In GitHub:

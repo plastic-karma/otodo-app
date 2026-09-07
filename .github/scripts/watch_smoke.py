@@ -101,6 +101,12 @@ def prepare(output):
 def build(output, derived_data):
     devices = json.loads((output / "devices.json").read_text())
     boot_devices = [(role, devices[role]) for role in ("phone", "watch")]
+    source_packages = derived_data / "SourcePackages"
+    source_packages.mkdir(parents=True, exist_ok=True)
+    run("xcodebuild", "-resolvePackageDependencies", "-project", os.environ.get("PROJECT", "OTodo.xcodeproj"),
+        "-scheme", "OTodo", "-derivedDataPath", derived_data,
+        "-clonedSourcePackagesDirPath", source_packages,
+        stage="package-resolution", timeout=600, log_path=output / "packages.log")
     cancelled = threading.Event()
     failures = []
     lock = threading.Lock()
@@ -130,6 +136,7 @@ def build(output, derived_data):
                     "-scheme", "OTodo", "-destination", f"platform=iOS Simulator,id={devices['phone']}",
                     "-showBuildTimingSummary",
                     "-derivedDataPath", derived_data, "CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-",
+                    "-clonedSourcePackagesDirPath", source_packages, "-disableAutomaticPackageResolution",
                     f"GITHUB_CLIENT_ID={os.environ.get('GH_OAUTH_CLIENT_ID', '')}",
                     stage="full-app-build", timeout=900, log_path=output / "build.log")
             for boot in boots:

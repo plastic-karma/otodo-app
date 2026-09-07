@@ -23,9 +23,9 @@ on:
         default: false
         type: boolean
       use_build_cache:
-        description: Measure exact-input Swift build cache reuse
+        description: Reuse exact-input Swift build cache (disable for cold comparisons)
         required: false
-        default: false
+        default: true
         type: boolean
 
 permissions:
@@ -38,6 +38,7 @@ concurrency:
 env:
   CI_MODE: ${{ inputs.test_filter && 'focused' || inputs.complete_diagnostics && 'diagnostics' || 'full' }}
   CI_FILTER: ${{ inputs.test_filter }}
+  CI_USE_BUILD_CACHE: ${{ github.event_name == 'pull_request' || inputs.use_build_cache }}
   GH_OAUTH_CLIENT_ID: ${{ vars.GH_OAUTH_CLIENT_ID }}
 
 jobs:
@@ -117,7 +118,7 @@ jobs:
               output.write(f"key=swift-build-v1-{compiler}-{os.environ['SOURCE_KEY']}\n")
           PY
       - name: Restore exact-input Swift build cache
-        if: inputs.use_build_cache
+        if: env.CI_USE_BUILD_CACHE == 'true'
         id: swift-cache
         timeout-minutes: 2
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -129,7 +130,7 @@ jobs:
           python3 .github/scripts/ci_runtime.py run --stage swift-core-tests --timeout 600 \
             --log "$RUNNER_TEMP/ci-metrics/swift-core.log" -- swift test
       - name: Save measured exact-input Swift build cache
-        if: success() && inputs.use_build_cache && steps.swift-cache.outputs.cache-hit != 'true'
+        if: success() && env.CI_USE_BUILD_CACHE == 'true' && steps.swift-cache.outputs.cache-hit != 'true'
         timeout-minutes: 2
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

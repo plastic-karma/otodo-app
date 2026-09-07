@@ -2,9 +2,11 @@
 """Validate OTodo's generated source metadata and actual signed bundle graph."""
 
 import argparse
+import mmap
 from pathlib import Path
 import plistlib
 import re
+import struct
 import sys
 
 import yaml
@@ -122,6 +124,69 @@ def validate_source(root: Path = Path(".")) -> None:
     print("Source metadata and App Group declarations validated for all five components.")
 
 
+def simulated_entitlements(binary: Path) -> list[dict]:
+    """Read the permission plists linked into every signed simulator Mach-O slice.
+
+    Xcode deliberately signs simulators with an empty macOS entitlement plist
+    and links *-Simulated.xcent into __TEXT,__entitlements instead. Reading a
+    source .xcent or skipping signature verification would not prove the product.
+    """
+    with binary.open("rb") as source, mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as data:
+        magic = data[:4]
+        fat_formats = {
+            b"\xca\xfe\xba\xbe": (">", False), b"\xbe\xba\xfe\xca": ("<", False),
+            b"\xca\xfe\xba\xbf": (">", True), b"\xbf\xba\xfe\xca": ("<", True),
+        }
+        slices = [(0, len(data))]
+        if magic in fat_formats:
+            endian, wide = fat_formats[magic]
+            require(len(data) >= 8, f"{binary}: truncated universal Mach-O header")
+            count = struct.unpack_from(endian + "I", data, 4)[0]
+            stride = 32 if wide else 20
+            require(0 < count <= (len(data) - 8) // stride, f"{binary}: invalid universal architecture table")
+            slices = [struct.unpack_from(endian + ("QQ" if wide else "II"), data, 8 + index * stride + 8)
+                      for index in range(count)]
+        result = []
+        for index, (base, length) in enumerate(slices):
+            label = f"{binary} simulator architecture {index + 1}"
+            require(length >= 32 and base + length <= len(data), f"{label}: truncated Mach-O slice")
+            endian = {b"\xcf\xfa\xed\xfe": "<", b"\xfe\xed\xfa\xcf": ">"}.get(data[base:base + 4])
+            require(endian is not None, f"{label}: expected a 64-bit simulator Mach-O")
+            count, command_bytes = struct.unpack_from(endian + "II", data, base + 16)
+            require(command_bytes <= length - 32 and count <= command_bytes // 8,
+                    f"{label}: invalid load-command bounds")
+            cursor, end = base + 32, base + 32 + command_bytes
+            found = []
+            for _ in range(count):
+                require(cursor + 8 <= end, f"{label}: truncated load command")
+                command, size = struct.unpack_from(endian + "II", data, cursor)
+                require(size >= 8 and cursor + size <= end, f"{label}: invalid load-command size")
+                if command == 0x19:  # LC_SEGMENT_64
+                    require(size >= 72, f"{label}: truncated segment")
+                    segment_name = data[cursor + 8:cursor + 24].rstrip(b"\0")
+                    sections = struct.unpack_from(endian + "I", data, cursor + 64)[0]
+                    require(sections <= (size - 72) // 80, f"{label}: invalid section table")
+                    for section in range(sections):
+                        offset = cursor + 72 + section * 80
+                        name = data[offset:offset + 16].rstrip(b"\0")
+                        segment = data[offset + 16:offset + 32].rstrip(b"\0")
+                        if segment_name == segment == b"__TEXT" and name == b"__entitlements":
+                            extent = struct.unpack_from(endian + "Q", data, offset + 40)[0]
+                            position = struct.unpack_from(endian + "I", data, offset + 48)[0]
+                            require(0 < extent <= 1024 * 1024 and position + extent <= length,
+                                    f"{label}: invalid simulated-entitlement section bounds")
+                            try:
+                                value = plistlib.loads(data[base + position:base + position + extent].rstrip(b"\0"))
+                            except (ValueError, plistlib.InvalidFileException) as error:
+                                raise ValueError(f"{label}: invalid linked simulator entitlement plist") from error
+                            require(isinstance(value, dict), f"{label}: simulator entitlements must be a dictionary")
+                            found.append(value)
+                cursor += size
+            require(len(found) == 1, f"{label}: expected one linked __TEXT,__entitlements section")
+            result.append(found[0])
+        return result
+
+
 def validate_built(app: Path, platform: str = "simulator", expected_version: str | None = None,
                    expected_build: str | None = None) -> None:
     app_info = read_plist(app / "Info.plist")
@@ -158,13 +223,17 @@ def validate_built(app: Path, platform: str = "simulator", expected_version: str
                 f"{bundle}: missing, empty, or non-executable binary {executable}")
         run_command(["codesign", "--verify", "--strict", str(bundle)],
                     stage=f"metadata-{target}-signature", timeout=30)
-        signed = run_command(["codesign", "--display", "--entitlements", ":-", str(bundle)],
-                             stage=f"metadata-{target}-entitlements", timeout=30, capture=True)
-        try:
-            entitlements = plistlib.loads(signed.encode("utf-8"))
-        except (ValueError, plistlib.InvalidFileException) as error:
-            raise ValueError(f"{bundle}: codesign did not return effective signed entitlements") from error
-        validate_groups(entitlements, str(bundle))
+        if platform == "simulator":
+            for index, entitlements in enumerate(simulated_entitlements(binary), 1):
+                validate_groups(entitlements, f"{bundle} simulator architecture {index}")
+        else:
+            signed = run_command(["codesign", "--display", "--entitlements", ":-", str(bundle)],
+                                 stage=f"metadata-{target}-entitlements", timeout=30, capture=True)
+            try:
+                entitlements = plistlib.loads(signed.encode("utf-8"))
+            except (ValueError, plistlib.InvalidFileException) as error:
+                raise ValueError(f"{bundle}: codesign did not return effective signed entitlements") from error
+            validate_groups(entitlements, str(bundle))
     print(f"Validated all five signed {platform} bundles: {version} ({build}).")
 
 

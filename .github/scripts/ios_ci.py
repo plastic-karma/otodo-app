@@ -172,10 +172,17 @@ def build(output, derived_data):
     state = prepare(output)
     results = output / "results"
     results.mkdir(exist_ok=True)
+    source_packages = derived_data / "SourcePackages"
+    source_packages.mkdir(parents=True, exist_ok=True)
+    run_command([
+        "xcodebuild", "-resolvePackageDependencies", "-project", "OTodo.xcodeproj", "-scheme", "OTodo",
+        "-derivedDataPath", str(derived_data), "-clonedSourcePackagesDirPath", str(source_packages),
+    ], stage="ios-package-resolution", timeout=600, log_path=output / "logs/packages.log")
     arguments = [
         "xcodebuild", "build-for-testing", "-project", "OTodo.xcodeproj", "-scheme", "OTodo",
         "-destination", f"platform=iOS Simulator,id={state['id']}", "-destination-timeout", "60",
         "-derivedDataPath", str(derived_data), "-resultBundlePath", str(results / "build.xcresult"),
+        "-clonedSourcePackagesDirPath", str(source_packages), "-disableAutomaticPackageResolution",
         "-showBuildTimingSummary", "CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-",
         f"GITHUB_CLIENT_ID={os.environ.get('GH_OAUTH_CLIENT_ID', '')}",
     ]
