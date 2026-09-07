@@ -19,6 +19,7 @@ enum OTodoTheme {
 
     static let card = Color(uiColor: .secondarySystemGroupedBackground)
     static let raisedCard = Color(uiColor: .secondarySystemGroupedBackground)
+    static let formCanvas = Color(uiColor: .systemGroupedBackground)
 
     static let heroGradient = LinearGradient(
         colors: [

@@ -154,6 +154,7 @@ struct TaskEditorView: View {
                             accessibilityIdentifier: "task-editor-name",
                             requestsFocus: $requestsNameFocus
                         )
+                        .frame(minHeight: 44)
                         .onChange(of: draft.name) { _, name in
                             detectedDueDatePhrase = Self.detectDueDatePhrase(in: name)
                         }
@@ -255,7 +256,7 @@ struct TaskEditorView: View {
                 .accessibilityIdentifier("task-editor")
                 .scrollContentBackground(.hidden)
                 .scrollDismissesKeyboard(.interactively)
-                .background(OTodoCanvas())
+                .background(OTodoTheme.formCanvas.ignoresSafeArea())
                 .navigationTitle(draft.preservedTask == nil ? "New Todo" : "Edit Todo")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(.hidden, for: .navigationBar)
@@ -506,6 +507,7 @@ struct TaskEditorView: View {
             Label(project, systemImage: isSelected ? "checkmark.circle.fill" : "circle")
         }
         .buttonStyle(.bordered)
+        .tint(isSelected ? OTodoTheme.accent : .secondary)
         .accessibilityLabel("\(project) project")
         .accessibilityValue(isSelected ? "Selected" : "Not selected")
     }

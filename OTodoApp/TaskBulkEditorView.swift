@@ -92,7 +92,7 @@ struct TaskBulkEditorView: View {
             }
             .accessibilityIdentifier("task-bulk-editor")
             .scrollContentBackground(.hidden)
-            .background(OTodoCanvas())
+            .background(OTodoTheme.formCanvas.ignoresSafeArea())
             .navigationTitle("Bulk Add")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)

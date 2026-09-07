@@ -133,7 +133,7 @@ struct TaskRescheduleView: View {
             }
             .accessibilityIdentifier("task-reschedule")
             .scrollContentBackground(.hidden)
-            .background(OTodoCanvas())
+            .background(OTodoTheme.formCanvas.ignoresSafeArea())
             .navigationTitle(isBulk ? "Reschedule \(tasks.count) todos" : "Reschedule")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)

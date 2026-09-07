@@ -46,7 +46,7 @@ struct HighlightedTaskNameField: UIViewRepresentable {
             textField.setNeedsLayout()
         }
         let validHighlightRanges = validatedHighlightRanges
-        let font = UIFont.preferredFont(forTextStyle: .title2)
+        let font = UIFont.preferredFont(forTextStyle: .title2, compatibleWith: textField.traitCollection)
         guard textField.attributedText?.string != text
                 || context.coordinator.appliedHighlightRanges != validHighlightRanges
                 || textField.font != font

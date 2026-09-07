@@ -405,13 +405,13 @@ struct TaskListView: View {
                                 selectedFilterID == filter.id ? .semibold : .regular
                             ))
                             .foregroundStyle(
-                                selectedFilterID == filter.id ? OTodoTheme.accent : .secondary
+                                selectedFilterID == filter.id ? Color.white : Color.secondary
                             )
                             .padding(.horizontal, 14)
                             .frame(minHeight: 44)
                             .background(
                                 selectedFilterID == filter.id
-                                    ? OTodoTheme.accent.opacity(0.08) : Color.clear,
+                                    ? OTodoTheme.filledAccent : Color.secondary.opacity(0.06),
                                 in: Capsule()
                             )
                     }
@@ -443,21 +443,28 @@ struct TaskListView: View {
     }
 
     private func workspaceHeader(taskCount: Int) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(workspaceTitle)
-                .font(.largeTitle.weight(.semibold))
-                .foregroundStyle(.primary)
-                .accessibilityAddTraits(.isHeader)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(workspaceTitle)
+                    .font(.largeTitle.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .accessibilityAddTraits(.isHeader)
+
+                Text("\(taskCount)")
+                    .font(.subheadline.weight(.medium).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Color.secondary.opacity(0.08), in: Capsule())
+                    .fixedSize()
+                    .accessibilityLabel("\(taskCount) \(taskCount == 1 ? "todo" : "todos")")
+            }
 
             Text(workspaceSubtitle)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-
-            Text("\(taskCount) \(taskCount == 1 ? "todo" : "todos")")
-                .font(.caption)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
         }
+        .padding(.bottom, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("workspace-header")
@@ -608,14 +615,14 @@ struct TaskListView: View {
         case "all":
             return "Including completed todos"
         default:
-            return selectedFilter.query
+            return "Saved filter"
         }
     }
 
     private var projectSidebar: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Projects")
+                Text("Workspace")
                     .font(.title2.weight(.semibold))
                     .accessibilityAddTraits(.isHeader)
 
@@ -640,7 +647,7 @@ struct TaskListView: View {
             Divider()
 
             ScrollView {
-                LazyVStack(spacing: 2) {
+                LazyVStack(alignment: .leading, spacing: 4) {
                     agendaModeButtons
                     inboxButton
                     Button {
@@ -655,6 +662,30 @@ struct TaskListView: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(OTodoTheme.accent)
                     .accessibilityIdentifier("stats-open")
+
+                    HStack {
+                        Text("Projects")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .accessibilityAddTraits(.isHeader)
+                        Spacer()
+                        Button {
+                            dismissProjectSidebar()
+                            isProjectEditorPresented = true
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.body.weight(.medium))
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(OTodoTheme.accent)
+                        .disabled(model.isBusy || model.configuration == nil)
+                        .accessibilityLabel("New Project")
+                        .accessibilityIdentifier("sidebar-project-add")
+                    }
+                    .padding(.leading, 11)
+                    .padding(.top, 16)
                     projectFilterButton(nil)
 
                     ForEach(model.projectChoices, id: \.self) { project in
@@ -875,6 +906,9 @@ struct TaskListView: View {
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.08), in: Capsule())
                     .accessibilityIdentifier("inbox-open-count")
                 Image(systemName: "checkmark")
                     .foregroundStyle(OTodoTheme.accent)
@@ -920,6 +954,9 @@ struct TaskListView: View {
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.08), in: Capsule())
                     .accessibilityIdentifier(project.map { "project-open-count-\($0)" } ?? "project-open-count")
 
                 Image(systemName: "checkmark")
@@ -1137,14 +1174,29 @@ struct TaskListView: View {
     }
 
     private var agendaModeButtons: some View {
-        HStack {
+        VStack(spacing: 4) {
             Button {
                 isUpcoming = false
                 clearSelection()
                 dismissProjectSidebar()
             } label: {
-                Label("Todos", systemImage: "checklist")
-                    .frame(maxWidth: .infinity)
+                HStack(spacing: 12) {
+                    Image(systemName: "checklist")
+                        .foregroundStyle(OTodoTheme.accent)
+                        .frame(width: 24)
+                    Text("Todos")
+                        .font(.body.weight(isUpcoming ? .regular : .semibold))
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 12)
+                .frame(minHeight: 48)
+                .contentShape(Rectangle())
+                .background(
+                    isUpcoming ? Color.clear : OTodoTheme.accent.opacity(0.08),
+                    in: RoundedRectangle(cornerRadius: 10)
+                )
             }
             .tint(isUpcoming ? .secondary : OTodoTheme.accent)
             .accessibilityIdentifier("tasks-open")
@@ -1158,15 +1210,29 @@ struct TaskListView: View {
                 clearSelection()
                 dismissProjectSidebar()
             } label: {
-                Label("Upcoming", systemImage: "calendar")
-                    .frame(maxWidth: .infinity)
+                HStack(spacing: 12) {
+                    Image(systemName: "calendar")
+                        .foregroundStyle(OTodoTheme.accent)
+                        .frame(width: 24)
+                    Text("Upcoming")
+                        .font(.body.weight(isUpcoming ? .semibold : .regular))
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 12)
+                .frame(minHeight: 48)
+                .contentShape(Rectangle())
+                .background(
+                    isUpcoming ? OTodoTheme.accent.opacity(0.08) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 10)
+                )
             }
             .tint(isUpcoming ? OTodoTheme.accent : .secondary)
             .accessibilityIdentifier("upcoming-open")
             .accessibilityAddTraits(isUpcoming ? .isSelected : [])
         }
-        .buttonStyle(.bordered)
-        .padding(.bottom, 12)
+        .buttonStyle(.plain)
     }
 
     private var selectionActions: some View {
@@ -1212,33 +1278,43 @@ struct TaskListView: View {
     }
 
     private func agendaHeader(_ section: TaskAgendaSection) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
                 Text(section.group.title)
                     .font(.headline)
-                Spacer()
+                    .foregroundStyle(section.group == .overdue ? Color.red : Color.primary)
                 Text("\(section.tasks.count)")
                     .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.08), in: Capsule())
+                Spacer(minLength: 0)
             }
             Text(agendaBoundary(for: section.group))
-                .font(.caption2)
+                .font(.caption)
                 .foregroundStyle(.secondary)
         }
+        .padding(.top, 8)
         .textCase(nil)
-        .foregroundStyle(.primary)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("upcoming-section-\(section.group.rawValue)")
     }
 
     private func agendaBoundary(for group: TaskAgendaGroup) -> String {
         switch group {
-        case .overdue: "Before \(dates.today)"
-        case .today: dates.today
-        case .tomorrow: dates.tomorrow
-        case .nextSevenDays: "After \(dates.tomorrow), through \(dates.endOfNextSevenDays)"
-        case .later: "After \(dates.endOfNextSevenDays)"
+        case .overdue: "Before \(agendaDate(dates.today))"
+        case .today: agendaDate(dates.today)
+        case .tomorrow: agendaDate(dates.tomorrow)
+        case .nextSevenDays: "After \(agendaDate(dates.tomorrow)), through \(agendaDate(dates.endOfNextSevenDays))"
+        case .later: "After \(agendaDate(dates.endOfNextSevenDays))"
         case .noDate: "Not scheduled"
         }
+    }
+
+    private func agendaDate(_ value: String) -> String {
+        guard let date = try? CivilDate(rawValue: value) else { return value }
+        return TaskSchedule.date(from: date).formatted(.dateTime.month(.abbreviated).day())
     }
 
     @ViewBuilder

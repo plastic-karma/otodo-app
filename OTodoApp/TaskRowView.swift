@@ -44,8 +44,8 @@ struct TaskRowView: View {
             Button(action: onOpen) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(task.name)
-                        .font(.body)
-                        .foregroundStyle(.primary)
+                        .font(.body.weight(workflowState?.isTerminal == true ? .regular : .medium))
+                        .foregroundStyle(workflowState?.isTerminal == true ? Color.secondary : Color.primary)
                         .strikethrough(workflowState?.isTerminal == true)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -95,6 +95,7 @@ struct TaskRowView: View {
         .accessibilityElement(children: .contain)
     }
 
+
     private var statusMark: some View {
         ZStack {
             Circle()
@@ -124,6 +125,12 @@ struct TaskRowView: View {
         guard let dueDate = task.dueDate else { return nil }
         let formattedDate = formattedDate(dueDate.rawValue)
         let formattedTime = task.dueTime.map { self.formattedTime($0) }
+        if workflowState?.isTerminal == true {
+            return (
+                [formattedDate, formattedTime].compactMap { $0 }.joined(separator: " · "),
+                .secondary
+            )
+        }
         if dueDate.rawValue < today {
             return (
                 ["Overdue", formattedDate, formattedTime].compactMap { $0 }.joined(separator: " · "),
@@ -138,9 +145,9 @@ struct TaskRowView: View {
                 return ("Overdue · \(formattedTime ?? dueTime.rawValue)", .red)
             }
             if let formattedTime {
-                return ("Today · \(formattedTime)", OTodoTheme.coral)
+                return ("Today · \(formattedTime)", OTodoTheme.accent)
             }
-            return ("Today", OTodoTheme.coral)
+            return ("Today", OTodoTheme.accent)
         }
         return (
             [formattedDate, formattedTime].compactMap { $0 }.joined(separator: " · "),
