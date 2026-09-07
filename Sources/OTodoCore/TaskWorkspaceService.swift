@@ -92,6 +92,7 @@ public actor TaskWorkspaceService {
     private let ulidGenerator: any ULIDGenerating
     private let now: @Sendable () -> Date
     private let makeUUID: @Sendable () -> UUID
+    private let calendar: Calendar
 
     public init(
         persistence: any WorkspacePersisting,
@@ -99,7 +100,8 @@ public actor TaskWorkspaceService {
         ulidGenerator: any ULIDGenerating = ULIDGenerator(),
         now: @escaping @Sendable () -> Date = { Date() },
         makeUUID: @escaping @Sendable () -> UUID = { UUID() },
-        attachmentStore: AttachmentStore? = nil
+        attachmentStore: AttachmentStore? = nil,
+        calendar: Calendar = .autoupdatingCurrent
     ) {
         self.attachmentStore = attachmentStore
         self.persistence = persistence
@@ -107,6 +109,7 @@ public actor TaskWorkspaceService {
         self.ulidGenerator = ulidGenerator
         self.now = now
         self.makeUUID = makeUUID
+        self.calendar = calendar
     }
 
     public func load(selection: RepositorySelection) async throws -> WorkspaceState? {
@@ -271,7 +274,7 @@ public actor TaskWorkspaceService {
         let id = try generateUniqueID(in: workspace, at: timestamp, occupied: &occupied)
         let relativePath = "\(workspace.configuration.tasksDirectory)/\(id.rawValue).md"
         let attachmentBody = try await addingAttachments(attachments, body: body, taskPath: relativePath, workspace: workspace)
-        let task = try TodoTask(
+        var task = try TodoTask(
             id: id,
             relativePath: relativePath,
             name: name,
@@ -292,6 +295,17 @@ public actor TaskWorkspaceService {
             ],
             parentID: parentID
         )
+        if workspace.configuration.states.first(where: { $0.id == selectedState })?.isTerminal == true {
+            let snapshot = task
+            try TaskCompletionHistory.append(
+                to: &task, snapshot: snapshot, completedAt: timestamp,
+                completedOn: CivilDate(rawValue: TodayWidgetSnapshotBuilder.dateKey(
+                    for: timestamp, timeZone: calendar.timeZone
+                )),
+                calendar: calendar, usesSubtasks: parentID != nil,
+                storePrefix: workspace.configuration.obsidianLinkPrefix, id: makeUUID()
+            )
+        }
         try Self.validateParentChange(task, replacing: nil, in: workspace)
         let document = try canonicalDocument(
             for: task,
@@ -475,7 +489,8 @@ public actor TaskWorkspaceService {
             update.state = done.id
         }
         return try await persistTaskUpdate(
-            update, lastCompletedDate: lastCompletedDate, taskIndex: taskIndex, in: workspace
+            update, lastCompletedDate: lastCompletedDate, taskIndex: taskIndex, in: workspace,
+            occurrenceCompletedOn: completedOn
         )
     }
 
@@ -505,7 +520,8 @@ public actor TaskWorkspaceService {
         taskIndex: Int,
         in workspace: WorkspaceState,
         attachments: [AttachmentDraft] = [],
-        removingAttachmentPaths: [String] = []
+        removingAttachmentPaths: [String] = [],
+        occurrenceCompletedOn: CivilDate? = nil
     ) async throws -> TodoTask {
         try Self.validate(state: update.state, projects: update.projectSlugs, in: workspace)
         _ = try RecurrenceRule.validatePresence(
@@ -526,7 +542,7 @@ public actor TaskWorkspaceService {
             attachmentBody = AttachmentLinks.unlink(body: attachmentBody, taskPath: original.task.relativePath, path: path, storePrefix: workspace.configuration.obsidianLinkPrefix)
         }
         attachmentBody = try await addingAttachments(attachments, body: attachmentBody, taskPath: original.task.relativePath, workspace: workspace)
-        let editedTask = try TodoTask(
+        var editedTask = try TodoTask(
             id: original.task.id,
             relativePath: original.task.relativePath,
             name: update.name,
@@ -542,6 +558,20 @@ public actor TaskWorkspaceService {
             extraProperties: original.task.extraProperties,
             parentID: update.parentID
         )
+        let timestamp = now()
+        let terminalStates = Set(workspace.configuration.states.filter(\.isTerminal).map(\.id))
+        if occurrenceCompletedOn != nil
+            || (!terminalStates.contains(original.task.state) && terminalStates.contains(editedTask.state)) {
+            let day = try occurrenceCompletedOn ?? CivilDate(
+                rawValue: TodayWidgetSnapshotBuilder.dateKey(for: timestamp, timeZone: calendar.timeZone)
+            )
+            try TaskCompletionHistory.append(
+                to: &editedTask, snapshot: original.task, completedAt: timestamp, completedOn: day,
+                calendar: calendar,
+                usesSubtasks: original.task.parentID != nil || workspace.tasks.contains { $0.task.parentID == original.task.id },
+                storePrefix: workspace.configuration.obsidianLinkPrefix, id: makeUUID()
+            )
+        }
         try Self.validateParentChange(editedTask, replacing: original.task, in: workspace)
         let document = try canonicalDocument(
             for: editedTask,
@@ -556,7 +586,7 @@ public actor TaskWorkspaceService {
             content: document.content,
             baseBlobSHA: original.blobSHA,
             in: workspace.pendingChanges,
-            at: now()
+            at: timestamp
         )
         pendingChanges += try attachmentChanges(attachments, selection: workspace.selection, at: now())
         let updatedWorkspace = try Self.replacing(

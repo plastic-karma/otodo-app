@@ -51,6 +51,65 @@ Attachments work in store schemas **1 and 2** without an upgrade or configuratio
 
 Desktop synchronization must include `Attachments/` along with tasks and projects. To paste files there from Obsidian, set **Settings → Files and links → Default location for new attachments → In the folder specified below**, then enter the vault-relative path to the todo store's `Attachments` folder. OTodo does not change vault-wide settings. Camera capture, scanning, Watch attachment controls, file deletion, and repository cleanup are outside this release.
 
+## Weekly Stats
+
+Open **Stats** in the Projects sidebar for an offline, workspace-scoped weekly review.
+Previous/next-week controls and **This week** follow the device calendar's first
+weekday and time zone, with an exclusive end boundary. The screen updates from
+the same retained task records and pending offline changes as the todo list.
+
+- **Finished total** counts recorded completions, not distinct tasks. A recurring
+  occurrence, an explicit nonterminal-to-terminal transition (including Finish
+  series), and reopening then recompleting each count once. Creating a task
+  directly in a terminal state also records a completion. Metadata-only terminal
+  edits, reopening, and rescheduling do not add or erase completion events.
+- **Finished on time** compares the pre-completion due schedule, not the next
+  recurrence date or a date changed in the same edit. Date-only tasks allow the
+  whole local day; timed tasks must finish at or before the exact deadline.
+  Undated completions and dated completions without enough time evidence are
+  excluded from the denominator and separately identified.
+- **Created** decodes the timestamp already embedded in each retained task's
+  ULID. Import or sync time is not creation time.
+- **Most active projects and labels** rank creations plus recorded completions
+  during the week. Each activity contributes once to each assigned category.
+  Completions use historical category snapshots; creations use current task
+  categories because historical creation metadata is not available. Unassigned
+  activity contributes to totals but not rankings; the top five categories show.
+- **Most overdue projects and labels · now** rank current nonterminal overdue
+  tasks, using current metadata and exact due times where present. These are
+  explicitly current counts, not reconstructed historical overdue states.
+- **Advanced features** shows both weekly completed occurrences and current
+  retained tasks using subtasks, attachments, or recurrence. Subtasks includes a
+  child or a parent with children. Attachments means at least one recognized local
+  attachment link in the task body, using the shared attachment-link parser; it
+  does not claim that a file has been downloaded or still exists. Usage is a
+  task/occurrence count rather than a count of individual files or children.
+
+Completion evidence lives in the namespaced `otodo_completion_history`
+frontmatter property in both schema 1 and schema 2, serialized through the normal
+task/outbox/sync path, not a parallel analytics database. It is an append-only
+YAML sequence of mappings. Each version-1 mapping contains `version: 1`, a UUID
+`id`, UTC Unix-millisecond `completed_at_ms`, local civil `completed_on`,
+the saved `due_date`/`due_time` (nullable), nullable Boolean `on_time`, `projects`
+and `tags` string sequences, and Boolean `subtasks`, `attachments`, and
+`recurring` snapshots. Week membership uses the completion timestamp in the
+viewer's current time zone; the recorded on-time assessment does not change
+when the task is edited or the viewer travels. An explicitly supplied historical
+completion day without exact-time evidence leaves same-day timed assessment
+unknown. Identical event IDs are counted once per retained task.
+
+Unrelated frontmatter and unknown event mappings are preserved. Unsupported
+entries are excluded with a visible coverage count; an existing non-sequence
+value under this namespaced key is never silently reinterpreted or overwritten
+and must be safeguarded/relocated before recording a completion. Legacy completed
+tasks, including recurrence's old `last_completed_date`, are not backfilled with
+invented timestamps. **History coverage** identifies retained completed/previously
+recurring records without readable events, unsupported entries, and the earliest
+retained event without claiming that coverage is continuous. Counts do not claim
+complete Git history: deletions, external clients that do not record events,
+remote edits, and conflict choices can reduce evidence. No analytics backend or
+telemetry is used.
+
 ## Subtasks
 
 Schema-2 stores support one optional parent per task at arbitrary depth. Choose

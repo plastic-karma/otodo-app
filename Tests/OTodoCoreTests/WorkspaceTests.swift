@@ -1741,7 +1741,12 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         expected.state = "backlog"
         expected.dueDate = try CivilDate(rawValue: "2026-09-10")
         expected.lastCompletedDate = try CivilDate(rawValue: "2026-09-09")
-        XCTAssertEqual(first, expected)
+        XCTAssertEqual(first.state, expected.state)
+        XCTAssertEqual(first.dueDate, expected.dueDate)
+        XCTAssertEqual(first.lastCompletedDate, expected.lastCompletedDate)
+        XCTAssertEqual(first.body, original.task.body)
+        XCTAssertEqual(first.extraProperties.first(where: { $0.name == "custom" }),
+                       original.task.extraProperties.first(where: { $0.name == "custom" }))
         let afterFirst = try await loadRequired(store, selection: selection)
         let firstPending = try XCTUnwrap(afterFirst.pendingChanges.first)
         let second = try await service.completeTask(
@@ -1749,9 +1754,11 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         )
         expected.dueDate = try CivilDate(rawValue: "2026-09-16")
         expected.lastCompletedDate = try CivilDate(rawValue: "2026-09-14")
-        XCTAssertEqual(second, expected)
+        XCTAssertEqual(second.state, expected.state)
+        XCTAssertEqual(second.dueDate, expected.dueDate)
+        XCTAssertEqual(second.lastCompletedDate, expected.lastCompletedDate)
         let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
-        XCTAssertEqual(durable.tasks.map(\.task), [expected])
+        XCTAssertEqual(durable.tasks.map(\.task), [second])
         XCTAssertEqual(durable.pendingChanges.count, 1)
         let pending = try XCTUnwrap(durable.pendingChanges.first)
         XCTAssertEqual(pending.path, repositoryPath(selection, original.task.relativePath))
@@ -1763,7 +1770,7 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
             id: original.task.id, relativePath: original.task.relativePath,
             text: serialized, configuration: configuration
         )
-        XCTAssertEqual(replayed, expected)
+        XCTAssertEqual(replayed, second)
     }
 
     func testRecurrenceEditingFinishingReopeningAndRemovalKeepDistinctSemantics() async throws {
@@ -1825,9 +1832,12 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         let reopenedOneOff = try await service.editTask(
             selection: selection, id: done.id, expectedTask: done, update: update
         )
-        XCTAssertEqual(reopenedOneOff, removed)
+        XCTAssertEqual(reopenedOneOff.state, removed.state)
+        XCTAssertEqual(reopenedOneOff.dueDate, removed.dueDate)
+        XCTAssertNil(reopenedOneOff.recurrence)
+        XCTAssertNil(reopenedOneOff.lastCompletedDate)
         let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
-        XCTAssertEqual(durable.tasks.map(\.task), [removed])
+        XCTAssertEqual(durable.tasks.map(\.task), [reopenedOneOff])
     }
 
     func testCompletionRejectsTerminalBackwardsAndOverflowDatesAtomically() async throws {
