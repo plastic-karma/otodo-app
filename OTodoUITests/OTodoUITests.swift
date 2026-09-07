@@ -16,36 +16,24 @@ final class OTodoUITests: XCTestCase {
         name.tap()
         name.typeText("Attachment capture\n")
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
-        let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
         let sample = app.buttons["attachment-import-sample"]
-        for _ in 0..<8 {
-            if sample.isHittable { break }
-            editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
-                .press(forDuration: 0.1, thenDragTo: editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35)))
-        }
-        if !sample.isHittable {
-            print(app.debugDescription)
-            attachDiagnostics(in: app, name: "Attachment import control was not reachable")
-        }
-        XCTAssertTrue(sample.isHittable)
+        app.revealTaskEditorElement(sample)
         sample.tap()
         // An import belongs to the editor even while its section scrolls offscreen.
-        editor.swipeDown()
-        editor.swipeDown()
-        for _ in 0..<8 {
-            if sample.isHittable { break }
-            editor.swipeUp()
-        }
+        app.revealTaskEditorElement(name)
+        let importFinished = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"),
+            object: app.buttons["task-editor-save-another"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [importFinished], timeout: 10), .completed,
+                       "The file import must finish before the todo can be saved")
+        app.revealTaskEditorElement(app.staticTexts["sample.txt"])
         XCTAssertTrue(app.staticTexts["sample.txt"].waitForExistence(timeout: 5))
         app.buttons["task-editor-save-another"].tap()
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-editor-saved-confirmation").firstMatch.waitForExistence(timeout: 5))
         name.typeText("\n")
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
-        for _ in 0..<8 {
-            if sample.isHittable { break }
-            editor.swipeUp()
-        }
-        XCTAssertTrue(sample.isHittable)
+        app.revealTaskEditorElement(sample)
         XCTAssertFalse(app.staticTexts["sample.txt"].exists)
         app.buttons["Cancel"].tap()
         app.terminate()
@@ -58,10 +46,7 @@ final class OTodoUITests: XCTestCase {
                                        taskList: taskList, description: "the saved attachment todo") else { return }
         row.tap()
         let open = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "attachment-open.")).firstMatch
-        for _ in 0..<8 {
-            if open.isHittable { break }
-            editor.swipeUp()
-        }
+        app.revealTaskEditorElement(open)
         XCTAssertTrue(app.staticTexts["sample.txt"].exists)
         XCTAssertTrue(app.staticTexts["Available offline"].waitForExistence(timeout: 5))
         XCTAssertTrue(open.isHittable)
@@ -975,6 +960,7 @@ final class OTodoUITests: XCTestCase {
         screenshot.name = "New todo inherits the filter and sidebar project"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+        app.revealTaskEditorElement(name)
         name.tap()
         name.typeText("Scoped single")
         app.buttons["task-editor-save"].tap()

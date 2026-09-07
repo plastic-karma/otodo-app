@@ -32,11 +32,12 @@ extension XCUIApplication {
         let done = buttons["task-editor-keyboard-done"]
         if keyboard.exists && done.exists && done.isHittable { done.tap() }
 
-        for _ in 0..<12 {
+        for attempt in 0..<12 {
             if isUnobscured() { return }
             let visible = viewport()
             guard visible.height > 80 else { break }
-            let scrollUp = !element.exists || element.frame.midY > visible.midY
+            // Lazy form rows can be absent on either side of the viewport.
+            let scrollUp = element.exists ? element.frame.midY > visible.midY : attempt < 6
             let high = visible.minY + visible.height * 0.2
             let low = visible.minY + visible.height * 0.8
             let origin = coordinate(withNormalizedOffset: .zero)
