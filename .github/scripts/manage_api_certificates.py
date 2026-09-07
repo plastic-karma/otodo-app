@@ -188,7 +188,7 @@ def preflight() -> None:
         if len(matches) != 1:
             raise RuntimeError(f"Expected one accessible Apple Bundle ID registration for {identifier}; found {len(matches)}")
         bundle_id = urllib.parse.quote(matches[0]["id"], safe="")
-        capabilities = list_resources(f"/bundleIds/{bundle_id}/bundleIdCapabilities?limit=200")
+        capabilities = list_resources(f"/bundleIds/{bundle_id}/bundleIdCapabilities")
         if not any(item.get("attributes", {}).get("capabilityType") == "APP_GROUPS" for item in capabilities):
             raise RuntimeError(f"Apple Bundle ID {identifier} does not have the App Groups capability enabled")
         print(f"Read-only Apple registration/capability access verified: {identifier}")

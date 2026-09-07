@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+import urllib.parse
 from unittest.mock import patch
 
 import manage_api_certificates as certificates
@@ -70,6 +71,34 @@ class CertificateSafetyTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "pre-existing"):
                     certificates.cleanup()
                 revoke.assert_not_called()
+
+
+class ApplePreflightTests(unittest.TestCase):
+    def test_relationship_preflight_respects_api_query_contract_and_requires_groups(self):
+        groups_enabled = True
+
+        def apple_request(method, url):
+            parsed = urllib.parse.urlsplit(url)
+            if parsed.path.endswith("/apps"):
+                data = [{"id": "app", "attributes": {"bundleId": "plastickarma.otodo"}}]
+            elif parsed.path.endswith("/bundleIds"):
+                identifier = urllib.parse.parse_qs(parsed.query)["filter[identifier]"][0]
+                data = [{"id": identifier, "attributes": {"identifier": identifier}}]
+            elif parsed.path.endswith("/bundleIdCapabilities"):
+                if parsed.query:
+                    raise RuntimeError("PARAMETER_ERROR.ILLEGAL: relationship does not support query parameters")
+                data = [{"id": "groups", "attributes": {"capabilityType": "APP_GROUPS"}}] if groups_enabled else []
+            else:
+                raise AssertionError(f"Unexpected Apple API request: {url}")
+            return json.dumps({"data": data, "links": {"next": None}}).encode()
+
+        with patch.dict(os.environ, {"PUBLISH_TESTFLIGHT": "true"}), \
+                patch.object(certificates, "request", side_effect=apple_request):
+            certificates.preflight()
+            groups_enabled = False
+            with self.assertRaises(RuntimeError) as error:
+                certificates.preflight()
+            self.assertIn("App Groups", str(error.exception))
 
 
 class FullVerificationTests(unittest.TestCase):
