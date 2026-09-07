@@ -52,7 +52,9 @@ struct HighlightedTaskNameField: UIViewRepresentable {
             return
         }
 
-        let selectionOffsets = textField.selectedTextRange.map { selection in
+        // An unfocused name field must not restore its UIKit selection while another
+        // editor owns the keyboard (for example when moving directly into notes).
+        let selectionOffsets = (textField.isFirstResponder ? textField.selectedTextRange : nil).map { selection in
             (
                 textField.offset(from: textField.beginningOfDocument, to: selection.start),
                 textField.offset(from: textField.beginningOfDocument, to: selection.end)
@@ -142,6 +144,12 @@ struct HighlightedTaskNameField: UIViewRepresentable {
 
         @objc func textDidChange(_ textField: UITextField) {
             parent.text = textField.text ?? ""
+        }
+
+        func textFieldDidEndEditing(_ textField: UITextField) {
+            // A user-initiated focus change cancels any deferred layout request.
+            (textField as? NameTextField)?.wantsFocus = false
+            parent.requestsFocus = false
         }
 
         func textFieldShouldReturn(_ textField: UITextField) -> Bool {

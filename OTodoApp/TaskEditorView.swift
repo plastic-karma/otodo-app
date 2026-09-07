@@ -90,6 +90,7 @@ struct TaskEditorView: View {
     @State private var nameFocusRequest = 0
     @State private var requestsNameFocus = false
     @State private var isParentPickerPresented = false
+    @FocusState private var notesFocused: Bool
 
     init(
         draft: TaskEditorDraft,
@@ -313,6 +314,11 @@ struct TaskEditorView: View {
                         TextEditor(text: $draft.body)
                             .frame(minHeight: 160)
                             .accessibilityLabel("Todo notes")
+                            .accessibilityIdentifier("task-editor-notes")
+                            .focused($notesFocused)
+                            .onChange(of: notesFocused) { _, focused in
+                                if focused { requestsNameFocus = false }
+                            }
                     }
 
                     if let message = validationMessage ?? saveError {

@@ -23,6 +23,8 @@ Tap **+** to add a todo. Touch and hold **+** to choose **New Todo**, **Bulk Add
 
 In the **New Todo** editor, **Save & Create Another** saves without closing, confirms the save, and returns focus to a fresh name. It keeps the selected parent, state, projects, and tags, but clears notes, recurrence, and the previous todo's schedule. From **Today**, the next draft starts due today again; other views start undated. Normal **Save** still saves and closes; editing an existing todo does not offer repeated creation.
 
+Tap **Notes** to write or edit multiline Markdown after entering a title. Notes use the same durable offline save as the rest of the todo and remain available after restarting the app.
+
 Add OTodo's **Today** widget to the Home Screen to see active todos due today or overdue without opening the app. The widget refreshes when OTodo's tasks change and at the next local day boundary.
 
 The shared palette follows the system appearance: light mode uses indigo accents, while dark mode uses legible lavender foregrounds, neutral raised surfaces, and subdued dark fills behind white labels.
