@@ -9,6 +9,7 @@ final class OTodoUITests: XCTestCase {
         app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace", "-ui-testing-attachment-import", "-ui-testing-slow-attachment-import"]
         app.launch()
         XCTAssertTrue(app.buttons["task-add"].waitForExistence(timeout: 10))
+        guard selectFilter("Active", in: app) else { return }
         app.buttons["task-add"].tap()
         let name = app.textFields["task-editor-name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))
@@ -31,13 +32,14 @@ final class OTodoUITests: XCTestCase {
         }
         XCTAssertTrue(app.staticTexts["sample.txt"].waitForExistence(timeout: 5))
         app.buttons["task-editor-save-another"].tap()
-        XCTAssertTrue(app.staticTexts["task-editor-saved-confirmation"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-editor-saved-confirmation").firstMatch.waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["sample.txt"].exists)
         app.buttons["Cancel"].tap()
         app.terminate()
         app.launchArguments.removeAll { $0 == "-ui-testing-reset-workspace" }
         app.launch()
         XCTAssertTrue(app.buttons["task-add"].waitForExistence(timeout: 10))
+        guard selectFilter("Active", in: app) else { return }
         let taskList = app.descendants(matching: .any).matching(identifier: "task-list").firstMatch
         guard let row = requireTaskRow(named: "Attachment capture", state: "Pending", in: app,
                                        taskList: taskList, description: "the saved attachment todo") else { return }
