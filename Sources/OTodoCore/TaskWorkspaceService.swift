@@ -333,6 +333,7 @@ public actor TaskWorkspaceService {
         names: [String],
         projectSlugs: [String] = [],
         tags: [String] = [],
+        defaultDueDate: CivilDate? = nil,
         calendar: Calendar = .autoupdatingCurrent
     ) async throws -> [TodoTask] {
         let workspace = try await requireWorkspace(selection: selection)
@@ -365,7 +366,7 @@ public actor TaskWorkspaceService {
                 state: state,
                 projectSlugs: projectSlugs,
                 tags: tags,
-                dueDate: detected?.dueDate,
+                dueDate: detected?.dueDate ?? defaultDueDate,
                 dueTime: nil,
                 recurrence: nil,
                 recurrenceFrom: nil,

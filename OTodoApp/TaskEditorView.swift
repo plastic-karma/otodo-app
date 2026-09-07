@@ -69,6 +69,7 @@ struct TaskEditorView: View {
     private let hierarchy: TaskHierarchy
     private let workspaceTasks: [TodoTask]
     private let onSave: @MainActor (TaskEditorDraft) async -> String?
+    private let defaultsToToday: Bool
 
     @State private var draft: TaskEditorDraft
     @State private var projectsText: String
@@ -98,6 +99,7 @@ struct TaskEditorView: View {
         hierarchy: TaskHierarchy = TaskHierarchy(tasks: []),
         workspaceTasks: [TodoTask] = [],
         attachmentModel: AppModel? = nil,
+        defaultsToToday: Bool = false,
         onSave: @escaping @MainActor (TaskEditorDraft) async -> String?
     ) {
         self.attachmentModel = attachmentModel
@@ -108,6 +110,7 @@ struct TaskEditorView: View {
         self.hierarchy = hierarchy
         self.workspaceTasks = workspaceTasks
         self.onSave = onSave
+        self.defaultsToToday = defaultsToToday
         _draft = State(initialValue: draft)
         _projectsText = State(initialValue: draft.projectSlugs.joined(separator: ", "))
         _tagsText = State(initialValue: draft.tags.joined(separator: ", "))
@@ -537,16 +540,16 @@ struct TaskEditorView: View {
                 draft.removingAttachmentPaths = []
                 draft.name = ""
                 draft.body = ""
-                draft.dueDate = nil
+                draft.dueDate = defaultsToToday ? TaskSchedule.civilDate(from: .now) : nil
                 draft.dueTime = nil
                 draft.recurrence = nil
                 draft.recurrenceFrom = nil
                 recurrenceError = nil
                 recurrenceRule = nil
                 initialRecurrenceSettings = .init(rule: nil, anchor: nil)
-                hasDueDate = false
+                hasDueDate = draft.dueDate != nil
                 hasDueTime = false
-                dueDate = TaskSchedule.date(from: nil, time: nil)
+                dueDate = TaskSchedule.date(from: draft.dueDate, time: nil)
                 detectedDueDatePhrase = nil
                 hasPendingRelativeDueDate = false
                 didSaveAndContinue = true

@@ -621,7 +621,7 @@ final class AppModel {
         }
     }
 
-    func createTasks(names: [String], projectSlugs: [String] = [], tags: [String] = []) async {
+    func createTasks(names: [String], projectSlugs: [String] = [], tags: [String] = [], defaultDueDate: CivilDate? = nil) async {
         guard rootState == .workspace, let selection = workspaceSelection else {
             errorMessage = "No todo workspace is selected."
             return
@@ -639,6 +639,7 @@ final class AppModel {
                 names: names,
                 projectSlugs: projectSlugs,
                 tags: tags,
+                defaultDueDate: defaultDueDate,
                 calendar: TaskSchedule.calendar
             )
             guard sessionID == operationSession else { return }

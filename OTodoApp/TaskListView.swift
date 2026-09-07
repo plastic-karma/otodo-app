@@ -23,7 +23,7 @@ struct TaskListView: View {
     @State private var isProjectEditorPresented = false
     @State private var isChangelogPresented = false
     @State private var isBulkEditorPresented = false
-    @State private var bulkCreationDefaults: (projectSlugs: [String], tags: [String]) = ([], [])
+    @State private var bulkCreationDefaults: (projectSlugs: [String], tags: [String], dueDate: CivilDate?) = ([], [], nil)
     @State private var reschedulePresentation: ReschedulePresentation?
     @State private var isUpcoming = false
     @State private var agendaSections: [TaskAgendaSection] = []
@@ -206,7 +206,8 @@ struct TaskListView: View {
                             tagChoices: model.tagChoices,
                             hierarchy: model.hierarchy,
                             workspaceTasks: model.tasks,
-                            attachmentModel: model
+                            attachmentModel: model,
+                            defaultsToToday: !isUpcoming && selectedFilterID == "today"
                         ) { value in
                             switch presentation {
                             case .create:
@@ -228,12 +229,14 @@ struct TaskListView: View {
                 .sheet(isPresented: $isBulkEditorPresented) {
                     TaskBulkEditorView(
                         projectSlugs: bulkCreationDefaults.projectSlugs,
-                        tags: bulkCreationDefaults.tags
+                        tags: bulkCreationDefaults.tags,
+                        defaultDueDate: bulkCreationDefaults.dueDate
                     ) { names in
                         await model.createTasks(
                             names: names,
                             projectSlugs: bulkCreationDefaults.projectSlugs,
-                            tags: bulkCreationDefaults.tags
+                            tags: bulkCreationDefaults.tags,
+                            defaultDueDate: bulkCreationDefaults.dueDate
                         )
                         return model.errorMessage
                     }
@@ -483,14 +486,19 @@ struct TaskListView: View {
         .accessibilityHint("Tap to add a todo; touch and hold for bulk entry or a project")
         .accessibilityIdentifier("task-add")
     }
-    private var creationDefaults: (projectSlugs: [String], tags: [String]) {
+    private var creationDefaults: (projectSlugs: [String], tags: [String], dueDate: CivilDate?) {
         let inferred = (try? TaskFilterQuery(selectedFilter.query))?.creationDefaults
         var projects = Set(inferred?.projectSlugs ?? [])
         if let selectedProject {
             projects.insert(selectedProject)
         }
         projects.formIntersection(model.projectChoices)
-        return (projects.sorted(), inferred?.tags ?? [])
+        return (projects.sorted(), inferred?.tags ?? [], creationDueDate)
+    }
+
+    private var creationDueDate: CivilDate? {
+        guard !isUpcoming, selectedFilterID == "today" else { return nil }
+        return TaskSchedule.civilDate(from: .now)
     }
 
     private func presentNewTodo() {
@@ -499,6 +507,7 @@ struct TaskListView: View {
         var draft = TaskEditorDraft(configuration: configuration)
         draft.projectSlugs = defaults.projectSlugs
         draft.tags = defaults.tags
+        draft.dueDate = defaults.dueDate
         editorPresentation = .create(draft, id: UUID())
     }
 
@@ -509,6 +518,7 @@ struct TaskListView: View {
         draft.projectSlugs = defaults.projectSlugs
         draft.tags = defaults.tags
         draft.parentID = task.id
+        draft.dueDate = defaults.dueDate
         editorPresentation = .create(draft, id: UUID())
     }
 

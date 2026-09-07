@@ -6,6 +6,7 @@ struct TaskBulkEditorView: View {
 
     private let projectSlugs: [String]
     private let tags: [String]
+    private let defaultDueDate: CivilDate?
     private let onSave: @MainActor ([String]) async -> String?
     @State private var text = ""
     @State private var isSaving = false
@@ -14,10 +15,12 @@ struct TaskBulkEditorView: View {
     init(
         projectSlugs: [String],
         tags: [String],
+        defaultDueDate: CivilDate? = nil,
         onSave: @escaping @MainActor ([String]) async -> String?
     ) {
         self.projectSlugs = projectSlugs
         self.tags = tags
+        self.defaultDueDate = defaultDueDate
         self.onSave = onSave
     }
 
@@ -34,13 +37,16 @@ struct TaskBulkEditorView: View {
                             .accessibilityIdentifier("task-bulk-error")
                     }
                 }
-                if !projectSlugs.isEmpty || !tags.isEmpty {
+                if !projectSlugs.isEmpty || !tags.isEmpty || defaultDueDate != nil {
                     Section {
                         if !projectSlugs.isEmpty {
                             LabeledContent("Projects", value: projectSlugs.joined(separator: ", "))
                         }
                         if !tags.isEmpty {
                             LabeledContent("Tags", value: tags.joined(separator: ", "))
+                        }
+                        if let defaultDueDate {
+                            LabeledContent("Default due date", value: defaultDueDate.rawValue)
                         }
                     } header: {
                         Text("From this view")
@@ -61,7 +67,7 @@ struct TaskBulkEditorView: View {
                 } header: {
                     Text("One todo per line")
                 } footer: {
-                    Text("Blank lines are ignored. Put dates in the name, like “Call mum Wed” or “Buy milk tomorrow”. Dates come only from those phrases; other todos are undated.")
+                    Text("Blank lines are ignored. Put dates in the name, like “Call mum Wed” or “Buy milk tomorrow”. Other names use this view’s default date, when present.")
                 }
             }
             .accessibilityIdentifier("task-bulk-editor")

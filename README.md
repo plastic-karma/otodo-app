@@ -19,9 +19,9 @@ Update and sync information stays pinned beside **+** at the bottom of the works
 Touch and hold OTodo's Home Screen icon and choose **New Todo** to open task creation directly.
 Tap **+** to add a todo. Touch and hold **+** to choose **New Todo**, **Bulk Add**, or **New Project**.
 
-**Bulk Add** accepts one todo per nonblank line. Due dates come only from phrases in each name; the detected phrase is removed on save. The entire batch is validated and saved together on the device, so an invalid line cannot leave a partially created batch.
+**Bulk Add** accepts one todo per nonblank line. From **Today**, names without date phrases default to today; other views keep them undated. A date phrase overrides the view default and is removed on save. The entire batch is validated and saved together on the device, so an invalid line cannot leave a partially created batch.
 
-In the **New Todo** editor, **Save & Create Another** saves without closing, confirms the save, and returns focus to a fresh name. It keeps the selected parent, state, projects, and tags, but clears notes, recurrence, and all date/time inputs. Normal **Save** still saves and closes; editing an existing todo does not offer repeated creation.
+In the **New Todo** editor, **Save & Create Another** saves without closing, confirms the save, and returns focus to a fresh name. It keeps the selected parent, state, projects, and tags, but clears notes, recurrence, and the previous todo's schedule. From **Today**, the next draft starts due today again; other views start undated. Normal **Save** still saves and closes; editing an existing todo does not offer repeated creation.
 
 Add OTodo's **Today** widget to the Home Screen to see active todos due today or overdue without opening the app. The widget refreshes when OTodo's tasks change and at the next local day boundary.
 
@@ -131,7 +131,7 @@ The query editor suggests projects and tags from the current workspace as you ty
 
 Filters are saved offline on this device, separately for each repository, branch, and store path. They do not alter the Obsidian store or sync through GitHub. Selecting a filter from the library clears project scope in Todos but preserves it in Upcoming. Selecting a Home filter retains that scope except for Inbox, which always shows projectless work. Selecting a project from Inbox switches to that project's Active view.
 
-Creating a todo from a filtered view preselects its required projects and tags, plus the selected sidebar project. `AND` combines requirements; `OR` keeps only labels shared by every branch. Negated expressions and ambiguous alternatives are not used to guess labels. Only existing projects and valid tags are inherited. The normal editor keeps these fields editable, and **Save & Create Another** retains your choices. **Bulk Add** previews and applies the same labels to every todo in its atomic batch. Dates, names, and workflow states are not inferred from the filter; new todos still use the configured default state and normal name-based date detection.
+Creating a todo from a filtered view preselects its required projects and tags, plus the selected sidebar project. `AND` combines requirements; `OR` keeps only labels shared by every branch. Negated expressions and ambiguous alternatives are not used to guess labels. Only existing projects and valid tags are inherited. The editor keeps these fields editable, and **Save & Create Another** retains your choices. **Bulk Add** applies the same labels to every todo in its atomic batch. In **Today**, **New Todo**, **Add Subtask**, repeated creation, and **Bulk Add** all default to the current local date, including within a project. The date remains editable and a date phrase in the name takes precedence. Other views, including Upcoming, keep fresh todos undated unless a date is entered; names and workflow states are never inferred from a filter.
 
 The language uses explicit boolean operators, inspired by [Todoist's text filters](https://www.todoist.com/help/articles/introduction-to-filters-V98wIH):
 
