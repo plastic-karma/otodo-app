@@ -33,6 +33,18 @@ final class AttachmentTests: XCTestCase, @unchecked Sendable {
             "[Report](<../Attachments/caf%C3%A9.pdf#page=2> \"Title\") [[Attachments/café.pdf#page=3|Wiki]]")
     }
 
+    func testRelocationRebasesRelativeWikiDestinationsAndPreservesWikiSyntax() throws {
+        let body = "before\r\n![[../Attachments/café photo.png#page=2|Photo]] [[./../Attachments/file.pdf?download=1#page=3|Report]] [[Attachments/root.pdf#page=4|Root]] ![[Personal/Todo/Attachments/vault.png|Vault]]\r\nafter"
+        let rebased = AttachmentLinks.rebase(body: body, from: "Tasks/task.md", to: "Tasks/nested/task.md", storePrefix: "Personal/Todo")
+        XCTAssertEqual(rebased,
+            "before\r\n![[../../Attachments/café photo.png#page=2|Photo]] [[../../Attachments/file.pdf?download=1#page=3|Report]] [[Attachments/root.pdf#page=4|Root]] ![[Personal/Todo/Attachments/vault.png|Vault]]\r\nafter")
+        XCTAssertEqual(AttachmentLinks.references(body: rebased, taskPath: "Tasks/nested/task.md", storePrefix: "Personal/Todo").map(\.path),
+            AttachmentLinks.references(body: body, taskPath: "Tasks/task.md", storePrefix: "Personal/Todo").map(\.path))
+        XCTAssertEqual(AttachmentLinks.rebase(body: body, from: "Tasks/task.md", to: "Tasks/task.md", storePrefix: "Personal/Todo"), body)
+        XCTAssertEqual(AttachmentLinks.rebase(body: "![[./Attachments/caf%C3%A9%20photo.png|Encoded]]", from: "task.md", to: "Tasks/task.md"),
+            "![[../Attachments/caf%C3%A9%20photo.png|Encoded]]")
+    }
+
     func testAttachmentsSaveAndCleanupAreSafeInBothStoreSchemas() async throws {
         for version in [1, 2] {
             let f = try await Fixture(version: version)

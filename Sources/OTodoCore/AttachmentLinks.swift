@@ -81,11 +81,16 @@ public enum AttachmentLinks {
     }
 
     public static func rebase(body: String, from oldTaskPath: String, to newTaskPath: String, storePrefix: String = "") -> String {
+        guard oldTaskPath != newTaskPath else { return body }
         let result = NSMutableString(string: body)
         for occurrence in occurrences(body: body, taskPath: oldTaskPath, storePrefix: storePrefix).reversed() {
-            // Explicit wiki paths are independent of the task directory. Keep their aliases and fragments verbatim.
+            // Only task-relative destinations move; vault-qualified wiki paths remain independent of the task directory.
             if let range = occurrence.destinationRange {
-                result.replaceCharacters(in: range, with: relativeDestination(taskPath: newTaskPath, path: occurrence.link.path))
+                var destination = relativeDestination(taskPath: newTaskPath, path: occurrence.link.path)
+                if occurrence.isWiki {
+                    destination = preservingWikiSuffix(destination: destination, original: (body as NSString).substring(with: range))
+                }
+                result.replaceCharacters(in: range, with: destination)
             }
         }
         return result as String
@@ -108,7 +113,21 @@ public enum AttachmentLinks {
         return relative.addingPercentEncoding(withAllowedCharacters: allowed) ?? relative
     }
 
-    private struct Occurrence { let range: NSRange; let destinationRange: NSRange?; let link: AttachmentLink }
+    /// Keep wiki filename spelling (including literal Unicode/spaces or percent escapes) while changing its relative prefix.
+    private static func preservingWikiSuffix(destination: String, original: String) -> String {
+        let rebased = destination.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        let previous = original.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        var common = 0
+        while common < rebased.count && common < previous.count {
+            let newPart = rebased[rebased.count - common - 1].removingPercentEncoding
+            let oldPart = unescape(previous[previous.count - common - 1], punctuationOnly: false).removingPercentEncoding
+            guard newPart == oldPart else { break }
+            common += 1
+        }
+        return (Array(rebased.dropLast(common)) + Array(previous.suffix(common))).joined(separator: "/")
+    }
+
+    private struct Occurrence { let range: NSRange; let destinationRange: NSRange?; let isWiki: Bool; let link: AttachmentLink }
     private static func occurrences(body: String, taskPath: String, storePrefix: String) -> [Occurrence] {
         let text = body as NSString
         let bytes = Array(body.utf16)
@@ -166,7 +185,11 @@ public enum AttachmentLinks {
                         let parts = substring(bracket + 2, end).split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
                         if let path = resolve(target: String(parts[0]), taskPath: taskPath, wiki: true, storePrefix: storePrefix) {
                             let label = parts.count > 1 ? String(parts[1]) : (path as NSString).lastPathComponent
-                            results.append(Occurrence(range: NSRange(location: start, length: end + 2 - start), destinationRange: nil, link: AttachmentLink(path: path, displayName: label, isImage: bytes[start] == 33)))
+                            let rawPath = String(parts[0].split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0].split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)[0])
+                            let decodedPath = unescape(rawPath, punctuationOnly: false).removingPercentEncoding ?? rawPath
+                            let relative = decodedPath.hasPrefix("../") || decodedPath.hasPrefix("./")
+                            let destinationRange = relative ? NSRange(location: bracket + 2, length: rawPath.utf16.count) : nil
+                            results.append(Occurrence(range: NSRange(location: start, length: end + 2 - start), destinationRange: destinationRange, isWiki: true, link: AttachmentLink(path: path, displayName: label, isImage: bytes[start] == 33)))
                         }
                         index = end + 2; continue
                     }
@@ -200,7 +223,7 @@ public enum AttachmentLinks {
                                 if targetStart < end && bytes[targetStart] == 60 { targetStart += 1 }
                                 let pathPart = target.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0].split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)[0]
                                 let destinationRange = NSRange(location: targetStart, length: String(pathPart).utf16.count)
-                                results.append(Occurrence(range: NSRange(location: start, length: end + 1 - start), destinationRange: destinationRange, link: AttachmentLink(path: path, displayName: label, isImage: bytes[start] == 33)))
+                                results.append(Occurrence(range: NSRange(location: start, length: end + 1 - start), destinationRange: destinationRange, isWiki: false, link: AttachmentLink(path: path, displayName: label, isImage: bytes[start] == 33)))
                             }
                             index = end + 1; continue
                         }
