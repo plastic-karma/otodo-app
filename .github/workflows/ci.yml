@@ -10,6 +10,11 @@ on:
         required: false
         default: false
         type: boolean
+      design_survey_only:
+        description: Capture the design survey instead of running the full test suites
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -17,6 +22,7 @@ permissions:
 jobs:
   swift-package-tests:
     name: Swift package tests
+    if: ${{ !inputs.design_survey_only }}
     runs-on: ubuntu-24.04
     container: swift:6.1
     timeout-minutes: 15
@@ -206,9 +212,17 @@ jobs:
             GITHUB_CLIENT_ID="$GH_OAUTH_CLIENT_ID"
 
       - name: Run UI tests without rebuilding
+        env:
+          DESIGN_SURVEY_ONLY: ${{ inputs.design_survey_only }}
         run: |
           set -euo pipefail
+          if [ "$DESIGN_SURVEY_ONLY" = "true" ]; then
+            set -- -only-testing:OTodoUITests/OTodoDesignScreenshots
+          else
+            set --
+          fi
           xcodebuild test-without-building \
+            "$@" \
             -project "$PROJECT" \
             -scheme "$SCHEME" \
             -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
@@ -251,6 +265,7 @@ jobs:
 
   watchos-simulator:
     name: Apple Watch companion
+    if: ${{ !inputs.design_survey_only }}
     runs-on: macos-15
     timeout-minutes: 45
     env:

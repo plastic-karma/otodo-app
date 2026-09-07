@@ -147,6 +147,7 @@ struct TaskEditorView: View {
                             accessibilityIdentifier: "task-editor-name",
                             requestsFocus: $requestsNameFocus
                         )
+                        .frame(minHeight: 44)
                         .onChange(of: draft.name) { _, name in
                             detectedDueDatePhrase = Self.detectDueDatePhrase(in: name)
                         }
@@ -162,16 +163,16 @@ struct TaskEditorView: View {
                                 .accessibilityIdentifier("task-editor-detected-due-date")
                         }
 
+                    }
+                    .id("task-editor-top")
+
+                    Section("Details") {
                         Picker("State", selection: $draft.state) {
                             ForEach(configuration.states, id: \.id) { state in
                                 Text(state.name).tag(state.id)
                             }
                         }
                         .accessibilityIdentifier("task-editor-state")
-                    }
-                    .id("task-editor-top")
-
-                    Section("Parent") {
                         Button {
                             requestsNameFocus = false
                             isParentPickerPresented = true
@@ -208,7 +209,7 @@ struct TaskEditorView: View {
                     } header: {
                         Text("Projects")
                     } footer: {
-                        Text("Enter project slugs separated by commas.")
+                        Text("Comma-separated project slugs.")
                     }
 
                     Section {
@@ -239,7 +240,7 @@ struct TaskEditorView: View {
                     } header: {
                         Text("Tags")
                     } footer: {
-                        Text("Type to match existing tags, or enter new tags without #, separated by commas.")
+                        Text("Comma-separated tags, without #. Tap a suggestion to reuse a tag.")
                     }
 
                     Section {
@@ -324,7 +325,7 @@ struct TaskEditorView: View {
                 .disabled(isSaving)
                 .accessibilityIdentifier("task-editor")
                 .scrollContentBackground(.hidden)
-                .background(OTodoCanvas())
+                .background(OTodoTheme.formCanvas.ignoresSafeArea())
                 .navigationTitle(draft.preservedTask == nil ? "New Todo" : "Edit Todo")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(.hidden, for: .navigationBar)
@@ -413,6 +414,7 @@ struct TaskEditorView: View {
             Label(project, systemImage: isSelected ? "checkmark.circle.fill" : "circle")
         }
         .buttonStyle(.bordered)
+        .tint(isSelected ? OTodoTheme.accent : .secondary)
         .accessibilityLabel("\(project) project")
         .accessibilityValue(isSelected ? "Selected" : "Not selected")
     }

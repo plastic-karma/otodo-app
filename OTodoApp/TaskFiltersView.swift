@@ -41,7 +41,7 @@ struct TaskFiltersView: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(OTodoCanvas())
+            .background(OTodoTheme.formCanvas.ignoresSafeArea())
             .navigationTitle("Filters")
             .navigationBarTitleDisplayMode(.inline)
             .accessibilityIdentifier("filter-library")
@@ -73,9 +73,10 @@ struct TaskFiltersView: View {
             } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(filter.name)
+                        .font(.body.weight(.medium))
                         .foregroundStyle(.primary)
-                    Text(filter.query)
-                        .font(.system(.caption, design: .monospaced))
+                    Text(filterDescription(filter))
+                        .font(filter.isBuiltIn ? .caption : .system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -117,6 +118,17 @@ struct TaskFiltersView: View {
                 Button("Edit", systemImage: "pencil") { editor = .edit(filter) }
                     .tint(OTodoTheme.filledAccent)
             }
+        }
+    }
+
+    private func filterDescription(_ filter: SavedTaskFilter) -> String {
+        guard filter.isBuiltIn else { return filter.query }
+        switch filter.id {
+        case "today": return "Due today and overdue"
+        case "active": return "Everything still to do"
+        case "all": return "Including completed todos"
+        case "inbox": return "Without a project"
+        default: return filter.query
         }
     }
 }
@@ -240,7 +252,7 @@ private struct TaskFilterEditorView: View {
                 .foregroundStyle(.secondary)
             }
             .scrollContentBackground(.hidden)
-            .background(OTodoCanvas())
+            .background(OTodoTheme.formCanvas.ignoresSafeArea())
             .navigationTitle(filter == nil ? "New Filter" : "Edit Filter")
             .navigationBarTitleDisplayMode(.inline)
             .accessibilityIdentifier("filter-editor")

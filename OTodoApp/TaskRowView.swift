@@ -42,17 +42,23 @@ struct TaskRowView: View {
             .padding(.top, 2)
 
             Button(action: onOpen) {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(task.name)
-                            .font(.body)
-                            .foregroundStyle(.primary)
-                            .strikethrough(workflowState?.isTerminal == true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(task.name)
+                        .font(.body.weight(workflowState?.isTerminal == true ? .regular : .medium))
+                        .foregroundStyle(workflowState?.isTerminal == true ? Color.secondary : Color.primary)
+                        .strikethrough(workflowState?.isTerminal == true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                        Text(workflowState?.name ?? task.state)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            dueLabel
+                            stateLabel
+                        }
+                        .fixedSize(horizontal: true, vertical: false)
+                        VStack(alignment: .leading, spacing: 6) {
+                            dueLabel
+                            stateLabel
+                        }
                     }
 
                     if let ancestry {
@@ -70,24 +76,20 @@ struct TaskRowView: View {
                         .foregroundStyle(.secondary)
                     }
 
-                    if let duePresentation {
-                        Label(duePresentation.label, systemImage: "calendar")
-                            .font(.caption)
-                            .foregroundStyle(duePresentation.color)
-                    }
-
                     if !task.projectSlugs.isEmpty || !task.tags.isEmpty {
-                        HStack(spacing: 12) {
-                            if !task.projectSlugs.isEmpty {
-                                Label(projectDescription, systemImage: "folder")
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 12) {
+                                projectLabel
+                                tagLabel
                             }
-                            if !task.tags.isEmpty {
-                                Text(tagDescription)
+                            .fixedSize(horizontal: true, vertical: false)
+                            VStack(alignment: .leading, spacing: 4) {
+                                projectLabel
+                                tagLabel
                             }
                         }
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
                     }
                 }
                 .padding(.vertical, 14)
@@ -107,6 +109,38 @@ struct TaskRowView: View {
             .accessibilityAddTraits(isSelected == true ? .isSelected : [])
         }
         .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private var dueLabel: some View {
+        if let duePresentation {
+            Label(duePresentation.label, systemImage: "calendar")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(duePresentation.color)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(duePresentation.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+        }
+    }
+
+    private var stateLabel: some View {
+        Text(workflowState?.name ?? task.state)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder
+    private var projectLabel: some View {
+        if !task.projectSlugs.isEmpty {
+            Label(projectDescription, systemImage: "folder")
+        }
+    }
+
+    @ViewBuilder
+    private var tagLabel: some View {
+        if !task.tags.isEmpty {
+            Text(tagDescription)
+        }
     }
 
     private var statusMark: some View {
@@ -138,6 +172,12 @@ struct TaskRowView: View {
         guard let dueDate = task.dueDate else { return nil }
         let formattedDate = formattedDate(dueDate.rawValue)
         let formattedTime = task.dueTime.map { self.formattedTime($0) }
+        if workflowState?.isTerminal == true {
+            return (
+                [formattedDate, formattedTime].compactMap { $0 }.joined(separator: " · "),
+                .secondary
+            )
+        }
         if dueDate.rawValue < today {
             return (
                 ["Overdue", formattedDate, formattedTime].compactMap { $0 }.joined(separator: " · "),
@@ -152,9 +192,9 @@ struct TaskRowView: View {
                 return ("Overdue · \(formattedTime ?? dueTime.rawValue)", .red)
             }
             if let formattedTime {
-                return ("Today · \(formattedTime)", OTodoTheme.coral)
+                return ("Today · \(formattedTime)", OTodoTheme.accent)
             }
-            return ("Today", OTodoTheme.coral)
+            return ("Today", OTodoTheme.accent)
         }
         return (
             [formattedDate, formattedTime].compactMap { $0 }.joined(separator: " · "),

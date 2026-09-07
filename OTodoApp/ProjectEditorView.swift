@@ -51,7 +51,7 @@ struct ProjectEditorView: View {
             }
             .accessibilityIdentifier("project-editor")
             .scrollContentBackground(.hidden)
-            .background(OTodoCanvas())
+            .background(OTodoTheme.formCanvas.ignoresSafeArea())
             .navigationTitle("New Project")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)
