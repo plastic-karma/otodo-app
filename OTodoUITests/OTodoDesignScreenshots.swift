@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 
 /// A repeatable visual survey, exported by CI's export_ui_snapshots option.
@@ -12,9 +13,13 @@ final class OTodoDesignScreenshots: XCTestCase {
             ]
             app.launch()
             XCTAssertTrue(app.buttons["task-add"].waitForExistence(timeout: 10))
+            waitForTodos(in: app)
             capture("Survey · Today · \(appearance)", in: app)
 
             app.buttons["task-filter-active"].tap()
+            XCTAssertTrue(app.buttons.matching(
+                NSPredicate(format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "task-row-", "Future todo")
+            ).firstMatch.waitForExistence(timeout: 5))
             capture("Survey · Active · \(appearance)", in: app)
             app.buttons["project-sidebar-toggle"].tap()
             XCTAssertTrue(app.buttons["project-filter-work"].waitForExistence(timeout: 5))
@@ -58,6 +63,7 @@ final class OTodoDesignScreenshots: XCTestCase {
         defer { app.terminate() }
         let add = app.buttons["task-add"]
         XCTAssertTrue(add.waitForExistence(timeout: 10))
+        waitForTodos(in: app)
         XCTAssertTrue(add.isHittable, "Capture must remain reachable with accessibility text sizes")
         capture("Survey · Today · accessibility text", in: app)
 
@@ -71,6 +77,13 @@ final class OTodoDesignScreenshots: XCTestCase {
         add.tap()
         XCTAssertTrue(app.textFields["task-editor-name"].waitForExistence(timeout: 5))
         capture("Survey · New todo · accessibility text", in: app)
+    }
+
+    @MainActor
+    private func waitForTodos(in app: XCUIApplication) {
+        XCTAssertTrue(app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "task-row-")
+        ).firstMatch.waitForExistence(timeout: 10))
     }
 
     @MainActor
