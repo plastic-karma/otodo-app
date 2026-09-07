@@ -6,6 +6,8 @@ import UIKit
 struct TaskListView: View {
     @EnvironmentObject private var quickActions: QuickActionSceneDelegate
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .body) private var sidebarIconWidth = 24
 
     @Bindable private var model: AppModel
     private let notifications: TaskNotificationManager
@@ -622,7 +624,7 @@ struct TaskListView: View {
     private var projectSidebar: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Workspace")
+                Text("OTodo")
                     .font(.title2.weight(.semibold))
                     .accessibilityAddTraits(.isHeader)
 
@@ -693,8 +695,28 @@ struct TaskListView: View {
                     }
                 }
                 .padding(14)
+                if dynamicTypeSize.isAccessibilitySize {
+                    sidebarUtilities
+                }
             }
 
+            if !dynamicTypeSize.isAccessibilitySize {
+                sidebarUtilities
+            }
+        }
+        .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : 316)
+        .frame(maxHeight: .infinity)
+        .background(OTodoTheme.card)
+        .shadow(color: .black.opacity(0.12), radius: 16, x: 6)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("project-sidebar")
+        .accessibilityAction(.escape) {
+            dismissProjectSidebar()
+        }
+    }
+
+    private var sidebarUtilities: some View {
+        VStack(spacing: 0) {
             Divider()
 
             notificationControl
@@ -737,15 +759,6 @@ struct TaskListView: View {
             .accessibilityIdentifier("sign-out")
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
-        }
-        .frame(maxWidth: 316)
-        .frame(maxHeight: .infinity)
-        .background(OTodoTheme.card)
-        .shadow(color: .black.opacity(0.12), radius: 16, x: 6)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("project-sidebar")
-        .accessibilityAction(.escape) {
-            dismissProjectSidebar()
         }
     }
 
@@ -897,7 +910,7 @@ struct TaskListView: View {
             HStack(spacing: 12) {
                 Image(systemName: "tray")
                     .foregroundStyle(OTodoTheme.accent)
-                    .frame(width: 24)
+                    .frame(width: sidebarIconWidth)
                 Text("Inbox")
                     .font(.body.weight(isSelected ? .semibold : .regular))
                     .foregroundStyle(.primary)
@@ -942,7 +955,7 @@ struct TaskListView: View {
                 Image(systemName: project == nil ? "checklist" : "folder")
                     .font(.body)
                     .foregroundStyle(color)
-                    .frame(width: 24)
+                    .frame(width: sidebarIconWidth)
 
                 Text(title)
                     .font(.body.weight(isSelected ? .semibold : .regular))
@@ -1183,7 +1196,7 @@ struct TaskListView: View {
                 HStack(spacing: 12) {
                     Image(systemName: "checklist")
                         .foregroundStyle(OTodoTheme.accent)
-                        .frame(width: 24)
+                        .frame(width: sidebarIconWidth)
                     Text("Todos")
                         .font(.body.weight(isUpcoming ? .regular : .semibold))
                         .foregroundStyle(.primary)
@@ -1213,7 +1226,7 @@ struct TaskListView: View {
                 HStack(spacing: 12) {
                     Image(systemName: "calendar")
                         .foregroundStyle(OTodoTheme.accent)
-                        .frame(width: 24)
+                        .frame(width: sidebarIconWidth)
                     Text("Upcoming")
                         .font(.body.weight(isUpcoming ? .semibold : .regular))
                         .foregroundStyle(.primary)

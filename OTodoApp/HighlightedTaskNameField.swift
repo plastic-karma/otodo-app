@@ -16,13 +16,15 @@ struct HighlightedTaskNameField: UIViewRepresentable {
     func makeUIView(context: Context) -> NameTextField {
         let textField = NameTextField()
         textField.borderStyle = .none
-        textField.placeholder = "What needs doing?"
+        textField.placeholder = "Todo name"
         textField.backgroundColor = .clear
         textField.clearButtonMode = .whileEditing
         textField.autocapitalizationType = .sentences
         textField.autocorrectionType = .default
         textField.returnKeyType = .done
         textField.adjustsFontForContentSizeCategory = true
+        textField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textField.accessibilityLabel = "Todo name"
         textField.accessibilityIdentifier = accessibilityIdentifier
         textField.delegate = context.coordinator

@@ -71,6 +71,7 @@ struct TaskRowView: View {
                                     .truncationMode(.tail)
                             }
                         }
+                        .fixedSize(horizontal: false, vertical: true)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -81,6 +82,7 @@ struct TaskRowView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .labelStyle(.titleAndIcon)
             .disabled(isSelected != nil && isCompletionDisabled)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(accessibilityDescription)
