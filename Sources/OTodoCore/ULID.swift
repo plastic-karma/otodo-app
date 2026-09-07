@@ -38,6 +38,23 @@ public struct TaskID: Sendable, Hashable, Codable, Comparable, CustomStringConve
         self.rawValue = String(decoding: normalized, as: UTF8.self)
     }
 
+    /// The creation instant embedded in the canonical ULID, independent of local import time.
+    public var createdAt: Date {
+        let milliseconds = rawValue.utf8.prefix(10).reduce(UInt64(0)) { value, byte in
+            let digit: UInt8
+            switch byte {
+            case 48 ... 57: digit = byte - 48
+            case 65 ... 72: digit = byte - 55
+            case 74 ... 75: digit = byte - 56
+            case 77 ... 78: digit = byte - 57
+            case 80 ... 84: digit = byte - 58
+            default: digit = byte - 59 // V...Z; TaskID validates all bytes at construction.
+            }
+            return (value << 5) | UInt64(digit)
+        }
+        return Date(timeIntervalSince1970: Double(milliseconds) / 1_000)
+    }
+
     private static func isCrockfordDigit(_ byte: UInt8) -> Bool {
         (48 ... 57).contains(byte)
             || (65 ... 72).contains(byte)

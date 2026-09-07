@@ -22,6 +22,7 @@ struct TaskListView: View {
     @State private var isProjectSidebarPresented = false
     @State private var isProjectEditorPresented = false
     @State private var isChangelogPresented = false
+    @State private var isStatsPresented = false
     @State private var isBulkEditorPresented = false
     @State private var bulkCreationDefaults: (projectSlugs: [String], tags: [String]) = ([], [])
     @State private var reschedulePresentation: ReschedulePresentation?
@@ -173,7 +174,7 @@ struct TaskListView: View {
                                 .font(.body.weight(.semibold))
                         }
                         .accessibilityLabel("Projects")
-                        .accessibilityHint("Shows Upcoming, Inbox, project filters, and changelog")
+                        .accessibilityHint("Shows Upcoming, Inbox, project filters, Stats, and changelog")
                         .accessibilityIdentifier("project-sidebar-toggle")
                     }
                     if isUpcoming {
@@ -312,6 +313,9 @@ struct TaskListView: View {
         }
         .sheet(isPresented: $isChangelogPresented, onDismiss: presentPendingNotificationRequest) {
             ChangelogView()
+        }
+        .sheet(isPresented: $isStatsPresented, onDismiss: presentPendingNotificationRequest) {
+            StatsView(model: model)
         }
         .task(id: model.workspaceSelection.map(FileWorkspaceStore.selectionKey(for:))) {
             selectedFilterID = "today"
@@ -538,6 +542,7 @@ struct TaskListView: View {
         isProjectEditorPresented = false
         isFilterLibraryPresented = false
         isChangelogPresented = false
+        isStatsPresented = false
         isBulkEditorPresented = false
         reschedulePresentation = nil
         presentNewTodo()
@@ -554,6 +559,7 @@ struct TaskListView: View {
               !isProjectEditorPresented,
               !isFilterLibraryPresented,
               !isChangelogPresented,
+              !isStatsPresented,
               let taskID = notifications.consumePendingTaskRequest()
         else { return }
 
@@ -632,6 +638,18 @@ struct TaskListView: View {
                 LazyVStack(spacing: 2) {
                     agendaModeButtons
                     inboxButton
+                    Button {
+                        dismissProjectSidebar()
+                        isStatsPresented = true
+                    } label: {
+                        Label("Stats", systemImage: "chart.bar.xaxis")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 13)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(OTodoTheme.accent)
+                    .accessibilityIdentifier("stats-open")
                     projectFilterButton(nil)
 
                     ForEach(model.projectChoices, id: \.self) { project in
