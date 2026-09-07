@@ -43,46 +43,32 @@ struct TaskRowView: View {
 
             Button(action: onOpen) {
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(task.name)
-                            .font(.body)
-                            .foregroundStyle(.primary)
-                            .strikethrough(workflowState?.isTerminal == true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(task.name)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                        .strikethrough(workflowState?.isTerminal == true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                        Text(workflowState?.name ?? task.state)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if let ancestry {
-                        Label(ancestry, systemImage: "arrow.turn.down.right")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-                    if task.recurrence != nil {
-                        Label(
-                            workflowState?.isTerminal == true ? "Series finished" : "Repeats",
-                            systemImage: "repeat"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
-
-                    if let duePresentation {
-                        Label(duePresentation.label, systemImage: "calendar")
-                            .font(.caption)
-                            .foregroundStyle(duePresentation.color)
-                    }
-
-                    if !task.projectSlugs.isEmpty || !task.tags.isEmpty {
-                        HStack(spacing: 12) {
-                            if !task.projectSlugs.isEmpty {
-                                Label(projectDescription, systemImage: "folder")
+                    let due = duePresentation
+                    let context = contextPresentation
+                    if due != nil || context != nil || task.recurrence != nil {
+                        HStack(spacing: 8) {
+                            if let due {
+                                Text(due.label)
+                                    .foregroundStyle(due.color)
+                                    .layoutPriority(1)
                             }
-                            if !task.tags.isEmpty {
-                                Text(tagDescription)
+                            if task.recurrence != nil {
+                                Image(systemName: "repeat")
+                                    .accessibilityHidden(true)
+                            }
+                            if let context {
+                                if due != nil {
+                                    Text("·")
+                                        .accessibilityHidden(true)
+                                }
+                                Label(context.label, systemImage: context.icon)
+                                    .truncationMode(.tail)
                             }
                         }
                         .font(.caption)
@@ -162,14 +148,20 @@ struct TaskRowView: View {
         )
     }
 
-    private var projectDescription: String {
-        task.projectSlugs
-            .map { $0.replacingOccurrences(of: "-", with: " ").capitalized }
-            .joined(separator: ", ")
-    }
-
-    private var tagDescription: String {
-        task.tags.map { "#\($0)" }.joined(separator: ", ")
+    private var contextPresentation: (label: String, icon: String)? {
+        if let ancestry {
+            return (ancestry, "arrow.turn.down.right")
+        }
+        if let project = task.projectSlugs.first {
+            let name = project.replacingOccurrences(of: "-", with: " ").capitalized
+            let remainder = task.projectSlugs.count - 1
+            return (remainder > 0 ? "\(name) +\(remainder)" : name, "folder")
+        }
+        if let tag = task.tags.first {
+            let remainder = task.tags.count - 1
+            return (remainder > 0 ? "\(tag) +\(remainder)" : tag, "number")
+        }
+        return nil
     }
 
     private func formattedDate(_ value: String) -> String {
