@@ -84,6 +84,8 @@ struct TaskEditorView: View {
     @State private var requestsNameFocus = false
     @State private var isParentPickerPresented = false
     @FocusState private var notesFocused: Bool
+    @State private var isScheduleExpanded = false
+    @State private var isDetailsExpanded = false
 
     init(
         draft: TaskEditorDraft,
@@ -125,7 +127,7 @@ struct TaskEditorView: View {
         NavigationStack {
             ScrollViewReader { proxy in
                 Form {
-                    Section("Todo") {
+                    Section {
                         if didSaveAndContinue {
                             Label("Todo saved. Create another.", systemImage: "checkmark.circle.fill")
                                 .font(.footnote)
@@ -154,154 +156,66 @@ struct TaskEditorView: View {
                                 .accessibilityIdentifier("task-editor-detected-due-date")
                         }
 
-                        Picker("State", selection: $draft.state) {
-                            ForEach(configuration.states, id: \.id) { state in
-                                Text(state.name).tag(state.id)
+                        ZStack(alignment: .topLeading) {
+                            if draft.body.isEmpty {
+                                Text("Add notes…")
+                                    .foregroundStyle(.tertiary)
+                                    .padding(.top, 8)
+                                    .padding(.leading, 5)
+                                    .allowsHitTesting(false)
+                                    .accessibilityHidden(true)
                             }
+                            TextEditor(text: $draft.body)
+                                .frame(minHeight: 120)
+                                .scrollContentBackground(.hidden)
+                                .accessibilityLabel("Todo notes")
+                                .accessibilityIdentifier("task-editor-notes")
+                                .focused($notesFocused)
+                                .onChange(of: notesFocused) { _, focused in
+                                    if focused { requestsNameFocus = false }
+                                }
                         }
-                        .accessibilityIdentifier("task-editor-state")
+                        .listRowSeparator(.hidden)
                     }
                     .id("task-editor-top")
 
-                    Section("Parent") {
-                        Button {
-                            requestsNameFocus = false
-                            isParentPickerPresented = true
+                    Section {
+                        DisclosureGroup(isExpanded: $isScheduleExpanded) {
+                            scheduleFields
                         } label: {
-                            HStack {
-                                Label("Parent", systemImage: "arrow.turn.down.right")
-                                Spacer()
-                                Text(parentDescription)
-                                    .foregroundStyle(isParentMissing ? .red : .secondary)
-                                    .multilineTextAlignment(.trailing)
+                            Label {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Schedule")
+                                    Text(scheduleSummary)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } icon: {
+                                Image(systemName: "calendar")
                             }
                         }
-                        .accessibilityIdentifier("task-editor-parent")
-                        .accessibilityValue(parentDescription)
+                        .disclosureGroupStyle(TaskEditorDisclosureStyle(identifier: "task-editor-schedule"))
                     }
 
                     Section {
-                        TextField("work, personal", text: $projectsText)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .accessibilityLabel("Projects, separated by commas")
-
-                        if !projectChoices.isEmpty {
-                            ScrollView(.horizontal) {
-                                HStack {
-                                    ForEach(projectChoices, id: \.self) { project in
-                                        projectChoice(project)
-                                    }
+                        DisclosureGroup(isExpanded: $isDetailsExpanded) {
+                            detailFields
+                        } label: {
+                            Label {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Details")
+                                    Text(detailsSummary)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
                                 }
-                            }
-                            .scrollIndicators(.hidden)
-                            .accessibilityLabel("Project choices")
-                        }
-                    } header: {
-                        Text("Projects")
-                    } footer: {
-                        Text("Enter project slugs separated by commas.")
-                    }
-
-                    Section {
-                        TextField("errands, next", text: $tagsText)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .accessibilityLabel("Tags, separated by commas")
-                            .accessibilityIdentifier("task-editor-tags")
-
-                        if !matchingTagChoices.isEmpty {
-                            ScrollView(.horizontal) {
-                                HStack(spacing: 8) {
-                                    ForEach(matchingTagChoices, id: \.self) { tag in
-                                        Button {
-                                            completeTag(with: tag)
-                                        } label: {
-                                            Label(tag, systemImage: "tag.fill")
-                                        }
-                                        .buttonStyle(.bordered)
-                                        .controlSize(.small)
-                                        .accessibilityIdentifier("tag-suggestion-\(tag)")
-                                    }
-                                }
-                            }
-                            .scrollIndicators(.hidden)
-                            .accessibilityLabel("Matching existing tags")
-                        }
-                    } header: {
-                        Text("Tags")
-                    } footer: {
-                        Text("Type to match existing tags, or enter new tags without #, separated by commas.")
-                    }
-
-                    Section {
-                        if draft.preservedTask == nil {
-                            RelativeDueDateField(
-                                accessibilityIdentifierPrefix: "task-editor-relative-due",
-                                onPendingChange: { hasPendingRelativeDueDate = $0 },
-                                onApply: { resolvedDate, _ in
-                                    dueDate = resolvedDate
-                                    hasDueDate = true
-                                    hasDueTime = true
-                                    saveError = nil
-                                }
-                            )
-                            .id(nameFocusRequest)
-                        }
-
-                        Toggle("Set due date", isOn: $hasDueDate)
-                            .accessibilityIdentifier("task-editor-due-date-toggle")
-
-                        if hasDueDate {
-                            DatePicker(
-                                "Date",
-                                selection: $dueDate,
-                                displayedComponents: .date
-                            )
-                            .datePickerStyle(.graphical)
-                            .environment(\.calendar, TaskSchedule.calendar)
-                            .accessibilityIdentifier("task-editor-due-date-picker")
-
-                            Toggle("Include time", isOn: $hasDueTime)
-                                .accessibilityIdentifier("task-editor-due-time-toggle")
-
-                            if hasDueTime {
-                                DatePicker(
-                                    "Time",
-                                    selection: $dueDate,
-                                    displayedComponents: .hourAndMinute
-                                )
-                                .environment(\.calendar, TaskSchedule.calendar)
-                                .accessibilityIdentifier("task-editor-due-time-picker")
+                            } icon: {
+                                Image(systemName: "slider.horizontal.3")
                             }
                         }
-                    } header: {
-                        Text("Due date")
-                    } footer: {
-                        Text(dueDateHelpText)
+                        .disclosureGroupStyle(TaskEditorDisclosureStyle(identifier: "task-editor-details"))
                     }
 
-                    TaskRecurrenceFields(
-                        recurrence: $draft.recurrence,
-                        recurrenceFrom: $draft.recurrenceFrom,
-                        parsedRule: $recurrenceRule,
-                        validationError: $recurrenceError,
-                        initialSettings: initialRecurrenceSettings
-                    )
-                    .id(nameFocusRequest)
-
-                    Section("Notes") {
-                        TextEditor(text: $draft.body)
-                            .frame(minHeight: 160)
-                            .accessibilityLabel("Todo notes")
-                            .accessibilityIdentifier("task-editor-notes")
-                            .focused($notesFocused)
-                            .onChange(of: notesFocused) { _, focused in
-                                if focused { requestsNameFocus = false }
-                            }
-                    }
-
-                    if let message = validationMessage ?? saveError {
+                    if let message = displayedValidationMessage ?? saveError {
                         Section {
                             Label(message, systemImage: "exclamationmark.triangle")
                                 .foregroundStyle(.red)
@@ -364,6 +278,150 @@ struct TaskEditorView: View {
                 parentID: $draft.parentID,
                 schemaVersion: configuration.schemaVersion
             )
+        }
+    }
+
+    private var scheduleSummary: String {
+        var parts: [String] = []
+        if let date = detectedDueDatePhrase?.dueDate ?? selectedDueDate {
+            parts.append(date.rawValue)
+            if let time = selectedDueTime { parts.append(time.rawValue) }
+        } else {
+            parts.append("No due date")
+        }
+        if let recurrence = draft.recurrence {
+            parts.append(recurrenceRule?.frequency.rawValue.capitalized ?? recurrence)
+        }
+        if hasPendingRelativeDueDate { parts.append("Unapplied date") }
+        return parts.joined(separator: " · ")
+    }
+
+    private var detailsSummary: String {
+        var parts = [configuration.states.first(where: { $0.id == draft.state })?.name ?? draft.state]
+        parts.append(contentsOf: TaskEditorDraft.parseCommaSeparated(projectsText))
+        parts.append(contentsOf: TaskEditorDraft.parseCommaSeparated(tagsText).map { "#\($0)" })
+        if let parentID = draft.parentID {
+            parts.append(hierarchy.task(for: parentID)?.name ?? "Missing parent")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private var displayedValidationMessage: String? {
+        // An untouched blank draft needs a title, not a prominent error banner.
+        guard !draft.name.isEmpty else { return nil }
+        return validationMessage
+    }
+
+    private var scheduleFields: some View {
+        Group {
+            if draft.preservedTask == nil {
+                RelativeDueDateField(
+                    accessibilityIdentifierPrefix: "task-editor-relative-due",
+                    onPendingChange: { hasPendingRelativeDueDate = $0 },
+                    onApply: { resolvedDate, _ in
+                        dueDate = resolvedDate
+                        hasDueDate = true
+                        hasDueTime = true
+                        saveError = nil
+                    }
+                )
+                .id(nameFocusRequest)
+            }
+            Toggle("Set due date", isOn: $hasDueDate)
+                .accessibilityIdentifier("task-editor-due-date-toggle")
+            if hasDueDate {
+                DatePicker("Date", selection: $dueDate, displayedComponents: .date)
+                    .datePickerStyle(.compact)
+                    .environment(\.calendar, TaskSchedule.calendar)
+                    .accessibilityIdentifier("task-editor-due-date-picker")
+                Toggle("Include time", isOn: $hasDueTime)
+                    .accessibilityIdentifier("task-editor-due-time-toggle")
+                if hasDueTime {
+                    DatePicker("Time", selection: $dueDate, displayedComponents: .hourAndMinute)
+                        .environment(\.calendar, TaskSchedule.calendar)
+                        .accessibilityIdentifier("task-editor-due-time-picker")
+                }
+            }
+            Text(dueDateHelpText)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            TaskRecurrenceFields(
+                recurrence: $draft.recurrence,
+                recurrenceFrom: $draft.recurrenceFrom,
+                parsedRule: $recurrenceRule,
+                validationError: $recurrenceError,
+                initialSettings: initialRecurrenceSettings
+            )
+            .id(nameFocusRequest)
+        }
+    }
+
+    private var detailFields: some View {
+        Group {
+            Picker("State", selection: $draft.state) {
+                ForEach(configuration.states, id: \.id) { state in
+                    Text(state.name).tag(state.id)
+                }
+            }
+            .accessibilityIdentifier("task-editor-state")
+
+            Button {
+                requestsNameFocus = false
+                notesFocused = false
+                isParentPickerPresented = true
+            } label: {
+                HStack {
+                    Label("Parent", systemImage: "arrow.turn.down.right")
+                    Spacer()
+                    Text(parentDescription)
+                        .foregroundStyle(isParentMissing ? .red : .secondary)
+                        .multilineTextAlignment(.trailing)
+                }
+            }
+            .accessibilityIdentifier("task-editor-parent")
+            .accessibilityValue(parentDescription)
+
+            TextField("Projects", text: $projectsText)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityLabel("Projects, separated by commas")
+            if !projectChoices.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack {
+                        ForEach(projectChoices, id: \.self) { project in
+                            projectChoice(project)
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
+                .accessibilityLabel("Project choices")
+            }
+            TextField("Tags", text: $tagsText)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityLabel("Tags, separated by commas")
+                .accessibilityIdentifier("task-editor-tags")
+            if !matchingTagChoices.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        ForEach(matchingTagChoices, id: \.self) { tag in
+                            Button {
+                                completeTag(with: tag)
+                            } label: {
+                                Label(tag, systemImage: "tag.fill")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .accessibilityIdentifier("tag-suggestion-\(tag)")
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
+                .accessibilityLabel("Matching existing tags")
+            }
+            Text("Projects and tags are comma-separated. Tags don't need #.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -504,6 +562,7 @@ struct TaskEditorView: View {
         value.dueDate = detectedDueDatePhrase?.dueDate ?? selectedDueDate
         value.dueTime = selectedDueTime
         requestsNameFocus = false
+        notesFocused = false
         isSaving = true
         saveError = nil
         didSaveAndContinue = false
@@ -529,6 +588,8 @@ struct TaskEditorView: View {
                 detectedDueDatePhrase = nil
                 hasPendingRelativeDueDate = false
                 didSaveAndContinue = true
+                isScheduleExpanded = false
+                isDetailsExpanded = false
                 nameFocusRequest += 1
                 requestsNameFocus = true
             } else {
@@ -594,6 +655,46 @@ struct TaskEditorView: View {
     }
 }
 
+/// Keep input subtrees mounted while collapsed, so child-owned date parser and
+/// invalid recurrence text survive opening and closing a panel.
+private struct TaskEditorDisclosureStyle: DisclosureGroupStyle {
+    let identifier: String
+
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    configuration.isExpanded.toggle()
+                }
+            } label: {
+                HStack {
+                    configuration.label
+                    Spacer(minLength: 12)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier(identifier)
+            .accessibilityValue(configuration.isExpanded ? "Expanded" : "Collapsed")
+
+            VStack(alignment: .leading, spacing: 16) {
+                configuration.content
+            }
+            .padding(.top, configuration.isExpanded ? 20 : 0)
+            .frame(height: configuration.isExpanded ? nil : 0, alignment: .top)
+            .clipped()
+            .opacity(configuration.isExpanded ? 1 : 0)
+            .disabled(!configuration.isExpanded)
+            .allowsHitTesting(configuration.isExpanded)
+            .accessibilityHidden(!configuration.isExpanded)
+        }
+    }
+}
+
 /// Recurrence input owns its transient text and selections, just like relative-date input.
 /// Only recurrence edits publish a new rule; opening an imported task preserves its source rule.
 private struct TaskRecurrenceFields: View {
@@ -636,7 +737,7 @@ private struct TaskRecurrenceFields: View {
     }
 
     var body: some View {
-        Section {
+        Group {
             Picker("Repeat", selection: $settings.frequency) {
                 Text("None").tag(nil as RecurrenceFrequency?)
                 ForEach(RecurrenceFrequency.allCases, id: \.self) { frequency in
@@ -714,20 +815,21 @@ private struct TaskRecurrenceFields: View {
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("task-editor-repeat-anchor")
             }
-        } header: {
-            Text("Repeat")
-        } footer: {
-            if settings.frequency != nil {
-                Text(
-                    (settings.anchor == .schedule
-                        ? "Completing an occurrence keeps the original schedule and skips missed dates."
-                        : "Completing an occurrence starts the interval from the day you complete it.")
-                    + " A due date matching any selections is required. Empty selections use the anchor date. Impossible dates are skipped, never shortened."
-                    + " Choose a terminal State to finish the series without scheduling another occurrence."
-                )
-            } else {
-                Text("None makes this a one-off todo and clears its completion history.")
+            Group {
+                if settings.frequency != nil {
+                    Text(
+                        (settings.anchor == .schedule
+                            ? "Completing an occurrence keeps the original schedule and skips missed dates."
+                            : "Completing an occurrence starts the interval from the day you complete it.")
+                        + " A due date matching any selections is required. Empty selections use the anchor date. Impossible dates are skipped, never shortened."
+                        + " Choose a terminal State to finish the series without scheduling another occurrence."
+                    )
+                } else {
+                    Text("None makes this a one-off todo and clears its completion history.")
+                }
             }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
         }
         .onChange(of: settings) { _, _ in publishRule() }
     }
