@@ -946,38 +946,49 @@ struct TaskListView: View {
         let title = project.map(projectDisplayName) ?? (isUpcoming ? "All projects" : "All Todos")
         let count = taskCount(for: project)
         let color = projectColor(project)
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 12))
 
         return Button {
             selectProject(project)
             dismissProjectSidebar()
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: project == nil ? "checklist" : "folder")
-                    .font(.body)
-                    .foregroundStyle(color)
-                    .frame(width: sidebarIconWidth)
+            layout {
+                HStack(spacing: 12) {
+                    Image(systemName: project == nil ? "checklist" : "folder")
+                        .font(.body)
+                        .foregroundStyle(color)
+                        .frame(width: sidebarIconWidth)
+                    Text(title)
+                        .font(.body.weight(isSelected ? .semibold : .regular))
+                        .foregroundStyle(.primary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text(title)
-                    .font(.body.weight(isSelected ? .semibold : .regular))
-                    .foregroundStyle(.primary)
-
-                Spacer(minLength: 8)
-
-                Text("\(count)")
-                    .font(.caption)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Color.secondary.opacity(0.08), in: Capsule())
-                    .accessibilityIdentifier(project.map { "project-open-count-\($0)" } ?? "project-open-count")
-
-                Image(systemName: "checkmark")
-                    .font(.body)
-                    .foregroundStyle(OTodoTheme.accent)
-                    .opacity(isSelected ? 1 : 0)
+                HStack(spacing: 8) {
+                    Text("\(count)")
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.secondary.opacity(0.08), in: Capsule())
+                        .accessibilityIdentifier(project.map { "project-open-count-\($0)" } ?? "project-open-count")
+                    if dynamicTypeSize.isAccessibilitySize {
+                        Text("open")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Image(systemName: "checkmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(OTodoTheme.accent)
+                        .opacity(isSelected ? 1 : 0)
+                }
+                .fixedSize()
             }
             .padding(.horizontal, 11)
+            .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? 8 : 0)
             .frame(minHeight: 48)
             .contentShape(Rectangle())
             .background(

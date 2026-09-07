@@ -10,20 +10,27 @@ Tap a todo's circle to complete it without opening the editor. Completed todos r
 
 Each todo shows its title and at most one quiet metadata line. The deadline takes priority, followed by a repeat icon and one context: ancestry, the first project, or the first tag. Additional projects or tags use a `+N` count instead of wrapping. The completion circle carries state; the editor and VoiceOver retain the full state, ancestry, projects, tags, and schedule.
 
+Workspace counts sit beside the title, and the selected Home filter uses a solid accent. Custom query syntax stays in the Filters library. Completed dates use a neutral style instead of an overdue warning.
+
 Sidebar badges count only open todos across all dates, independent of the selected filter or project. **Inbox** counts todos without an assigned project, including undated work; its badge updates when a todo is created, organized, completed, reopened, or deleted. Configured terminal states are excluded from Inbox, individual project counts, and the **All Todos** count.
 
 Touch and hold a todo for **Done**, **Reschedule**, **Add Subtask**, and **Delete**. Done is available only for open todos; Delete is available for both open and completed todos but refuses tasks that still have children.
 
 Update and sync information stays pinned beside **+** at the bottom of the workspace. Todo scrolling does not move it, and the list reserves space so the final todo remains reachable without overlapping the status or quick-add controls.
 
+At accessibility text sizes, the pinned status becomes a compact **Offline**, sync, or **Needs attention** control. Tap it to expand scrollable details and the existing sync and repair actions without permanently crowding out the todo list. Conflict, relationship, and attachment-update warnings remain available.
+
 Touch and hold OTodo's Home Screen icon and choose **New Todo** to open task creation directly.
 Tap **+** to add a todo. Touch and hold **+** to choose **New Todo**, **Bulk Add**, or **New Project**.
+The sidebar separates **Todos**, **Upcoming**, and **Inbox** from project scope. Tap **+** beside its **Projects** heading to create a project directly. At accessibility text sizes, it uses the full width and scrolls utility controls with its content.
 
 **Bulk Add** accepts one todo per nonblank line and previews each stripped name and resulting date/time. From **Today**, names without schedule phrases default to today; other views keep them undated. A date phrase overrides the view default, and a clock alone means today. Detected phrases are removed on save. The entire batch is validated and saved together on the device, so an invalid line cannot leave a partially created batch.
 
 In the **New Todo** editor, **Save & Create Another** saves without closing, confirms the save, and returns focus to a fresh name. It keeps the selected parent, state, projects, and tags, but clears notes, recurrence, and the previous todo's schedule. From **Today**, the next draft starts due today again; other views start undated. Normal **Save** still saves and closes; editing an existing todo does not offer repeated creation.
 
 The new/edit editor starts with a prominent title and immediately editable Markdown notes. Tap **Add notes…** to write multiple lines; notes use the same durable offline save as the rest of the todo and remain available after restarting the app. **Schedule** expands date, optional time, relative-date entry for new todos, and repeat controls. **Details** expands state, parent, projects, and tags. Both rows summarize existing values while collapsed, and saving without opening either panel preserves those values. **Save & Create Another** returns to the focused, collapsed layout.
+
+Editors use grouped native surfaces and put State and Parent together under **Details**. **Save & Create Another** reserves its own space above the keyboard at standard text sizes; at accessibility sizes it appears at the end of the form instead of covering fields. Cancel and Save remain in the navigation bar.
 
 Add OTodo's **Today** widget to the Home Screen to see active todos due today or overdue without opening the app. The widget refreshes when OTodo's tasks change and at the next local day boundary.
 
@@ -398,6 +405,17 @@ xcodebuild build \
 Simulator builds use ad-hoc signing so App Group entitlements are available to the app and extensions. Disabling signing prevents shared workspace capture from running.
 
 To run or test, open `OTodo.xcodeproj`, select scheme `OTodo` and any installed iOS 17-or-newer iPhone simulator, then Run/Test. Regenerate the project after changing `project.yml`; do not hand-edit generated project settings.
+
+### Visual design survey
+
+The UI suite includes light/dark captures of the workspace, sidebar, filter library, project creation, and todo/bulk capture, plus the largest accessibility text size. To run only this visual survey on a branch:
+
+```sh
+gh workflow run ci.yml --ref your-branch \
+  -f design_survey_only=true -f export_ui_snapshots=true
+```
+
+Download the run's `ui-snapshots` artifact for full-resolution images and its attachment manifest. This focused run is not the full CI gate: omit `design_survey_only` (or set it to `false`) to run the complete core, iOS, and Watch checks. `export_ui_snapshots=true` also works with full CI.
 
 ### Product changelog entries
 
