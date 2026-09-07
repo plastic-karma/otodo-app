@@ -1314,7 +1314,7 @@ struct TaskListView: View {
 
     private func agendaDate(_ value: String) -> String {
         guard let date = try? CivilDate(rawValue: value) else { return value }
-        return TaskSchedule.date(from: date).formatted(.dateTime.month(.abbreviated).day())
+        return TaskSchedule.date(from: date, time: nil).formatted(.dateTime.month(.abbreviated).day())
     }
 
     @ViewBuilder
