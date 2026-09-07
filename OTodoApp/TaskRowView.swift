@@ -3,6 +3,7 @@ import OTodoCore
 import SwiftUI
 
 struct TaskRowView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let task: TodoTask
     let workflowState: WorkflowState?
     let today: String
@@ -14,7 +15,11 @@ struct TaskRowView: View {
     var hierarchyDepth: Int = 0
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
+        let metadataLayout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 8))
+
+        return HStack(alignment: .top, spacing: 0) {
             Button(action: onToggleCompletion) {
                 statusMark
                     .frame(width: 44, height: 44)
@@ -49,17 +54,11 @@ struct TaskRowView: View {
                         .strikethrough(workflowState?.isTerminal == true)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 8) {
-                            dueLabel
-                            stateLabel
-                        }
-                        .fixedSize(horizontal: true, vertical: false)
-                        VStack(alignment: .leading, spacing: 6) {
-                            dueLabel
-                            stateLabel
-                        }
+                    metadataLayout {
+                        dueLabel
+                        stateLabel
                     }
+                    .fixedSize(horizontal: false, vertical: true)
 
                     if let ancestry {
                         Label(ancestry, systemImage: "arrow.turn.down.right")
@@ -77,17 +76,11 @@ struct TaskRowView: View {
                     }
 
                     if !task.projectSlugs.isEmpty || !task.tags.isEmpty {
-                        ViewThatFits(in: .horizontal) {
-                            HStack(spacing: 12) {
-                                projectLabel
-                                tagLabel
-                            }
-                            .fixedSize(horizontal: true, vertical: false)
-                            VStack(alignment: .leading, spacing: 4) {
-                                projectLabel
-                                tagLabel
-                            }
+                        metadataLayout {
+                            projectLabel
+                            tagLabel
                         }
+                        .fixedSize(horizontal: false, vertical: true)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     }
@@ -97,6 +90,7 @@ struct TaskRowView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .labelStyle(.titleAndIcon)
             .disabled(isSelected != nil && isCompletionDisabled)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(accessibilityDescription)

@@ -24,7 +24,10 @@ final class OTodoDesignScreenshots: XCTestCase {
             app.buttons["project-sidebar-toggle"].tap()
             XCTAssertTrue(app.buttons["project-filter-work"].waitForExistence(timeout: 5))
             capture("Survey · Workspace navigation · \(appearance)", in: app)
-            app.buttons["project-sidebar-close"].tap()
+            app.buttons["sidebar-project-add"].tap()
+            XCTAssertTrue(app.textFields["project-editor-name"].waitForExistence(timeout: 5))
+            capture("Survey · Project creation · \(appearance)", in: app)
+            app.buttons["Cancel"].tap()
 
             app.buttons["filters-open"].tap()
             XCTAssertTrue(app.buttons["filter-add"].waitForExistence(timeout: 5))
@@ -65,7 +68,15 @@ final class OTodoDesignScreenshots: XCTestCase {
         XCTAssertTrue(add.waitForExistence(timeout: 10))
         waitForTodos(in: app)
         XCTAssertTrue(add.isHittable, "Capture must remain reachable with accessibility text sizes")
+        let firstTodo = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "task-row-")
+        ).firstMatch
+        XCTAssertTrue(firstTodo.isHittable, "Sync information must leave room to interact with todos")
         capture("Survey · Today · accessibility text", in: app)
+        app.buttons["sync-details-toggle"].tap()
+        XCTAssertTrue(app.buttons["sync-refresh"].waitForExistence(timeout: 5))
+        capture("Survey · Sync details · accessibility text", in: app)
+        app.buttons["sync-details-toggle"].tap()
 
         app.buttons["project-sidebar-toggle"].tap()
         let upcoming = app.buttons["upcoming-open"]

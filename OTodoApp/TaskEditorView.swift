@@ -60,6 +60,7 @@ struct TaskEditorDraft: Equatable, Sendable {
 
 struct TaskEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private let attachmentModel: AppModel?
     private let attachmentSelection: RepositorySelection?
@@ -177,12 +178,20 @@ struct TaskEditorView: View {
                             requestsNameFocus = false
                             isParentPickerPresented = true
                         } label: {
-                            HStack {
-                                Label("Parent", systemImage: "arrow.turn.down.right")
-                                Spacer()
-                                Text(parentDescription)
-                                    .foregroundStyle(isParentMissing ? .red : .secondary)
-                                    .multilineTextAlignment(.trailing)
+                            if dynamicTypeSize.isAccessibilitySize {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Label("Parent", systemImage: "arrow.turn.down.right")
+                                    Text(parentDescription)
+                                        .foregroundStyle(isParentMissing ? .red : .secondary)
+                                }
+                            } else {
+                                HStack {
+                                    Label("Parent", systemImage: "arrow.turn.down.right")
+                                    Spacer()
+                                    Text(parentDescription)
+                                        .foregroundStyle(isParentMissing ? .red : .secondary)
+                                        .multilineTextAlignment(.trailing)
+                                }
                             }
                         }
                         .accessibilityIdentifier("task-editor-parent")

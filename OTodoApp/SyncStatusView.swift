@@ -1,17 +1,74 @@
 import SwiftUI
 
 struct SyncStatusView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Bindable private var model: AppModel
     @State private var isReviewingConflicts = false
     @State private var isReviewingRelationships = false
+    @State private var isShowingDetails = false
 
     init(model: AppModel) {
         self.model = model
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 4) {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    Button {
+                        isShowingDetails.toggle()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: primarySymbol)
+                                .font(.system(size: 16))
+                            Text(compactText)
+                                .font(.caption.weight(.semibold))
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                            Image(systemName: isShowingDetails ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(primaryColor)
+                    .accessibilityLabel(primaryText)
+                    .accessibilityValue(detailText ?? "")
+                    .accessibilityHint(isShowingDetails ? "Hides sync details" : "Shows sync details and workspace repair actions")
+                    .accessibilityIdentifier("sync-details-toggle")
+
+                    if isShowingDetails {
+                        ScrollView {
+                            statusContent
+                        }
+                        .frame(maxHeight: 240)
+                    }
+                }
+            } else {
+                statusContent
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(OTodoTheme.formCanvas, in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("sync-status")
+        .sheet(isPresented: $isReviewingConflicts) {
+            ConflictResolutionView(model: model)
+        }
+        .sheet(isPresented: $isReviewingRelationships) {
+            TaskRelationshipReview(model: model)
+        }
+    }
+
+    private var statusContent: some View {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 4))
+
+        return VStack(alignment: .leading, spacing: 4) {
+            layout {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Image(systemName: primarySymbol)
@@ -31,8 +88,12 @@ struct SyncStatusView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 if !hasRelationshipIssues {
-                    relationshipReviewButton
-                        .labelStyle(.iconOnly)
+                    if dynamicTypeSize.isAccessibilitySize {
+                        relationshipReviewButton
+                    } else {
+                        relationshipReviewButton
+                            .labelStyle(.iconOnly)
+                    }
                 }
 
                 if model.isBusy {
@@ -81,17 +142,12 @@ struct SyncStatusView: View {
                     .accessibilityIdentifier("attachment-refresh-status")
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(OTodoTheme.formCanvas, in: RoundedRectangle(cornerRadius: 16))
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("sync-status")
-        .sheet(isPresented: $isReviewingConflicts) {
-            ConflictResolutionView(model: model)
-        }
-        .sheet(isPresented: $isReviewingRelationships) {
-            TaskRelationshipReview(model: model)
-        }
+    }
+
+    private var compactText: String {
+        if requiresAttention { return "Needs attention" }
+        if !model.isOnline { return "Offline" }
+        return primaryText
     }
 
     private var relationshipReviewButton: some View {
