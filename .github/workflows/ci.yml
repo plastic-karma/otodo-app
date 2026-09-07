@@ -36,7 +36,7 @@ jobs:
   ios-simulator:
     name: iOS simulator
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       PROJECT: OTodo.xcodeproj
       SCHEME: OTodo

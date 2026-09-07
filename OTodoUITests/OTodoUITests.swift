@@ -66,7 +66,16 @@ final class OTodoUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Available offline"].waitForExistence(timeout: 5))
         XCTAssertTrue(open.isHittable)
         open.tap()
-        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 10))
+        let preview = app.otherElements["QLPreviewControllerView"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 10))
+        let previewText = app.textViews.matching(NSPredicate(
+            format: "value CONTAINS %@ OR label == %@", "Attachment UI test", "Attachment UI test"
+        )).firstMatch
+        guard require(previewText, in: app, description: "the offline attachment preview contents") else { return }
+        let closePreview = app.buttons["QLOverlayDoneButtonAccessibilityIdentifier"]
+        XCTAssertTrue(closePreview.waitForExistence(timeout: 5))
+        closePreview.tap()
+        XCTAssertTrue(preview.waitForNonExistence(timeout: 5))
     }
 
     @MainActor
