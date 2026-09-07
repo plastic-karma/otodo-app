@@ -2,7 +2,6 @@
 """Regressions for full coverage, diagnosis isolation, and failed rerun evidence."""
 
 from collections import Counter
-import io
 import os
 from pathlib import Path
 import subprocess
@@ -115,15 +114,18 @@ class CoverageTests(unittest.TestCase):
     def test_product_transport_keeps_executables_and_rejects_escaping_links(self):
         archive = self.directory / "products.tar.gz"
         script = b"#!/bin/sh\nprintf 'executable survived transport'\n"
-        with tarfile.open(archive, "w:gz") as output:
-            executable = tarfile.TarInfo("Products/App.app/App")
-            executable.mode = 0o755
-            executable.size = len(script)
-            output.addfile(executable, io.BytesIO(script))
-            link = tarfile.TarInfo("Products/Current")
-            link.type = tarfile.SYMTYPE
-            link.linkname = "App.app"
-            output.addfile(link)
+        products = self.directory / "input/Products"
+        app = products / "App.app"
+        app.mkdir(parents=True)
+        executable = app / "App"
+        executable.write_bytes(script)
+        executable.chmod(0o755)
+        (products / "Current").symlink_to("App.app", target_is_directory=True)
+        (products / "._Products").write_bytes(b"AppleDouble filesystem metadata")
+        (app / "._App").write_bytes(b"AppleDouble filesystem metadata")
+        ios_ci.pack_products(products, archive)
+        with tarfile.open(archive, "r:gz") as packed:
+            self.assertFalse(any(Path(member.name).name.startswith("._") for member in packed))
         restored = self.directory / "restored"
         ios_ci.unpack_products(archive, restored)
         execution = subprocess.run(

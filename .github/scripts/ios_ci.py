@@ -229,8 +229,10 @@ def build(output, derived_data):
     }
     manifest["plan_id"] = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
     write_json(output / "manifest.json", manifest)
-    run_command(["tar", "-czf", str(output / "ios-test-products.tar.gz"), "-C", str(derived_data / "Build"), "Products"],
-                stage="ios-products-package", timeout=180)
+    run_command([
+        sys.executable, str(Path(__file__).resolve()), "pack", "--products", str(products),
+        "--archive", str(output / "ios-test-products.tar.gz"),
+    ], stage="ios-products-package", timeout=180)
     artifact = f"ios-test-products-{os.environ.get('GITHUB_RUN_ID', 'local')}-{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}"
     output_values({"build_ready": "true", "products_artifact": artifact})
     print(f"Compiled coverage: {len(manifest['expected'])} tests; partitions: {manifest['estimated_seconds']}", flush=True)
@@ -251,6 +253,19 @@ def load_manifest(path):
     if Path(manifest["xctestrun"]).name != manifest["xctestrun"]:
         raise ValueError("Invalid compiled test-run filename")
     return manifest
+
+
+def pack_products(products, archive):
+    def portable_member(member):
+        # AppleDouble sidecars are filesystem metadata, not app resources.
+        if PurePosixPath(member.name).name.startswith("._"):
+            return None
+        return member
+
+    # Python does not synthesize libcopyfile's root ._Products entry on macOS.
+    # Keep executable modes/internal links without copying host extended metadata.
+    with tarfile.open(archive, "w:gz", compresslevel=1) as output:
+        output.add(products, arcname="Products", filter=portable_member)
 
 
 def unpack_products(archive, output):
@@ -428,6 +443,9 @@ def main():
     restore_parser = commands.add_parser("restore")
     restore_parser.add_argument("--download", type=Path, required=True)
     restore_parser.add_argument("--output", type=Path, required=True)
+    pack_parser = commands.add_parser("pack")
+    pack_parser.add_argument("--products", type=Path, required=True)
+    pack_parser.add_argument("--archive", type=Path, required=True)
     unpack_parser = commands.add_parser("unpack")
     unpack_parser.add_argument("--archive", type=Path, required=True)
     unpack_parser.add_argument("--output", type=Path, required=True)
@@ -448,6 +466,8 @@ def main():
             build(args.output, args.derived_data)
         elif args.command == "restore":
             restore(args.download, args.output)
+        elif args.command == "pack":
+            pack_products(args.products, args.archive)
         elif args.command == "unpack":
             unpack_products(args.archive, args.output)
         elif args.command == "test":
