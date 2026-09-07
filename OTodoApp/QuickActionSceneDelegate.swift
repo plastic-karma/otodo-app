@@ -4,6 +4,20 @@ import UIKit
 
 @MainActor
 final class OTodoApplicationDelegate: NSObject, UIApplicationDelegate {
+    // UNUserNotificationCenter holds its delegate weakly; retain it for app life.
+    let notifications = TaskNotificationManager()
+
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        notifications.registerResponseDelegate()
+#if DEBUG
+        TaskNotificationTestHarness.deliverLaunchResponse(to: notifications)
+#endif
+        return true
+    }
+
     func application(
         _ application: UIApplication,
         configurationForConnecting connectingSceneSession: UISceneSession,
@@ -14,6 +28,9 @@ final class OTodoApplicationDelegate: NSObject, UIApplicationDelegate {
             sessionRole: connectingSceneSession.role
         )
         if connectingSceneSession.role == .windowApplication {
+            if let response = options.notificationResponse {
+                notifications.handle(TaskNotificationResponse(response))
+            }
             configuration.delegateClass = QuickActionSceneDelegate.self
         }
         return configuration

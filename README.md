@@ -31,6 +31,8 @@ Task names recognize full weekday names and common abbreviations (`Sun`, `Mon`, 
 
 Due reminders are opt-in from the Projects sidebar. When enabled, active dated todos schedule local iOS notifications at their exact due time, or at 9:00 AM in the device time zone for date-only todos; an already-due todo gets a near-term reminder, and completing, deleting, or rescheduling a todo reconciles its pending alert. If notification access was denied, the control opens the app's iOS Settings page.
 
+Tapping a due reminder opens that exact todo in its editor, including after a cold start and when the current filter or project hides it. The request waits for the cached workspace to load, so it also works offline. If another editor or sheet is open, finish or dismiss it first; the reminder never replaces unsaved work. A reminder for a task no longer in the workspace is ignored rather than opening a different task.
+
 Open **Changelog** from the sidebar to review product features and visible improvements, newest first. Each entry shows its commit's exact UTC timestamp. The history is bundled with the app and available offline; CI and repository-maintenance changes are excluded.
 
 ## Attachments

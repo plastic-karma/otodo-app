@@ -9,7 +9,7 @@ struct OTodoApp: App {
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var startup: Result<AppModel, Error> = Result { try AppModel() }
-    @State private var notifications = TaskNotificationManager()
+    private var notifications: TaskNotificationManager { applicationDelegate.notifications }
     @State private var watchSync = PhoneWatchSync()
 
     var body: some Scene {
@@ -26,6 +26,9 @@ struct OTodoApp: App {
                         await synchronizeSystemSurfaces(model: model)
                     }
                     .onChange(of: scenePhase) { _, phase in
+    #if DEBUG
+                        TaskNotificationTestHarness.scenePhaseDidChange(phase, notifications: notifications)
+    #endif
                         guard phase == .active else { return }
                         Task { @MainActor in
                             await model.sceneDidBecomeActive()

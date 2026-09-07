@@ -197,7 +197,7 @@ struct TaskListView: View {
                         .accessibilityIdentifier("filters-open")
                     }
                 }
-                .sheet(item: $editorPresentation) { presentation in
+                .sheet(item: $editorPresentation, onDismiss: presentPendingNotificationRequest) { presentation in
                     if let configuration = model.configuration {
                         TaskEditorView(
                             draft: presentation.draft,
@@ -226,7 +226,7 @@ struct TaskListView: View {
                         )
                     }
                 }
-                .sheet(isPresented: $isBulkEditorPresented) {
+                .sheet(isPresented: $isBulkEditorPresented, onDismiss: presentPendingNotificationRequest) {
                     TaskBulkEditorView(
                         projectSlugs: bulkCreationDefaults.projectSlugs,
                         tags: bulkCreationDefaults.tags,
@@ -242,7 +242,7 @@ struct TaskListView: View {
                     }
                     .presentationDetents([.large])
                 }
-                .sheet(item: $reschedulePresentation) { presentation in
+                .sheet(item: $reschedulePresentation, onDismiss: presentPendingNotificationRequest) { presentation in
                     TaskRescheduleView(tasks: presentation.tasks) { date, time in
                         await model.rescheduleTasks(
                             presentation.tasks,
@@ -280,7 +280,7 @@ struct TaskListView: View {
             }
         }
         .animation(.snappy(duration: 0.24), value: isProjectSidebarPresented)
-        .sheet(isPresented: $isProjectEditorPresented) {
+        .sheet(isPresented: $isProjectEditorPresented, onDismiss: presentPendingNotificationRequest) {
             if let configuration = model.configuration {
                 ProjectEditorView(
                     existingSlugs: model.projectChoices,
@@ -302,7 +302,7 @@ struct TaskListView: View {
                 )
             }
         }
-        .sheet(isPresented: $isFilterLibraryPresented) {
+        .sheet(isPresented: $isFilterLibraryPresented, onDismiss: presentPendingNotificationRequest) {
             TaskFiltersView(
                 library: filterLibrary,
                 projectChoices: model.projectChoices,
@@ -314,7 +314,7 @@ struct TaskListView: View {
                 }
             }
         }
-        .sheet(isPresented: $isChangelogPresented) {
+        .sheet(isPresented: $isChangelogPresented, onDismiss: presentPendingNotificationRequest) {
             ChangelogView()
         }
         .task(id: model.workspaceSelection.map(FileWorkspaceStore.selectionKey(for:))) {
@@ -339,6 +339,7 @@ struct TaskListView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 dates = TaskDateContext()
+                presentPendingNotificationRequest()
             }
         }
         .onChange(of: filterLibrary.filters) { _, filters in
@@ -347,11 +348,19 @@ struct TaskListView: View {
             }
         }
         .onAppear(perform: presentPendingNewTodoRequest)
+        .onAppear(perform: presentPendingNotificationRequest)
+        .onChange(of: notifications.pendingTaskID) { _, _ in
+            presentPendingNotificationRequest()
+        }
         .onChange(of: quickActions.pendingNewTodoRequestID) { _, _ in
             presentPendingNewTodoRequest()
         }
         .onChange(of: model.configuration) { _, _ in
             presentPendingNewTodoRequest()
+            presentPendingNotificationRequest()
+        }
+        .onChange(of: model.tasks) { _, _ in
+            presentPendingNotificationRequest()
         }
 
     }
@@ -536,6 +545,28 @@ struct TaskListView: View {
         isBulkEditorPresented = false
         reschedulePresentation = nil
         presentNewTodo()
+    }
+
+    private func presentPendingNotificationRequest() {
+        // Wait for the cached workspace and for any existing sheet to finish.
+        // In particular, never replace an editor containing unsaved changes.
+        guard model.workspaceSelection != nil,
+              model.configuration != nil,
+              editorPresentation == nil,
+              !isBulkEditorPresented,
+              reschedulePresentation == nil,
+              !isProjectEditorPresented,
+              !isFilterLibraryPresented,
+              !isChangelogPresented,
+              let taskID = notifications.consumePendingTaskRequest()
+        else { return }
+
+        // Resolve against the complete cache, not the current filter/project.
+        // A removed task consumes the stale tap without opening another record.
+        guard let task = model.tasks.first(where: { $0.id == taskID }) else { return }
+        isProjectSidebarPresented = false
+        clearSelection()
+        editorPresentation = .edit(task)
     }
 
 
