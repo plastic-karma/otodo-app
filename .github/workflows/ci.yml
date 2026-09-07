@@ -1,356 +1,378 @@
 name: CI
+run-name: >-
+  CI / ${{ inputs.test_filter && 'focused' || inputs.complete_diagnostics && 'diagnostics' || 'full' }}
+  · ${{ github.ref_name }}${{ inputs.test_filter && format(' · {0}', inputs.test_filter) || '' }}
 
 on:
-  push:
   pull_request:
   workflow_dispatch:
     inputs:
       export_ui_snapshots:
-        description: Export UI test screenshot attachments
+        description: Export screenshot attachments (does not reduce test coverage)
         required: false
         default: false
         type: boolean
       test_filter:
-        description: Optional Xcode test identifier for focused diagnosis (blank runs the full suite)
+        description: Focused diagnosis only; Target[/Class[/testMethod]] cannot satisfy full CI
         required: false
         default: ""
         type: string
+      complete_diagnostics:
+        description: Continue remaining partitions after a smoke assertion fails; not a release gate
+        required: false
+        default: false
+        type: boolean
+      use_build_cache:
+        description: Measure exact-input Swift build cache reuse
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.test_filter && 'focused' || inputs.complete_diagnostics && 'diagnostics' || 'full' }}
+  cancel-in-progress: true
+
+env:
+  CI_MODE: ${{ inputs.test_filter && 'focused' || inputs.complete_diagnostics && 'diagnostics' || 'full' }}
+  CI_FILTER: ${{ inputs.test_filter }}
+  GH_OAUTH_CLIENT_ID: ${{ vars.GH_OAUTH_CLIENT_ID }}
+
 jobs:
-  swift-package-tests:
-    name: Swift package tests
+  preflight:
+    name: CI / preflight
     runs-on: ubuntu-24.04
-    container: swift:6.1
-    timeout-minutes: 15
-
+    timeout-minutes: 10
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+      filter: ${{ steps.mode.outputs.filter }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-
-      - name: Run all core tests
-        run: swift test
-
-  ios-simulator:
-    name: iOS simulator
-    runs-on: macos-15
-    timeout-minutes: 60
-    env:
-      PROJECT: OTodo.xcodeproj
-      SCHEME: OTodo
-      GH_OAUTH_CLIENT_ID: ${{ vars.GH_OAUTH_CLIENT_ID }}
-
-    steps:
-      - name: Checkout
+      - name: Checkout exact workflow revision
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0
-
-      - name: Verify feature changelog generation
-        run: python3 .github/scripts/test_generate_changelog.py
-
-      - name: Select newest installed Xcode
-        run: |
-          set -euo pipefail
-          newest="$(python3 <<'PY'
-          import glob
-          import plistlib
-
-          xcodes = []
-          for app in glob.glob("/Applications/Xcode*.app"):
-              try:
-                  with open(f"{app}/Contents/Info.plist", "rb") as info:
-                      value = plistlib.load(info)["CFBundleShortVersionString"]
-                  version = tuple(int(part) for part in value.split("."))
-              except (KeyError, OSError, TypeError, ValueError):
-                  continue
-              xcodes.append((version, app))
-
-          print(max(xcodes)[1] if xcodes else "")
-          PY
-          )"
-          if [ -z "$newest" ]; then
-            echo "::error::No Xcode installation was found on the runner."
-            exit 1
-          fi
-          sudo xcode-select --switch "$newest/Contents/Developer"
-          xcodebuild -version
-
-      - name: Install XcodeGen 2.46.0
+      - name: Set up portable validation tools
+        uses: ./.github/actions/setup-build-tools
+      - name: Resolve verification mode
+        id: mode
         env:
-          XCODEGEN_VERSION: 2.46.0
-          XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+          COMPLETE_DIAGNOSTICS: ${{ inputs.complete_diagnostics }}
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/xcodegen.zip"
-          install_dir="$RUNNER_TEMP/xcodegen-tool"
-          curl --fail --silent --show-error --location --retry 3 \
-            --output "$archive" \
-            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
-          echo "${XCODEGEN_SHA256}  ${archive}" | shasum -a 256 --check
-          mkdir -p "$install_dir"
-          unzip -q "$archive" -d "$install_dir"
-          chmod +x "$install_dir/xcodegen/bin/xcodegen"
-          echo "$install_dir/xcodegen/bin" >> "$GITHUB_PATH"
-
-      - name: Generate Xcode project
-        run: xcodegen generate --spec project.yml
-
-      - name: Validate App Store bundle metadata
+          args=()
+          if [ "$COMPLETE_DIAGNOSTICS" = true ]; then args+=(--diagnostics); fi
+          python3 .github/scripts/ios_ci.py configure --filter "$CI_FILTER" "${args[@]}"
+      - name: Validate all source bundle metadata
+        run: python3 .github/scripts/validate_bundles.py source
+      - name: Verify CI safety and changelog contracts
         run: |
-          set -euo pipefail
-          python3 <<'PY'
-          import plistlib
-
-          with open("OTodoApp/Info.plist", "rb") as source:
-              info = plistlib.load(source)
-
-          expected_version_settings = {
-              "CFBundleShortVersionString": "$(MARKETING_VERSION)",
-              "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
-          }
-          for key, expected in expected_version_settings.items():
-              if info.get(key) != expected:
-                  raise SystemExit(f"{key} must use the {expected} build setting")
-
-          expected_orientations = {
-              "UIInterfaceOrientationPortrait",
-              "UIInterfaceOrientationPortraitUpsideDown",
-              "UIInterfaceOrientationLandscapeLeft",
-              "UIInterfaceOrientationLandscapeRight",
-          }
-          for key in (
-              "UISupportedInterfaceOrientations",
-              "UISupportedInterfaceOrientations~ipad",
-          ):
-              actual = info.get(key)
-              if not isinstance(actual, list) or set(actual) != expected_orientations:
-                  raise SystemExit(f"{key} must contain all four interface orientations")
-
-          if not isinstance(info.get("UILaunchScreen"), dict):
-              raise SystemExit("UILaunchScreen must be a dictionary")
-
-          expected_widget_metadata = {
-              "CFBundleDisplayName": "OTodo",
-              "CFBundleShortVersionString": "$(MARKETING_VERSION)",
-              "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
-          }
-          for widget_path in ("OTodoWidget/Info.plist", "OTodoWatchWidget/Info.plist"):
-              with open(widget_path, "rb") as source:
-                  widget_info = plistlib.load(source)
-              for key, expected in expected_widget_metadata.items():
-                  if widget_info.get(key) != expected:
-                      raise SystemExit(f"{widget_path}: {key} must be {expected}")
-              extension = widget_info.get("NSExtension")
-              if not isinstance(extension, dict) or extension.get("NSExtensionPointIdentifier") != "com.apple.widgetkit-extension":
-                  raise SystemExit(f"{widget_path} must be a WidgetKit extension")
-
-          with open("OTodoWatch/Info.plist", "rb") as source:
-              watch_info = plistlib.load(source)
-          for key, expected in {
-              **expected_version_settings,
-              "WKApplication": True,
-              "WKCompanionAppBundleIdentifier": "plastickarma.otodo",
-              "WKRunsIndependentlyOfCompanionApp": False,
-          }.items():
-              if watch_info.get(key) != expected:
-                  raise SystemExit(f"Watch {key} must be {expected}")
-
-          expected_groups = ["group.plastickarma.otodo"]
-          for entitlements_path in (
-              "OTodoApp/OTodo.entitlements",
-              "OTodoWidget/OTodoWidget.entitlements",
-              "OTodoWatch/OTodoWatch.entitlements",
-              "OTodoWatchWidget/OTodoWatchWidget.entitlements",
-          ):
-              with open(entitlements_path, "rb") as source:
-                  entitlements = plistlib.load(source)
-              if entitlements.get("com.apple.security.application-groups") != expected_groups:
-                  raise SystemExit(
-                      f"{entitlements_path} must contain only the shared OTodo App Group"
-                  )
-          PY
-
-      - name: Select available iPhone simulator
-        run: |
-          set -euo pipefail
-          simulator_id="$(xcrun simctl list devices available --json | python3 -c '
-          import json
-          import re
-          import sys
-
-          runtimes = json.load(sys.stdin)["devices"]
-
-          def version(identifier):
-              return tuple(int(part) for part in re.findall(r"\d+", identifier))
-
-          for runtime in sorted(runtimes, key=version, reverse=True):
-              for device in runtimes[runtime]:
-                  if device.get("isAvailable") and device.get("name", "").startswith("iPhone"):
-                      print(device["udid"])
-                      raise SystemExit(0)
-          raise SystemExit("No available iPhone simulator is installed")
-          ')"
-          echo "Selected iPhone simulator UUID: $simulator_id"
-          echo "SIMULATOR_ID=$simulator_id" >> "$GITHUB_ENV"
-
-      - name: Build for testing
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/xcode-results"
-          xcodebuild build-for-testing \
-            -project "$PROJECT" \
-            -scheme "$SCHEME" \
-            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
-            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
-            -resultBundlePath "$RUNNER_TEMP/xcode-results/build.xcresult" \
-            CODE_SIGNING_ALLOWED=YES \
-            CODE_SIGN_IDENTITY=- \
-            GITHUB_CLIENT_ID="$GH_OAUTH_CLIENT_ID"
-
-      - name: Run UI tests without rebuilding
-        env:
-          TEST_FILTER: ${{ inputs.test_filter }}
-        run: |
-          set -euo pipefail
-          set --
-          if [ -n "$TEST_FILTER" ]; then
-            set -- "-only-testing:$TEST_FILTER"
-          fi
-          xcodebuild test-without-building \
-            -project "$PROJECT" \
-            -scheme "$SCHEME" \
-            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
-            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
-            -resultBundlePath "$RUNNER_TEMP/xcode-results/test.xcresult" \
-            "$@" \
-            CODE_SIGNING_ALLOWED=YES \
-            CODE_SIGN_IDENTITY=- \
-            GITHUB_CLIENT_ID="$GH_OAUTH_CLIENT_ID"
-
-      - name: Export UI snapshots
-        if: ${{ !cancelled() && (inputs.export_ui_snapshots || failure()) }}
-        run: |
-          set -euo pipefail
-          if [ ! -d "$RUNNER_TEMP/xcode-results/test.xcresult" ]; then
-            exit 0
-          fi
-          output="$RUNNER_TEMP/ui-snapshots"
-          mkdir -p "$output"
-          xcrun xcresulttool export attachments \
-            --path "$RUNNER_TEMP/xcode-results/test.xcresult" \
-            --output-path "$output"
-
-      - name: Upload UI snapshots
-        if: ${{ !cancelled() && (inputs.export_ui_snapshots || failure()) }}
+          python3 .github/scripts/ci_runtime.py run --stage portable-ci-contracts --timeout 120 -- \
+            python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+      - name: Summarize preflight
+        if: always()
+        run: python3 .github/scripts/ci_runtime.py summary --title 'Portable preflight'
+      - name: Retain preflight timing evidence
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ui-snapshots
-          path: ${{ runner.temp }}/ui-snapshots
+          name: preflight-evidence-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-metrics
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Retain failed Xcode result bundles
-        if: ${{ failure() }}
+  swift-package-tests:
+    name: Swift package tests
+    needs: preflight
+    if: needs.preflight.outputs.mode != 'focused'
+    runs-on: ubuntu-24.04
+    container: swift:6.1.3@sha256:98ee3a8469ce2a9c2f543ef2577939ab44e2dfc9b5ed710732a59e5dd64f9c4a
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - name: Initialize command evidence paths
+        run: echo "CI_RESULTS_DIR=$RUNNER_TEMP/ci-metrics" >> "$GITHUB_ENV"
+      - name: Set up portable command runner
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Identify compiler and exact cache inputs
+        id: toolchain
+        env:
+          SOURCE_KEY: ${{ hashFiles('Package.*', 'Sources/**', 'Tests/**') }}
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import os
+          import platform
+          import sys
+          sys.path.insert(0, '.github/scripts')
+          from ci_runtime import run_command
+          identity = run_command(['swift', '--version'], stage='swift-toolchain', timeout=60, capture=True)
+          print(identity)
+          compiler = hashlib.sha256((identity + platform.machine() + 'sha256:98ee3a8469ce2a9c2f543ef2577939ab44e2dfc9b5ed710732a59e5dd64f9c4a').encode()).hexdigest()[:20]
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f"key=swift-build-v1-{compiler}-{os.environ['SOURCE_KEY']}\n")
+          PY
+      - name: Restore exact-input Swift build cache
+        if: inputs.use_build_cache
+        id: swift-cache
+        timeout-minutes: 2
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build
+          key: ${{ steps.toolchain.outputs.key }}
+      - name: Run all core tests
+        run: |
+          python3 .github/scripts/ci_runtime.py run --stage swift-core-tests --timeout 600 \
+            --log "$RUNNER_TEMP/ci-metrics/swift-core.log" -- swift test
+      - name: Save measured exact-input Swift build cache
+        if: success() && inputs.use_build_cache && steps.swift-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 2
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build
+          key: ${{ steps.toolchain.outputs.key }}
+      - name: Summarize core verification
+        if: always()
+        run: python3 .github/scripts/ci_runtime.py summary --title 'Complete Linux core suite'
+      - name: Retain core timing evidence
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: iOS-test-results
-          path: ${{ runner.temp }}/xcode-results/*.xcresult
+          name: core-evidence-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-metrics
+          if-no-files-found: warn
+          retention-days: 7
+
+  ios-build:
+    name: ${{ needs.preflight.outputs.mode == 'full' && 'iOS / build and smoke' || format('iOS / {0} diagnosis', needs.preflight.outputs.mode) }}
+    needs: preflight
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      CI_MODE: ${{ needs.preflight.outputs.mode }}
+      CI_FILTER: ${{ needs.preflight.outputs.filter }}
+    outputs:
+      build_ready: ${{ steps.products.outcome == 'success' }}
+      products_artifact: ${{ steps.build.outputs.products_artifact }}
+    steps:
+      - name: Checkout complete build history
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0
+      - name: Set up verified Apple build tools
+        uses: ./.github/actions/setup-build-tools
+        with:
+          apple: 'true'
+      - name: Generate Xcode project
+        run: python3 .github/scripts/ci_runtime.py run --stage xcode-project --timeout 60 -- xcodegen generate --spec project.yml
+      - name: Build, verify entitlements, and enumerate compiled tests
+        id: build
+        run: |
+          python3 .github/scripts/ios_ci.py build \
+            --output "$RUNNER_TEMP/ios-ci" --derived-data "$RUNNER_TEMP/DerivedData"
+      - name: Publish exact-run executable test products
+        id: products
+        if: needs.preflight.outputs.mode != 'focused'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.build.outputs.products_artifact }}
+          path: |
+            ${{ runner.temp }}/ios-ci/ios-test-products.tar.gz
+            ${{ runner.temp }}/ios-ci/manifest.json
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - name: Run early hosted and critical UI gate
+        id: smoke
+        run: |
+          python3 .github/scripts/ios_ci.py test --group smoke \
+            --output "$RUNNER_TEMP/ios-ci" --products "$RUNNER_TEMP/DerivedData/Build/Products"
+      - name: Collect bounded iOS diagnostics
+        if: always()
+        env:
+          EXPORT_SNAPSHOTS: ${{ inputs.export_ui_snapshots || steps.smoke.outcome != 'success' }}
+        run: |
+          args=()
+          if [ "$EXPORT_SNAPSHOTS" = true ]; then args+=(--export-snapshots); fi
+          python3 .github/scripts/ios_ci.py diagnostics --output "$RUNNER_TEMP/ios-ci" "${args[@]}"
+      - name: Summarize smoke and build timing
+        if: always()
+        run: python3 .github/scripts/ci_runtime.py summary --title 'iOS build and early behavioral gate'
+      - name: Retain compiled plan and smoke evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ios-evidence-smoke-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/ci-metrics
+            ${{ runner.temp }}/ios-ci/*.json
+            ${{ runner.temp }}/ios-ci/logs
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Retain smoke screenshots
+        if: always() && (inputs.export_ui_snapshots || !success())
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ui-snapshots-smoke-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ios-ci/snapshots
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Retain failed smoke result bundles
+        if: always() && !success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: iOS-test-results-smoke-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ios-ci/results
+          if-no-files-found: warn
+          retention-days: 7
+
+  ios-tests:
+    name: ${{ needs.preflight.outputs.mode == 'full' && format('iOS / {0}', matrix.partition) || format('iOS / {0} ({1})', matrix.partition, needs.preflight.outputs.mode) }}
+    needs: [preflight, ios-build]
+    if: >-
+      ${{ !cancelled() && needs.preflight.outputs.mode != 'focused' &&
+          needs.ios-build.outputs.build_ready == 'true' &&
+          (needs.ios-build.result == 'success' || needs.preflight.outputs.mode == 'diagnostics') }}
+    runs-on: macos-15
+    timeout-minutes: 65
+    strategy:
+      fail-fast: ${{ needs.preflight.outputs.mode == 'full' }}
+      matrix:
+        partition: [functional, integration]
+    env:
+      CI_MODE: ${{ needs.preflight.outputs.mode }}
+      CI_FILTER: ${{ needs.preflight.outputs.filter }}
+    steps:
+      - name: Checkout orchestration at the exact SHA
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - name: Set up matching Apple tools
+        uses: ./.github/actions/setup-build-tools
+        with:
+          apple: 'true'
+      - name: Download this run's compiled test products
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.ios-build.outputs.products_artifact }}
+          path: ${{ runner.temp }}/ios-download
+      - name: Verify products and prepare isolated simulator
+        run: |
+          python3 .github/scripts/ios_ci.py restore \
+            --download "$RUNNER_TEMP/ios-download" --output "$RUNNER_TEMP/ios-ci"
+      - name: Run all tests assigned to this partition without rebuilding
+        id: partition
+        env:
+          PARTITION: ${{ matrix.partition }}
+        run: python3 .github/scripts/ios_ci.py test --group "$PARTITION" --output "$RUNNER_TEMP/ios-ci"
+      - name: Collect bounded partition diagnostics
+        if: always()
+        env:
+          EXPORT_SNAPSHOTS: ${{ inputs.export_ui_snapshots || steps.partition.outcome != 'success' }}
+        run: |
+          args=()
+          if [ "$EXPORT_SNAPSHOTS" = true ]; then args+=(--export-snapshots); fi
+          python3 .github/scripts/ios_ci.py diagnostics --output "$RUNNER_TEMP/ios-ci" "${args[@]}"
+      - name: Summarize partition timing and issues
+        if: always()
+        run: python3 .github/scripts/ci_runtime.py summary --title 'Isolated iOS test partition'
+      - name: Retain partition coverage and timings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ios-evidence-${{ matrix.partition }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/ci-metrics
+            ${{ runner.temp }}/ios-ci/*.json
+            ${{ runner.temp }}/ios-ci/logs
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Retain partition screenshots
+        if: always() && (inputs.export_ui_snapshots || !success())
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ui-snapshots-${{ matrix.partition }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ios-ci/snapshots
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Retain failed partition result bundles
+        if: always() && !success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: iOS-test-results-${{ matrix.partition }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ios-ci/results
           if-no-files-found: warn
           retention-days: 7
 
   watchos-simulator:
     name: Apple Watch companion
+    needs: preflight
+    if: needs.preflight.outputs.mode != 'focused'
     runs-on: macos-15
     timeout-minutes: 45
     env:
       PROJECT: OTodo.xcodeproj
-      GH_OAUTH_CLIENT_ID: ${{ vars.GH_OAUTH_CLIENT_ID }}
-
     steps:
-      - name: Checkout
+      - name: Checkout complete build history
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0
-
-      - name: Select newest installed Xcode
-        run: |
-          set -euo pipefail
-          newest="$(python3 <<'PY'
-          import glob
-          import plistlib
-
-          xcodes = []
-          for app in glob.glob("/Applications/Xcode*.app"):
-              try:
-                  with open(f"{app}/Contents/Info.plist", "rb") as info:
-                      value = plistlib.load(info)["CFBundleShortVersionString"]
-                  version = tuple(int(part) for part in value.split("."))
-              except (KeyError, OSError, TypeError, ValueError):
-                  continue
-              xcodes.append((version, app))
-          print(max(xcodes)[1] if xcodes else "")
-          PY
-          )"
-          if [ -z "$newest" ]; then
-            echo "::error::No Xcode installation was found on the runner."
-            exit 1
-          fi
-          sudo xcode-select --switch "$newest/Contents/Developer"
-          xcodebuild -version
-
-      - name: Install XcodeGen 2.46.0
-        env:
-          XCODEGEN_VERSION: 2.46.0
-          XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
-        run: |
-          set -euo pipefail
-          archive="$RUNNER_TEMP/xcodegen.zip"
-          install_dir="$RUNNER_TEMP/xcodegen-tool"
-          curl --fail --silent --show-error --location --retry 3 \
-            --output "$archive" \
-            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
-          echo "${XCODEGEN_SHA256}  ${archive}" | shasum -a 256 --check
-          mkdir -p "$install_dir"
-          unzip -q "$archive" -d "$install_dir"
-          chmod +x "$install_dir/xcodegen/bin/xcodegen"
-          echo "$install_dir/xcodegen/bin" >> "$GITHUB_PATH"
-
+      - name: Set up verified Apple build tools
+        uses: ./.github/actions/setup-build-tools
+        with:
+          apple: 'true'
       - name: Generate Xcode project
-        run: xcodegen generate --spec project.yml
-
-      - name: Prepare paired iPhone and Watch simulators
+        run: python3 .github/scripts/ci_runtime.py run --stage watch-project --timeout 60 -- xcodegen generate --spec project.yml
+      - name: Select and pair compatible preinstalled simulators
         run: python3 .github/scripts/watch_smoke.py prepare --output "$RUNNER_TEMP/watch-smoke"
-
-      - name: Build iPhone with embedded Watch app and complication
+      - name: Build full companion graph while simulators boot
         run: |
-          set -euo pipefail
-          xcodebuild build \
-            -project "$PROJECT" \
-            -scheme OTodo \
-            -destination "platform=iOS Simulator,id=$WATCH_PHONE_SIMULATOR_ID" \
-            -derivedDataPath "$RUNNER_TEMP/WatchDerivedData" \
-            CODE_SIGNING_ALLOWED=YES \
-            CODE_SIGN_IDENTITY=- \
-            GITHUB_CLIENT_ID="$GH_OAUTH_CLIENT_ID"
-
-      - name: Verify live companion delivery and offline Watch relaunch
+          python3 .github/scripts/watch_smoke.py build \
+            --output "$RUNNER_TEMP/watch-smoke" --derived-data "$RUNNER_TEMP/WatchDerivedData"
+      - name: Verify effective companion bundle entitlements
+        run: |
+          python3 .github/scripts/validate_bundles.py built --platform simulator \
+            --app "$RUNNER_TEMP/WatchDerivedData/Build/Products/Debug-iphonesimulator/OTodo.app"
+      - name: Verify real live delivery and offline Watch relaunch
         run: |
           python3 .github/scripts/watch_smoke.py verify \
-            --output "$RUNNER_TEMP/watch-smoke" \
-            --derived-data "$RUNNER_TEMP/WatchDerivedData"
-
-      - name: Collect Watch diagnostics
-        if: ${{ !cancelled() }}
+            --output "$RUNNER_TEMP/watch-smoke" --derived-data "$RUNNER_TEMP/WatchDerivedData"
+      - name: Collect bounded Watch diagnostics
+        if: always()
         run: python3 .github/scripts/watch_smoke.py diagnostics --output "$RUNNER_TEMP/watch-smoke"
-
-      - name: Upload Watch simulator evidence
-        if: ${{ !cancelled() }}
+      - name: Summarize Watch timing and issues
+        if: always()
+        run: python3 .github/scripts/ci_runtime.py summary --title 'Real Watch delivery and offline persistence'
+      - name: Retain Watch verification evidence
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: watch-smoke
-          path: ${{ runner.temp }}/watch-smoke
-          if-no-files-found: error
+          name: watch-smoke-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/watch-smoke
+            ${{ runner.temp }}/ci-metrics
+          if-no-files-found: warn
           retention-days: 7
+
+  full-verification:
+    name: CI / full verification
+    needs: [preflight, swift-package-tests, ios-build, ios-tests, watchos-simulator]
+    if: always() && needs.preflight.outputs.mode == 'full'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      CI_MODE: full
+      CI_FILTER: ${{ needs.preflight.outputs.filter }}
+      NEEDS_RESULTS: ${{ toJSON(needs) }}
+    steps:
+      - name: Checkout coverage verifier
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - name: Download all attempt-specific coverage evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: ios-evidence-*
+          path: ${{ runner.temp }}/ios-coverage
+      - name: Require all platforms and every compiled iOS test
+        run: python3 .github/scripts/ios_ci.py verify --evidence "$RUNNER_TEMP/ios-coverage"

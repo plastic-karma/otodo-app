@@ -173,7 +173,7 @@ CI builds both Watch targets and exercises live delivery and offline relaunch on
 - Swift 6.1 for the Swift package and Linux development
 - macOS with Xcode and an installed iOS 17-or-newer simulator for the app
 - XcodeGen **2.46.0** to generate `OTodo.xcodeproj` from `project.yml`
-- Python 3.9 or newer and Git with complete repository history for iOS app builds
+- Python 3.12 or newer for CI/release helpers, their pinned `.github/scripts/requirements.txt` dependencies, and Git with complete repository history for iOS app builds
 - iOS 17 or later to run OTodo
 - watchOS 10 or later and a paired iPhone for the optional Watch companion
 
@@ -295,6 +295,15 @@ swift build
 swift test
 ```
 
+Portable workflow checks run without Xcode:
+
+```sh
+python3 -m venv /tmp/otodo-ci-python
+/tmp/otodo-ci-python/bin/python -m pip install -r .github/scripts/requirements.txt
+/tmp/otodo-ci-python/bin/python .github/scripts/validate_bundles.py source
+/tmp/otodo-ci-python/bin/python -m unittest discover -s .github/scripts -p 'test_*.py'
+```
+
 ### Generate and build the iOS app on macOS
 
 Install the pinned XcodeGen binary without relying on a floating Homebrew version:
@@ -342,12 +351,32 @@ The app build generates `Changelog.json` from those commits and a fixed historic
 
 ## CI and releases
 
-[`CI`](.github/workflows/ci.yml) runs on every push and pull request and can be dispatched for any branch:
+[`CI`](.github/workflows/ci.yml) runs automatically for pull requests. Delivery verification is explicitly dispatched for the intended branch; pushes no longer launch an equivalent second simulator run:
 
 ```sh
 gh workflow run ci.yml --ref <branch>
 ```
 
-It runs `swift test` in the Swift 6.1 Linux container and, independently, checksum-installs XcodeGen 2.46.0 on macOS, generates the project, builds for an available iPhone simulator, and runs the UI tests. A failed iOS job retains `iOS-test-results` `.xcresult` artifacts for 7 days. The workflow has read-only repository contents permission, and every third-party action is pinned to a full commit SHA.
+The canonical **CI / full verification** check requires portable metadata checks, the complete Linux Swift suite, real live/offline Watch verification, and every enabled compiled iOS test. iOS builds once, checks effective signed App Groups, and runs hosted application tests plus critical add/edit/attachment behavior first. Remaining tests run on two isolated simulator runners using that exact run's executable products; the real SpringBoard/widget scenarios stay together in the integration partition. The planner discovers tests from Xcode, uses `.github/ci-test-durations.json` only for load balancing, and assigns new tests even without a recorded timing. The final check rejects missing, skipped, duplicate, foreign-SHA, or stale failed-attempt coverage.
+
+Native compiler/XCTest errors become immediate file/test annotations. Commands have explicit deadlines, a separate native-test startup allowance, and bounded cancellation; per-test native limits do not replace whole-phase limits. Watch boot and build run concurrently, retain the absolute 300-second snapshot budgets, expose opt-in app-owned readiness/reply state, and preserve phone logs before offline shutdown. No fake snapshot replaces real delivery.
+
+Modes have separate run identities and concurrency groups. A superseded full run cannot be cancelled by a focused diagnostic:
+
+```sh
+# Full coverage; screenshot export does not reduce the test plan.
+gh workflow run ci.yml --ref <branch> -f export_ui_snapshots=true
+# Keep running remaining partitions after a smoke assertion fails.
+gh workflow run ci.yml --ref <branch> -f complete_diagnostics=true
+# Focused diagnosis cannot satisfy the full release check.
+gh workflow run ci.yml --ref <branch> \
+  -f test_filter=OTodoUITests/OTodoUITests/testAttachmentSelectionSavesOfflineAndClearsForAnotherTodo
+```
+
+Complete-diagnostics mode preserves later independent failures but never substitutes for canonical full verification. Ordinary full mode stops remaining iOS work after a definite smoke failure and cancels sibling matrix work on partition failure. Hosted, functional, integration, and Watch coverage remain mandatory for a successful release.
+
+Every attempt retains small `*-evidence-*`/`watch-smoke-*` timing and coverage artifacts for seven days. Failed iOS jobs retain attempt/partition-specific `iOS-test-results-*` bundles; requested/failure screenshots use `ui-snapshots-*`. Metrics distinguish command elapsed time, native test startup, build milestones, and the first actionable issue. Downloaded test products are bound to the exact run, SHA, Xcode/SDK/architecture, and simulator type; archive transport preserves executable bits and safe internal links. A rerun may reuse prior successful partitions, but a newer failed observation cannot be replaced by older green evidence.
+
+`use_build_cache=true` enables measurement of exact-input Linux `.build` cache reuse. Keys include the pinned Swift 6.1.3 container digest, actual compiler identity, architecture, package inputs, sources and tests; there is no stale-prefix restore or signed-product/keychain cache. Cache restore/save and whole-job time must be considered alongside compiler time. All third-party Actions are pinned to full commit SHAs; shared setup uses an isolated Python environment and checksum-verified XcodeGen 2.46.0.
 
 See [`docs/RELEASE.md`](docs/RELEASE.md) for the one-time Apple setup, signing secrets, artifact-only builds, and TestFlight releases.

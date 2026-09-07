@@ -1,5 +1,5 @@
-# Builds a cloud-signed App Store IPA. Manual runs may optionally publish to
-# TestFlight; every v* tag publishes after exporting the downloadable artifact.
+# All signing and cleanup jobs share the workflow-global queue. Cleanup retries
+# consume an immutable certificate-ID allowlist and never repeat an accepted upload.
 name: Release IPA
 
 on:
@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: release
@@ -29,13 +30,37 @@ jobs:
   release:
     name: Archive, sign, and export
     runs-on: macos-latest
+    timeout-minutes: 55
     env:
       SCHEME: OTodo
       PROJECT: OTodo.xcodeproj
-      XCODEGEN_VERSION: 2.46.0
-      XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+      CI_MODE: release
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build: ${{ steps.version.outputs.build }}
+      ci_url: ${{ steps.verification.outputs.ci_url }}
+      ipa_created: ${{ steps.export.outputs.ipa_created }}
+      upload_attempted: ${{ steps.testflight.outputs.attempted }}
+      upload_accepted: ${{ steps.testflight.outputs.accepted }}
+      upload_failed: ${{ steps.testflight.outputs.failed }}
+      signing_prepared: ${{ steps.signing_snapshot.outcome == 'success' }}
+      cleanup_plan_ready: ${{ steps.cleanup_artifact.outcome == 'success' }}
+      cleanup_artifact_name: release-signing-cleanup-${{ github.run_attempt }}
+      fallback_cleanup: ${{ steps.fallback_cleanup.outcome }}
 
     steps:
+      - name: Initialize private release paths
+        run: |
+          {
+            echo "ARCHIVE_PATH=$RUNNER_TEMP/OTodo.xcarchive"
+            echo "EXPORT_DIR=$RUNNER_TEMP/export"
+            echo "API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8"
+            echo "CERTIFICATE_SNAPSHOT=$RUNNER_TEMP/signing-certificates-before.json"
+            echo "CERTIFICATE_CLEANUP_PLAN=$RUNNER_TEMP/signing-cleanup/allowlist.json"
+            echo "RELEASE_LOG_DIR=$RUNNER_TEMP/release-logs"
+            echo "CI_RESULTS_DIR=$RUNNER_TEMP/release-metrics"
+          } >> "$GITHUB_ENV"
+
       - name: Verify release prerequisites
         env:
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
@@ -63,380 +88,243 @@ jobs:
           fi
           [ "$missing" -eq 0 ]
 
-      - name: Checkout
+      - name: Checkout exact release commit
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
-      - name: Select newest Xcode
-        run: |
-          set -euo pipefail
-          newest="$(python3 <<'PY'
-          import glob
-          import plistlib
+      - name: Set up pinned build tools in an isolated environment
+        id: tooling
+        uses: ./.github/actions/setup-build-tools
+        with:
+          apple: 'true'
 
-          xcodes = []
-          for app in glob.glob("/Applications/Xcode*.app"):
-              try:
-                  with open(f"{app}/Contents/Info.plist", "rb") as info:
-                      value = plistlib.load(info)["CFBundleShortVersionString"]
-                  version = tuple(int(part) for part in value.split("."))
-              except (KeyError, OSError, TypeError, ValueError):
-                  continue
-              xcodes.append((version, app))
+      - name: Prepare release diagnostic paths
+        run: mkdir -p "$RELEASE_LOG_DIR" "$CI_RESULTS_DIR" "$(dirname "$CERTIFICATE_CLEANUP_PLAN")"
 
-          print(max(xcodes)[1] if xcodes else "")
-          PY
-          )"
-          if [ -z "$newest" ]; then
-            echo "::error::No Xcode installation was found on the runner."
-            exit 1
-          fi
-          sudo xcode-select -s "$newest/Contents/Developer"
-          xcodebuild -version
+      - name: Resolve and validate source version before signing
+        id: version
+        env:
+          INPUT_MARKETING_VERSION: ${{ inputs.marketing_version }}
+        run: python3 .github/scripts/ci_runtime.py run --stage release-source-preflight --timeout 60 -- python3 .github/scripts/release.py version
 
-      - name: Set up private output paths
-        run: |
-          set -euo pipefail
-          echo "ARCHIVE_PATH=$RUNNER_TEMP/OTodo.xcarchive" >> "$GITHUB_ENV"
-          echo "EXPORT_DIR=$RUNNER_TEMP/export" >> "$GITHUB_ENV"
-          echo "API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
-          echo "CERTIFICATE_SNAPSHOT=$RUNNER_TEMP/signing-certificates-before.json" >> "$GITHUB_ENV"
+      - name: Require successful full CI for exact SHA
+        id: verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/ci_runtime.py run --stage release-ci-verification --timeout 180 -- python3 .github/scripts/release.py verify-ci
 
       - name: Validate and install App Store Connect API key
         env:
           API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+        run: python3 .github/scripts/ci_runtime.py run --stage release-key-installation --timeout 30 -- python3 .github/scripts/release.py install-key
+
+      - name: Read-only Apple registration and capability preflight
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          PUBLISH_TESTFLIGHT: ${{ github.event_name == 'push' || inputs.publish_testflight }}
+        run: python3 .github/scripts/ci_runtime.py run --stage release-apple-preflight --timeout 240 -- python3 .github/scripts/manage_api_certificates.py preflight
+
+      - name: Generate and validate Xcode project metadata
         run: |
           set -euo pipefail
-          umask 077
-          printf '%s' "$API_KEY" > "$API_KEY_PATH"
-          chmod 600 "$API_KEY_PATH"
-          if ! grep -q '^-----BEGIN PRIVATE KEY-----' "$API_KEY_PATH" \
-            || ! grep -q '^-----END PRIVATE KEY-----' "$API_KEY_PATH" \
-            || ! openssl pkey -in "$API_KEY_PATH" -noout -check >/dev/null 2>&1; then
-            echo "::error::APP_STORE_CONNECT_API_KEY is not a valid .p8 private key; paste the complete AuthKey_<KEYID>.p8 contents, including the BEGIN and END lines."
-            rm -f "$API_KEY_PATH"
-            exit 1
-          fi
+          python3 .github/scripts/ci_runtime.py run --stage release-project-generation --timeout 90 -- xcodegen generate --spec project.yml
+          python3 .github/scripts/validate_bundles.py source
 
-      - name: Prepare ephemeral signing certificate cleanup
+      - name: Prepare ephemeral signing certificate snapshot
+        id: signing_snapshot
         env:
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
           BOOTSTRAP_CERTIFICATE_SHA1: 9FA921CB63E1777BBD9C9DA26F7D40315EECE498
-        run: python3 .github/scripts/manage_api_certificates.py prepare
+        run: python3 .github/scripts/ci_runtime.py run --stage release-signing-snapshot --timeout 180 -- python3 .github/scripts/manage_api_certificates.py prepare
 
-      - name: Install XcodeGen (pinned and verified)
-        run: |
-          set -euo pipefail
-          archive="$RUNNER_TEMP/xcodegen.zip"
-          install_dir="$RUNNER_TEMP/xcodegen-install"
-          curl -fsSL \
-            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip" \
-            -o "$archive"
-          echo "${XCODEGEN_SHA256}  ${archive}" | shasum -a 256 -c -
-          mkdir -p "$install_dir"
-          unzip -q "$archive" -d "$install_dir"
-          tool="$install_dir/xcodegen/bin/xcodegen"
-          "$tool" --version
-          echo "XCODEGEN=$tool" >> "$GITHUB_ENV"
-
-      - name: Resolve version and unique build number
-        env:
-          INPUT_MARKETING_VERSION: ${{ inputs.marketing_version }}
-        run: |
-          set -euo pipefail
-          marketing_version="${INPUT_MARKETING_VERSION:-}"
-          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
-            marketing_version="${GITHUB_REF_NAME#v}"
-          fi
-          if { [ "$GITHUB_EVENT_NAME" = "push" ] || [ -n "$marketing_version" ]; } \
-            && ! [[ "$marketing_version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
-            echo "::error::Invalid marketing version '$marketing_version'; use one to three dot-separated integers, for example 1.2.0."
-            exit 1
-          fi
-          build_number="$(date -u +%s)"
-          echo "BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
-          echo "MARKETING_VERSION=$marketing_version" >> "$GITHUB_ENV"
-          echo "Build number: $build_number; marketing version: ${marketing_version:-project default}"
-
-      - name: Generate Xcode project
-        env:
-          GITHUB_CLIENT_ID: ${{ vars.GH_OAUTH_CLIENT_ID }}
-        run: |
-          set -euo pipefail
-          [ -n "$GITHUB_CLIENT_ID" ] || {
-            echo "::error::Missing required Actions variable: GH_OAUTH_CLIENT_ID"
-            exit 1
-          }
-          "$XCODEGEN" generate --spec project.yml
-          [ -d "$PROJECT" ] || {
-            echo "::error::XcodeGen did not create $PROJECT."
-            exit 1
-          }
-
-      - name: Archive with cloud signing
+      - name: Archive with cloud signing and validate effective bundle entitlements
         env:
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
           GITHUB_CLIENT_ID: ${{ vars.GH_OAUTH_CLIENT_ID }}
-        run: |
-          set -euo pipefail
-          log="$RUNNER_TEMP/archive.log"
-          version_settings=("CURRENT_PROJECT_VERSION=$BUILD_NUMBER")
-          if [ -n "$MARKETING_VERSION" ]; then
-            version_settings+=("MARKETING_VERSION=$MARKETING_VERSION")
-          fi
-
-          set +e
-          xcodebuild archive \
-            -project "$PROJECT" \
-            -scheme "$SCHEME" \
-            -configuration Release \
-            -destination "generic/platform=iOS" \
-            -archivePath "$ARCHIVE_PATH" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$API_KEY_PATH" \
-            -authenticationKeyID "$KEY_ID" \
-            -authenticationKeyIssuerID "$ISSUER_ID" \
-            CODE_SIGN_STYLE=Automatic \
-            DEVELOPMENT_TEAM=9492A97LWY \
-            REGISTER_APP_GROUPS=YES \
-            "GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID" \
-            "${version_settings[@]}" 2>&1 | tee "$log"
-          status="${PIPESTATUS[0]}"
-          set -e
-
-          if [ "$status" -ne 0 ]; then
-            if grep -qiE "cloud signing|no profiles for|provisioning profile|maximum number of certificates" "$log"; then
-              echo "::error::Cloud signing failed. Confirm the Admin App Store Connect API key belongs to team 9492A97LWY and can provision plastickarma.otodo, plastickarma.otodo.widget, plastickarma.otodo.share, plastickarma.otodo.watchkitapp, and plastickarma.otodo.watchkitapp.widget with App Group group.plastickarma.otodo."
-            else
-              echo "::error::Release archive failed; see the xcodebuild output above."
-            fi
-            exit "$status"
-          fi
-
-          app_info="$ARCHIVE_PATH/Products/Applications/OTodo.app/Info.plist"
-          if [ ! -f "$app_info" ]; then
-            echo "::error::Archive is missing the OTodo application Info.plist."
-            exit 1
-          fi
-          archived_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_info")"
-          archived_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_info")"
-          if [ "$archived_build" != "$BUILD_NUMBER" ]; then
-            echo "::error::Archived build number '$archived_build' does not match requested build '$BUILD_NUMBER'."
-            exit 1
-          fi
-          if [ -z "$archived_version" ]; then
-            echo "::error::Archived marketing version is empty."
-            exit 1
-          fi
-          if [ -n "$MARKETING_VERSION" ] && [ "$archived_version" != "$MARKETING_VERSION" ]; then
-            echo "::error::Archived marketing version '$archived_version' does not match requested version '$MARKETING_VERSION'."
-            exit 1
-          fi
-
-          widget_info="$ARCHIVE_PATH/Products/Applications/OTodo.app/PlugIns/OTodoWidget.appex/Info.plist"
-          if [ ! -f "$widget_info" ]; then
-            echo "::error::Archive is missing the embedded OTodo Today widget."
-            exit 1
-          fi
-          archived_app_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_info")"
-          archived_widget_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$widget_info")"
-          archived_widget_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$widget_info")"
-          archived_widget_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$widget_info")"
-          if [ "$archived_app_identifier" != "plastickarma.otodo" ] \
-            || [ "$archived_widget_identifier" != "plastickarma.otodo.widget" ]; then
-            echo "::error::Archive contains an unexpected application or widget bundle identifier."
-            exit 1
-          fi
-          if [ "$archived_widget_build" != "$archived_build" ] \
-            || [ "$archived_widget_version" != "$archived_version" ]; then
-            echo "::error::Embedded widget version $archived_widget_version ($archived_widget_build) does not match the application."
-            exit 1
-          fi
-          share_info="$ARCHIVE_PATH/Products/Applications/OTodo.app/PlugIns/OTodoShareExtension.appex/Info.plist"
-          if [ ! -f "$share_info" ]; then
-            echo "::error::Archive is missing the embedded OTodo Share extension."
-            exit 1
-          fi
-          archived_share_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$share_info")"
-          archived_share_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$share_info")"
-          archived_share_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$share_info")"
-          if [ "$archived_share_identifier" != "plastickarma.otodo.share" ] \
-            || [ "$archived_share_build" != "$archived_build" ] \
-            || [ "$archived_share_version" != "$archived_version" ]; then
-            echo "::error::Embedded Share extension identity or version does not match the application."
-            exit 1
-          fi
-          for component in \
-            "Watch/OTodoWatch.app:plastickarma.otodo.watchkitapp" \
-            "Watch/OTodoWatch.app/PlugIns/OTodoWatchWidget.appex:plastickarma.otodo.watchkitapp.widget"; do
-            relative_path="${component%%:*}"
-            expected_identifier="${component#*:}"
-            bundle_path="$ARCHIVE_PATH/Products/Applications/OTodo.app/$relative_path"
-            component_info="$bundle_path/Info.plist"
-            if [ ! -f "$component_info" ]; then
-              echo "::error::Archive is missing $relative_path."
-              exit 1
-            fi
-            component_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$component_info")"
-            component_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$component_info")"
-            component_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$component_info")"
-            component_platform="$(/usr/libexec/PlistBuddy -c 'Print :DTPlatformName' "$component_info")"
-            component_executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$component_info")"
-            if [ "$component_identifier" != "$expected_identifier" ] \
-              || [ "$component_build" != "$archived_build" ] \
-              || [ "$component_version" != "$archived_version" ] \
-              || [ "$component_platform" != "watchos" ] \
-              || [ ! -s "$bundle_path/$component_executable" ]; then
-              echo "::error::$relative_path must contain a watchOS executable with the matching application version and expected identity."
-              exit 1
-            fi
-          done
-          watch_info="$ARCHIVE_PATH/Products/Applications/OTodo.app/Watch/OTodoWatch.app/Info.plist"
-          watch_application="$(/usr/libexec/PlistBuddy -c 'Print :WKApplication' "$watch_info")"
-          watch_companion="$(/usr/libexec/PlistBuddy -c 'Print :WKCompanionAppBundleIdentifier' "$watch_info")"
-          if [ "$watch_application" != "true" ] || [ "$watch_companion" != "$archived_app_identifier" ]; then
-            echo "::error::The embedded Watch app must be a single-target companion of OTodo."
-            exit 1
-          fi
-          echo "ARCHIVED_MARKETING_VERSION=$archived_version" >> "$GITHUB_ENV"
-          echo "ARCHIVED_BUILD_NUMBER=$archived_build" >> "$GITHUB_ENV"
-          echo "Archived version $archived_version ($archived_build)."
+        run: python3 .github/scripts/ci_runtime.py run --stage release-archive-validation --timeout 1560 -- python3 .github/scripts/release.py archive
 
       - name: Export App Store IPA
+        id: export
         env:
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
-        run: |
-          set -euo pipefail
-          log="$RUNNER_TEMP/export.log"
-          : > "$log"
+        run: python3 .github/scripts/release.py export
 
-          export_ipa() {
-            local options="$1"
-            xcodebuild -exportArchive \
-              -archivePath "$ARCHIVE_PATH" \
-              -exportPath "$EXPORT_DIR" \
-              -exportOptionsPlist "$options" \
-              -allowProvisioningUpdates \
-              -authenticationKeyPath "$API_KEY_PATH" \
-              -authenticationKeyID "$KEY_ID" \
-              -authenticationKeyIssuerID "$ISSUER_ID" 2>&1 | tee -a "$log"
-            local status="${PIPESTATUS[0]}"
-            return "$status"
-          }
+      - name: Capture immutable certificate cleanup allowlist
+        id: capture_cleanup
+        if: ${{ always() && steps.signing_snapshot.outcome == 'success' }}
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+        run: python3 .github/scripts/ci_runtime.py run --stage release-cleanup-capture --timeout 180 -- python3 .github/scripts/manage_api_certificates.py capture
 
-          exported=0
-          if export_ipa ExportOptions.plist; then
-            exported=1
-          else
-            echo "::warning::Export using 'app-store-connect' failed; retrying with legacy method 'app-store'."
-            legacy_options="$RUNNER_TEMP/ExportOptions-legacy.plist"
-            sed 's/app-store-connect/app-store/' ExportOptions.plist > "$legacy_options"
-            rm -rf "$EXPORT_DIR"
-            if export_ipa "$legacy_options"; then
-              exported=1
-            fi
-          fi
+      - name: Retain certificate IDs for independent cleanup retries
+        id: cleanup_artifact
+        if: ${{ always() && steps.capture_cleanup.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-signing-cleanup-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/signing-cleanup/allowlist.json
+          if-no-files-found: error
+          retention-days: 30
 
-          if [ "$exported" -ne 1 ]; then
-            if grep -qi "Cloud signing permission error" "$log"; then
-              echo "::error::Export failed with a cloud-signing permission error. The App Store Connect API key must have the Admin role so Xcode can create an Apple Distribution certificate."
-            elif grep -qiE "cloud signing|no profiles for|provisioning profile" "$log"; then
-              echo "::error::Cloud signing failed during export. Confirm team 9492A97LWY can provision plastickarma.otodo, plastickarma.otodo.widget, plastickarma.otodo.share, plastickarma.otodo.watchkitapp, and plastickarma.otodo.watchkitapp.widget with App Group group.plastickarma.otodo for App Store distribution."
-            else
-              echo "::error::IPA export failed with both 'app-store-connect' and legacy 'app-store' methods; see the xcodebuild output above."
-            fi
-            exit 1
-          fi
-
-          shopt -s nullglob
-          ipas=("$EXPORT_DIR"/*.ipa)
-          if [ "${#ipas[@]}" -eq 0 ]; then
-            echo "::error::Export completed but produced no IPA."
-            exit 1
-          fi
-          if [ "${#ipas[@]}" -ne 1 ]; then
-            echo "::error::Export produced multiple IPAs; expected exactly one for OTodo."
-            exit 1
-          fi
-          echo "IPA_PATH=${ipas[0]}" >> "$GITHUB_ENV"
-          echo "Exported ${ipas[0]}"
+      - name: Clean up locally if allowlist transport failed
+        id: fallback_cleanup
+        if: ${{ always() && steps.capture_cleanup.outcome == 'success' && steps.cleanup_artifact.outcome != 'success' }}
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+        run: python3 .github/scripts/ci_runtime.py run --stage release-cleanup-transport-fallback --timeout 180 -- python3 .github/scripts/manage_api_certificates.py cleanup
 
       - name: Upload IPA artifact
+        if: ${{ always() && steps.export.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: otodo-ipa
           path: ${{ runner.temp }}/export/*.ipa
           if-no-files-found: error
           retention-days: 30
+          overwrite: true
 
-      - name: Upload to TestFlight
-        if: ${{ github.event_name == 'push' || inputs.publish_testflight }}
+      - name: Upload to TestFlight synchronously
+        id: testflight
+        if: ${{ success() && (github.event_name == 'push' || inputs.publish_testflight) }}
         env:
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+        run: python3 .github/scripts/release.py upload
+
+      - name: Remove private signing key
+        if: ${{ always() }}
+        run: rm -f "$API_KEY_PATH"
+
+      - name: Sanitize diagnostic files before artifact transport
+        id: sanitize
+        if: ${{ always() && steps.tooling.outcome == 'success' }}
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+        run: python3 .github/scripts/release.py sanitize-diagnostics
+
+      - name: Summarize release command timings
+        if: ${{ always() && steps.version.outcome != 'skipped' }}
+        run: python3 .github/scripts/ci_runtime.py summary --title "Release command timings"
+
+      - name: Retain release diagnostics without signing material
+        if: ${{ always() && steps.sanitize.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-diagnostics-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/release-logs/*.log
+            ${{ runner.temp }}/release-metrics/*.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  cleanup:
+    name: Revoke only this release's ephemeral certificates
+    needs: release
+    if: ${{ always() && needs.release.outputs.cleanup_plan_ready == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CI_MODE: release-cleanup
+    steps:
+      - name: Initialize private cleanup paths
         run: |
-          set -euo pipefail
-          keys_dir="$HOME/.appstoreconnect/private_keys"
-          mkdir -p "$keys_dir"
-          chmod 700 "$keys_dir"
-          named_key="$keys_dir/AuthKey_${KEY_ID}.p8"
-          install -m 600 "$API_KEY_PATH" "$named_key"
-          trap 'rm -f "$named_key"' EXIT
+          {
+            echo "API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8"
+            echo "CERTIFICATE_CLEANUP_PLAN=$RUNNER_TEMP/signing-cleanup/allowlist.json"
+            echo "CI_RESULTS_DIR=$RUNNER_TEMP/cleanup-metrics"
+          } >> "$GITHUB_ENV"
 
-          log="$RUNNER_TEMP/testflight-upload.log"
-          set +e
-          xcrun altool --upload-app \
-            --type ios \
-            --file "$IPA_PATH" \
-            --apiKey "$KEY_ID" \
-            --apiIssuer "$ISSUER_ID" 2>&1 | tee "$log"
-          status="${PIPESTATUS[0]}"
-          set -e
+      - name: Checkout exact release commit
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
-          if [ "$status" -ne 0 ] \
-            || grep -qiE "UPLOAD FAILED|Failed to upload package" "$log"; then
-            if grep -qiE "No suitable application records|app.*not.*found|cannot be found" "$log"; then
-              echo "::error::TestFlight upload failed because no App Store Connect app record matches plastickarma.otodo. Create that app record and retry."
-            elif grep -qiE "closed for new build submissions|must contain a higher version" "$log"; then
-              echo "::error::TestFlight rejected this marketing version. Retry with a higher marketing_version or push a higher v* tag."
-            elif grep -qiE "must be built with the iOS .* SDK" "$log"; then
-              echo "::error::TestFlight rejected the SDK used by this runner; use a runner image containing the currently required Xcode SDK."
-            else
-              echo "::error::TestFlight upload failed; see the altool output above."
-            fi
-            exit 1
-          fi
-          if ! grep -qiE "UPLOAD SUCCEEDED|No errors uploading" "$log"; then
-            echo "::error::TestFlight upload did not report success; see the altool output above."
-            exit 1
-          fi
-          echo "PUBLISHED_TESTFLIGHT=1" >> "$GITHUB_ENV"
-      - name: Revoke ephemeral signing certificates
-        if: ${{ always() }}
+      - name: Set up isolated cleanup tools
+        uses: ./.github/actions/setup-build-tools
+
+      - name: Download immutable cleanup allowlist from this run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.release.outputs.cleanup_artifact_name }}
+          path: ${{ runner.temp }}/signing-cleanup
+
+      - name: Install temporary API key
+        env:
+          API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+        run: python3 .github/scripts/release.py install-key
+
+      - name: Revoke allowlisted certificates (idempotent)
         env:
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
-        run: python3 .github/scripts/manage_api_certificates.py cleanup
+        run: python3 .github/scripts/ci_runtime.py run --stage release-certificate-cleanup --timeout 180 -- python3 .github/scripts/manage_api_certificates.py cleanup
 
-
-      - name: Write release summary
+      - name: Remove private signing key
         if: ${{ always() }}
+        run: rm -f "$API_KEY_PATH"
+
+      - name: Summarize cleanup timing
+        if: ${{ always() }}
+        run: python3 .github/scripts/ci_runtime.py summary --title "Release cleanup timings"
+
+  summary:
+    name: Release outcome
+    needs: [release, cleanup]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report publishing and cleanup independently
+        env:
+          RELEASE_RESULT: ${{ needs.release.result }}
+          VERSION: ${{ needs.release.outputs.version }}
+          BUILD: ${{ needs.release.outputs.build }}
+          VERIFIED_CI: ${{ needs.release.outputs.ci_url }}
+          IPA_CREATED: ${{ needs.release.outputs.ipa_created }}
+          REQUESTED: ${{ github.event_name == 'push' || inputs.publish_testflight }}
+          ATTEMPTED: ${{ needs.release.outputs.upload_attempted }}
+          ACCEPTED: ${{ needs.release.outputs.upload_accepted }}
+          UPLOAD_FAILED: ${{ needs.release.outputs.upload_failed }}
+          CLEANUP_RESULT: ${{ needs.cleanup.result }}
+          SIGNING_PREPARED: ${{ needs.release.outputs.signing_prepared }}
+          FALLBACK_CLEANUP: ${{ needs.release.outputs.fallback_cleanup }}
         run: |
           {
             echo "## OTodo release"
             echo ""
-            echo "- Version: \`${ARCHIVED_MARKETING_VERSION:-${MARKETING_VERSION:-project default}}\`"
-            echo "- Build: \`${ARCHIVED_BUILD_NUMBER:-${BUILD_NUMBER:-not archived}}\`"
-            if [ "${PUBLISHED_TESTFLIGHT:-0}" = 1 ]; then
-              echo "- TestFlight: uploaded; App Store Connect processing is pending."
-            elif [ -n "${IPA_PATH:-}" ]; then
-              echo "- Artifact: \`otodo-ipa\`"
-              echo "- TestFlight: not requested."
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Version: \`${VERSION:-unresolved}\`; build: \`${BUILD:-unassigned}\`"
+            echo "- Full exact-SHA CI: ${VERIFIED_CI:-not verified}"
+            echo "- Archive/export job: $RELEASE_RESULT"
+            echo "- IPA created: ${IPA_CREATED:-false}"
+            echo "- TestFlight requested: $REQUESTED; attempted: ${ATTEMPTED:-false}; accepted: ${ACCEPTED:-false}; failed: ${UPLOAD_FAILED:-false}"
+            if [ "$ACCEPTED" = true ]; then
+              echo "- TestFlight: upload accepted synchronously; App Store Connect processing is pending."
+            elif [ "$UPLOAD_FAILED" = true ]; then
+              echo "- TestFlight: upload failed or acceptance was not confirmed; inspect the original altool error."
+            elif [ "$REQUESTED" = true ]; then
+              echo "- TestFlight: requested but not attempted; an earlier prerequisite or release phase failed."
             else
-              echo "- Result: release did not produce an IPA; inspect the failed step above."
+              echo "- TestFlight: not requested (artifact-only release)."
+            fi
+            if [ "$CLEANUP_RESULT" = success ] || [ "$FALLBACK_CLEANUP" = success ]; then
+              echo "- Certificate cleanup: succeeded."
+            elif [ "$CLEANUP_RESULT" = failure ] || [ "$CLEANUP_RESULT" = cancelled ]; then
+              echo "- Certificate cleanup: $CLEANUP_RESULT. Rerun failed jobs to retry only immutable-allowlist cleanup, not upload."
+            elif [ "$SIGNING_PREPARED" = true ]; then
+              echo "- Certificate cleanup: no transported cleanup plan; inspect capture/transport failure. Never infer a new allowlist from a later team-wide snapshot."
+            else
+              echo "- Certificate cleanup: not required; signing preparation did not complete."
             fi
           } >> "$GITHUB_STEP_SUMMARY"

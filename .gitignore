@@ -28,3 +28,6 @@ xcuserdata/
 *.mobileprovision
 Secrets.xcconfig
 Local.xcconfig
+
+# Local Python helper bytecode
+__pycache__/

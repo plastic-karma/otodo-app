@@ -35,13 +35,17 @@ final class WatchSnapshotReceiver: NSObject, WCSessionDelegate {
     func start() {
         guard !started else { return }
         started = true
+        WatchSmokeProgress.record("starting")
         do {
             workspace = try WatchSnapshotStorage.load()
+            WatchSmokeProgress.record("cache-read", values: ["cache": workspace == nil ? "absent" : "loaded"])
         } catch {
             errorMessage = "Could not read saved todos. Refresh from your iPhone."
+            WatchSmokeProgress.failure("Reading cached snapshot", error: error, terminal: true)
         }
         guard WCSession.isSupported() else {
             errorMessage = "Watch Connectivity is unavailable on this device."
+            WatchSmokeProgress.record("unsupported", values: ["terminalError": "WatchConnectivity unsupported"])
             return
         }
         let session = WCSession.default
@@ -52,6 +56,7 @@ final class WatchSnapshotReceiver: NSObject, WCSessionDelegate {
             }
         }
         session.activate()
+        recordReadiness("activation-requested")
     }
 
     func refresh() {
@@ -59,14 +64,17 @@ final class WatchSnapshotReceiver: NSObject, WCSessionDelegate {
         wantsRefresh = true
         guard WCSession.isSupported() else { return }
         let session = WCSession.default
+        recordReadiness("refresh-readiness")
         guard session.activationState == .activated else { return }
         isReachable = session.isReachable
         guard isReachable, !isRequesting else { return }
         wantsRefresh = false
         isRequesting = true
+        WatchSmokeProgress.record("request-sent", values: ["request": "sent"])
         session.sendMessage([WatchSnapshotStorage.requestKey: true], replyHandler: { @Sendable [weak self] reply in
             let data = reply[WatchSnapshotStorage.contextKey] as? Data
-            self?.enqueue(data: data, isReply: true)
+            let malformed = WatchSmokeProgress.enabled && reply[WatchSnapshotStorage.contextKey] != nil && data == nil
+            self?.enqueue(data: data, isReply: true, invalidReply: malformed)
         }, errorHandler: { @Sendable [weak self] error in
             let message = error.localizedDescription
             Task { @MainActor [weak self] in
@@ -74,6 +82,8 @@ final class WatchSnapshotReceiver: NSObject, WCSessionDelegate {
                 isRequesting = false
                 isReachable = WCSession.default.isReachable
                 errorMessage = "Could not refresh: \(message)"
+                WatchSmokeProgress.failure("Requesting snapshot", error: error)
+                recordReadiness("request-failed")
                 completeBackgroundTasksIfReady()
             }
         })
@@ -111,15 +121,18 @@ final class WatchSnapshotReceiver: NSObject, WCSessionDelegate {
             try WatchSnapshotStorage.save(data: data)
             workspace = incoming
             errorMessage = nil
+            WatchSmokeProgress.record("snapshot-accepted", values: ["snapshot": "persisted"])
             WidgetCenter.shared.reloadTimelines(ofKind: WatchSnapshotStorage.widgetKind)
         } catch {
             errorMessage = "Could not save the latest todos. Refresh from your iPhone."
+            WatchSmokeProgress.failure("Decoding or saving received snapshot", error: error, terminal: true)
         }
     }
 
     nonisolated private func enqueue(
         data: Data?,
         isReply: Bool = false,
+        invalidReply: Bool = false,
         error: String? = nil,
         receiptStarted: Bool = false
     ) {
@@ -133,11 +146,16 @@ final class WatchSnapshotReceiver: NSObject, WCSessionDelegate {
             if isReply {
                 isRequesting = false
                 errorMessage = nil
+                WatchSmokeProgress.record("reply-received", values: ["reply": data == nil ? "deferred" : "snapshot"])
+                if invalidReply {
+                    WatchSmokeProgress.record("invalid-reply", values: ["terminalError": "Invalid snapshot reply payload"])
+                }
             }
             if let data {
                 accept(data)
             } else if let error {
                 errorMessage = error
+                WatchSmokeProgress.record("receipt-error", values: ["terminalError": error])
             }
         }
     }
@@ -155,6 +173,8 @@ final class WatchSnapshotReceiver: NSObject, WCSessionDelegate {
         Task { @MainActor [weak self] in
             guard let self else { return }
             isReachable = reachable
+            recordReadiness("activation-completed")
+            if let error { WatchSmokeProgress.failure("Activating connectivity", error: error) }
             if let message { errorMessage = "Could not connect: \(message)" }
             if activated {
                 if wantsRefresh { refresh() }
@@ -172,10 +192,22 @@ final class WatchSnapshotReceiver: NSObject, WCSessionDelegate {
         Task { @MainActor [weak self] in
             guard let self else { return }
             isReachable = reachable
+            recordReadiness("reachability-changed")
             if reachable, wantsRefresh || WKApplication.shared().applicationState == .active {
                 refresh()
             }
         }
+    }
+
+    private func recordReadiness(_ event: String) {
+        guard WatchSmokeProgress.enabled else { return }
+        let session = WCSession.default
+        WatchSmokeProgress.record(event, values: [
+            "activation": String(session.activationState.rawValue),
+            "installed": String(session.isCompanionAppInstalled),
+            "reachable": String(session.isReachable),
+            "ready": String(session.activationState == .activated),
+        ])
     }
 
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
