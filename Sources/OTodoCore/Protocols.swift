@@ -31,6 +31,8 @@ public protocol GitHubServing: Sendable {
 
     func fetchSnapshot(selection: RepositorySelection) async throws -> GitSnapshot
 
+    func fetchAttachment(selection: RepositorySelection, attachment: AttachmentMetadata) async throws -> Data
+
     func commit(
         selection: RepositorySelection,
         changes: [RemoteChange],
@@ -58,4 +60,10 @@ public protocol CredentialStoring: Sendable {
 
 public protocol ULIDGenerating: Sendable {
     func generate(at date: Date) throws -> TaskID
+}
+
+public extension GitHubServing {
+    func fetchAttachment(selection: RepositorySelection, attachment: AttachmentMetadata) async throws -> Data {
+        throw OTodoError.transport(statusCode: nil, message: "Attachment downloads are unavailable")
+    }
 }

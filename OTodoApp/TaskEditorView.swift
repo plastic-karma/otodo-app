@@ -13,6 +13,8 @@ struct TaskEditorDraft: Equatable, Sendable {
     var recurrence: String?
     var recurrenceFrom: RecurrenceFrom?
     var body: String
+    var attachments: [AttachmentDraft] = []
+    var removingAttachmentPaths: [String] = []
 
     // Keeping the source value with the draft makes an edit a lossless value operation.
     // AppModel only needs the editable fields; the workspace service remains responsible
@@ -59,6 +61,8 @@ struct TaskEditorDraft: Equatable, Sendable {
 struct TaskEditorView: View {
     @Environment(\.dismiss) private var dismiss
 
+    private let attachmentModel: AppModel?
+    private let attachmentSelection: RepositorySelection?
     private let configuration: StoreConfiguration
     private let projectChoices: [String]
     private let tagChoices: [String]
@@ -77,6 +81,7 @@ struct TaskEditorView: View {
     @State private var recurrenceError: String?
     @State private var recurrenceRule: RecurrenceRule?
     @State private var initialRecurrenceSettings: TaskRecurrenceFields.Settings
+    @State private var isImportingAttachments = false
     @State private var isSaving = false
     @State private var saveError: String?
     @State private var didSaveAndContinue = false
@@ -91,8 +96,11 @@ struct TaskEditorView: View {
         tagChoices: [String],
         hierarchy: TaskHierarchy = TaskHierarchy(tasks: []),
         workspaceTasks: [TodoTask] = [],
+        attachmentModel: AppModel? = nil,
         onSave: @escaping @MainActor (TaskEditorDraft) async -> String?
     ) {
+        self.attachmentModel = attachmentModel
+        self.attachmentSelection = attachmentModel?.workspaceSelection
         self.configuration = configuration
         self.projectChoices = projectChoices
         self.tagChoices = tagChoices
@@ -289,6 +297,13 @@ struct TaskEditorView: View {
                     )
                     .id(nameFocusRequest)
 
+                    if let attachmentModel, let attachmentSelection, AttachmentLinks.enabled(configuration: configuration) {
+                        TaskAttachmentSection(
+                            model: attachmentModel, selection: attachmentSelection,
+                            draft: $draft, configuration: configuration, isImporting: $isImportingAttachments
+                        )
+                    }
+
                     Section("Notes") {
                         TextEditor(text: $draft.body)
                             .frame(minHeight: 160)
@@ -348,6 +363,12 @@ struct TaskEditorView: View {
                 .onChange(of: nameFocusRequest) { _, _ in
                     proxy.scrollTo("task-editor-top", anchor: .top)
                 }
+            }
+        }
+        .onDisappear {
+            if let attachmentModel, let attachmentSelection {
+                let drafts = draft.attachments
+                Task { await attachmentModel.discardAttachmentDrafts(drafts, selection: attachmentSelection) }
             }
         }
         .sheet(isPresented: $isParentPickerPresented) {
@@ -485,7 +506,7 @@ struct TaskEditorView: View {
     }
 
     private var isSaveDisabled: Bool {
-        validationMessage != nil || hasPendingRelativeDueDate || isSaving
+        validationMessage != nil || hasPendingRelativeDueDate || isImportingAttachments || isSaving
     }
 
     private func save(createAnother: Bool = false) {
@@ -508,6 +529,8 @@ struct TaskEditorView: View {
             if let errorMessage {
                 saveError = errorMessage
             } else if createAnother {
+                draft.attachments = []
+                draft.removingAttachmentPaths = []
                 draft.name = ""
                 draft.body = ""
                 draft.dueDate = nil
@@ -526,6 +549,7 @@ struct TaskEditorView: View {
                 nameFocusRequest += 1
                 requestsNameFocus = true
             } else {
+                draft.attachments = []
                 dismiss()
             }
         }

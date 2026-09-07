@@ -5,6 +5,7 @@ public actor SyncEngine {
     private static let workspaceSaveRetryLimit = 2
     private static let commitMessage = "Sync OTodo changes"
 
+    private let attachmentStore: AttachmentStore?
     private let gitHub: any GitHubServing
     private let persistence: any WorkspacePersisting
     private let configCodec: any StoreConfigCoding
@@ -14,8 +15,10 @@ public actor SyncEngine {
         gitHub: any GitHubServing,
         persistence: any WorkspacePersisting,
         configCodec: any StoreConfigCoding,
-        taskCodec: any TaskRecordCoding
+        taskCodec: any TaskRecordCoding,
+        attachmentStore: AttachmentStore? = nil
     ) {
+        self.attachmentStore = attachmentStore
         self.gitHub = gitHub
         self.persistence = persistence
         self.configCodec = configCodec
@@ -59,9 +62,16 @@ public actor SyncEngine {
         var staleRetriesRemaining = Self.staleHeadRetryLimit
 
         while !changesToPush.isEmpty {
-            let remoteChanges = try changesToPush
-                .sorted { $0.path < $1.path }
-                .map { try RemoteChange(path: $0.path, content: $0.content) }
+            var remoteChanges: [RemoteChange] = []
+            for change in changesToPush.sorted(by: { $0.path < $1.path }) {
+                if let binary = change.payload.binaryFile {
+                    guard let attachmentStore else { throw OTodoError.corruptLocalState(message: "Attachment storage is unavailable") }
+                    let bytes = try await attachmentStore.read(binary, selection: selection)
+                    remoteChanges.append(try RemoteChange(path: change.path, content: nil, binaryContent: bytes))
+                } else {
+                    remoteChanges.append(try RemoteChange(path: change.path, content: change.content))
+                }
+            }
             let attemptedIDs = Set(changesToPush.map(\.id))
             let attemptedHead = snapshot.headCommitSHA
             let commitSHA = try await gitHub.commit(
@@ -155,6 +165,7 @@ public actor SyncEngine {
         let knownProjectSlugs: [String]
         let tasks: [TaskDocument]
         let filesByPath: [String: RemoteFile]
+        let attachmentsByPath: [String: AttachmentMetadata]
     }
 
     private func loadWorkspace(selection: RepositorySelection) async throws -> WorkspaceState {
@@ -193,6 +204,12 @@ public actor SyncEngine {
             )
 
             do {
+                for pending in local.pendingChanges where reconciliation.confirmedPendingIDs.contains(pending.id) {
+                    if let binary = pending.payload.binaryFile {
+                        guard let attachmentStore else { throw OTodoError.corruptLocalState(message: "Cannot confirm attachment without retaining offline bytes") }
+                        try await attachmentStore.retainVerified(binary, path: pending.path, selection: selection)
+                    }
+                }
                 try await persistence.save(
                     reconciliation.workspace,
                     expectedRevision: local.revision
@@ -240,7 +257,7 @@ public actor SyncEngine {
                     baseHeadCommitSHA: previousWorkspace.baseHeadCommitSHA,
                     baseRootTreeSHA: previousWorkspace.baseRootTreeSHA,
                     pendingChanges: pendingChanges, conflicts: existingConflicts,
-                    revision: previousWorkspace.revision + 1, relationshipBlocks: blocked
+                    revision: previousWorkspace.revision + 1, relationshipBlocks: blocked, attachments: previousWorkspace.attachments
                 )
                 return Reconciliation(workspace: retained, safePendingChanges: [], confirmedPendingIDs: [], pulledCount: 0)
             }
@@ -256,6 +273,23 @@ public actor SyncEngine {
         let pendingPaths = Set(pendingChanges.map(\.path))
 
         for pending in pendingChanges {
+            if let binary = pending.payload.binaryFile {
+                let remote = parsed.attachmentsByPath[pending.path]
+                if remote?.blobSHA == binary.blobSHA && remote?.isSymlink == false && remote?.isDirectory == false {
+                    confirmedPendingIDs.insert(pending.id)
+                    continue
+                }
+                remainingPending.append(pending)
+                let unsafeAncestor = parsed.attachmentsByPath.values.contains { pending.path.hasPrefix($0.path + "/") && !$0.isDirectory }
+                if remote == nil && !unsafeAncestor && existingConflictsByPath[pending.path] == nil && pending.baseBlobSHA == nil {
+                    safePendingChanges.append(pending)
+                } else {
+                    reconciledConflicts.append(try SyncConflict(path: pending.path, baseBlobSHA: pending.baseBlobSHA,
+                        remoteBlobSHA: remote?.blobSHA, localPayload: pending.payload,
+                        remotePayload: remote.map(ChangePayload.remoteBinary) ?? .deletion))
+                }
+                continue
+            }
             let remote = parsed.filesByPath[pending.path]
             if remote?.content == pending.content {
                 confirmedPendingIDs.insert(pending.id)
@@ -306,6 +340,14 @@ public actor SyncEngine {
         // conservatively as well: it is durable user state and must never become pushable merely
         // because a partially-written local state omitted its outbox entry.
         for existing in existingConflicts where !pendingPaths.contains(existing.path) {
+            if let binary = existing.localPayload.binaryFile {
+                let remote = parsed.attachmentsByPath[existing.path]
+                // Keep orphaned binary evidence until explicit resolution; its bytes remain protected.
+                reconciledConflicts.append(try SyncConflict(path: existing.path, baseBlobSHA: existing.baseBlobSHA,
+                    remoteBlobSHA: remote?.blobSHA, localPayload: .binaryFile(binary),
+                    remotePayload: remote.map(ChangePayload.remoteBinary) ?? .deletion))
+                continue
+            }
             let remote = parsed.filesByPath[existing.path]
             if remote?.content == existing.localContent {
                 continue
@@ -335,10 +377,9 @@ public actor SyncEngine {
             tasks: tasks,
             knownProjectSlugs: projects
         )
-        let relationshipResult = try relationshipSafeChanges(
+        let relationshipResult = try dependencySafeChanges(
             candidates: safePendingChanges.filter { publishablePendingIDs?.contains($0.id) ?? true },
-            remote: parsed, localTasks: tasks,
-            selection: selection
+            pending: remainingPending, conflicts: reconciledConflicts, remote: parsed, localTasks: tasks, selection: selection
         )
         safePendingChanges = relationshipResult.changes
 
@@ -364,7 +405,8 @@ public actor SyncEngine {
             pendingChanges: remainingPending,
             conflicts: conflicts,
             revision: nextRevision,
-            relationshipBlocks: relationshipResult.blocks
+            relationshipBlocks: relationshipResult.blocks,
+            attachments: snapshot.attachments
         )
         let pulledCount = previousWorkspace.map {
             changedTaskCount(
@@ -407,6 +449,55 @@ public actor SyncEngine {
             }
         }
         return result.sorted { $0.path < $1.path }
+    }
+
+    /// Attachments and parent relationships are reduced together until no withheld change has a dependent publisher.
+    private func dependencySafeChanges(candidates: [PendingChange], pending: [PendingChange], conflicts: [SyncConflict], remote: ParsedSnapshot,
+        localTasks: [TaskDocument], selection: RepositorySelection) throws -> (changes: [PendingChange], blocks: [TaskRelationshipBlock]) {
+        var safe = candidates
+        var blocks: [TaskRelationshipBlock] = []
+        if !AttachmentLinks.enabled(configuration: remote.configuration) { safe.removeAll { $0.payload.binaryFile != nil } }
+        let imports = Set(pending.filter { $0.payload.binaryFile != nil }.map(\.path)
+            + conflicts.filter { $0.localPayload.binaryFile != nil }.map(\.path))
+        let taskByPath = Dictionary(uniqueKeysWithValues: localTasks.map {
+            (repositoryPath(storePath: selection.storePath, relativePath: $0.task.relativePath), $0.task)
+        })
+        while true {
+            let priorCount = safe.count
+            let relationships = try relationshipSafeChanges(candidates: safe, remote: remote, localTasks: localTasks, selection: selection)
+            safe = relationships.changes
+            blocks.append(contentsOf: relationships.blocks)
+            let safePaths = Set(safe.map(\.path))
+            safe = safe.filter { change in
+                guard let task = taskByPath[change.path], change.content != nil else { return true }
+                let needed = AttachmentLinks.references(body: task.body, taskPath: task.relativePath, storePrefix: remote.configuration.obsidianLinkPrefix).map {
+                    repositoryPath(storePath: selection.storePath, relativePath: $0.path)
+                }.filter { imports.contains($0) }
+                guard needed.allSatisfy({ safePaths.contains($0) }) else {
+                    blocks.append(TaskRelationshipBlock(path: change.path, code: "attachment_dependency",
+                        message: "Task waits for a pending attachment import; resolve its conflict first", relatedTaskIDs: [task.id]))
+                    return false
+                }
+                return true
+            }
+            let publishingTasks = Set(safe.compactMap { taskByPath[$0.path]?.id })
+            safe = safe.filter { change in
+                guard change.payload.binaryFile != nil else { return true }
+                let dependents = localTasks.filter { document in
+                    AttachmentLinks.references(body: document.task.body, taskPath: document.task.relativePath, storePrefix: remote.configuration.obsidianLinkPrefix).contains {
+                        repositoryPath(storePath: selection.storePath, relativePath: $0.path) == change.path
+                    }
+                }
+                // Every locally changed association must publish with its file. Unreferenced imports remain durable.
+                return !dependents.isEmpty && dependents.allSatisfy { document in
+                    let fullPath = repositoryPath(storePath: selection.storePath, relativePath: document.task.relativePath)
+                    return !pending.contains(where: { $0.path == fullPath }) || publishingTasks.contains(document.task.id)
+                }
+            }
+            if safe.count == priorCount { break }
+        }
+        var seen = Set<String>()
+        return (safe, blocks.filter { seen.insert($0.path + $0.code + $0.message).inserted })
     }
 
     private func relationshipSafeChanges(
@@ -533,7 +624,8 @@ public actor SyncEngine {
             configuration: configuration,
             knownProjectSlugs: projectSlugs,
             tasks: tasks,
-            filesByPath: filesByPath
+            filesByPath: filesByPath,
+            attachmentsByPath: Dictionary(uniqueKeysWithValues: snapshot.attachments.map { ($0.path, $0) })
         )
     }
 

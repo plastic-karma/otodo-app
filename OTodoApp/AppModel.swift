@@ -38,6 +38,8 @@ final class AppModel {
     private(set) var tagChoices: [String] = []
 
     private(set) var pendingChangeCount = 0
+    private(set) var attachmentCatalog: [AttachmentMetadata] = []
+    private(set) var attachmentRefreshErrors: [String] = []
     private(set) var conflictCount = 0
     private(set) var conflicts: [SyncConflict] = []
     private(set) var isOnline: Bool
@@ -50,6 +52,7 @@ final class AppModel {
     @ObservationIgnored private let workspaceRootURL: URL
     @ObservationIgnored private let workspaceStore: FileWorkspaceStore
     @ObservationIgnored let filterStore: FileTaskFilterStore
+    @ObservationIgnored let attachmentStore: AttachmentStore
     @ObservationIgnored private let taskService: TaskWorkspaceService
     @ObservationIgnored private let credentialStore: (any CredentialStoring)?
     @ObservationIgnored private let repositorySelectionStore: RepositorySelectionStore
@@ -102,9 +105,12 @@ final class AppModel {
 
         let store = FileWorkspaceStore(rootURL: rootURL)
         workspaceStore = store
+        let attachments = AttachmentStore(rootURL: rootURL)
+        attachmentStore = attachments
         taskService = TaskWorkspaceService(
             persistence: store,
-            taskCodec: ObsidianTaskCodec()
+            taskCodec: ObsidianTaskCodec(),
+            attachmentStore: attachments
         )
 
 #if DEBUG
@@ -437,7 +443,8 @@ final class AppModel {
                 gitHub: authenticatedGitHub,
                 persistence: workspaceStore,
                 configCodec: StrictStoreConfigCodec(),
-                taskCodec: ObsidianTaskCodec()
+                taskCodec: ObsidianTaskCodec(),
+                attachmentStore: attachmentStore
             )
             let loadedCachedWorkspace: Bool
             let workspace: WorkspaceState
@@ -503,6 +510,68 @@ final class AppModel {
         }
     }
 
+    func discardAttachmentDrafts(_ drafts: [AttachmentDraft], selection: RepositorySelection) async {
+        // The store refuses to remove bytes referenced by a durable operation or cache entry.
+        try? await attachmentStore.discard(drafts: drafts, selection: selection, persistence: workspaceStore)
+    }
+
+    func attachmentMetadata(path: String, selection: RepositorySelection) -> AttachmentMetadata? {
+        let fullPath = selection.storePath.isEmpty ? path : selection.storePath + "/" + path
+        return attachmentCatalog.first { $0.path == fullPath }
+    }
+
+    func cachedAttachment(path: String, imported: AttachmentDraft?, selection: RepositorySelection) async throws -> AttachmentCachedFile? {
+        let fullPath = selection.storePath.isEmpty ? path : selection.storePath + "/" + path
+        if let imported {
+            return AttachmentCachedFile(url: try await attachmentStore.localURL(imported.localFile, selection: selection),
+                                        blobSHA: imported.localFile.blobSHA, isOlderVersion: false, isPinned: false)
+        }
+        if let workspace = try await workspaceStore.load(selection: selection),
+           let pending = workspace.pendingChanges.first(where: { $0.path == fullPath }),
+           case let .binaryFile(reference) = pending.payload {
+            if let cached = try await attachmentStore.cachedFile(path: fullPath, selection: selection, expectedSHA: reference.blobSHA),
+               !cached.isOlderVersion { return cached }
+            return AttachmentCachedFile(url: try await attachmentStore.localURL(reference, selection: selection),
+                                        blobSHA: reference.blobSHA, isOlderVersion: false, isPinned: false)
+        }
+        return try await attachmentStore.cachedFile(path: fullPath, selection: selection,
+            expectedSHA: attachmentMetadata(path: path, selection: selection)?.blobSHA ?? "missing")
+    }
+
+    func openAttachment(path: String, imported: AttachmentDraft?, selection: RepositorySelection) async throws -> AttachmentCachedFile {
+        let cached = try await cachedAttachment(path: path, imported: imported, selection: selection)
+        if let cached, !cached.isOlderVersion || !isOnline { return cached }
+        guard let remote = attachmentMetadata(path: path, selection: selection) else {
+            if let cached { return cached }
+            throw OTodoError.notFound(resource: "Attachment file is missing from the vault")
+        }
+        guard let authenticatedGitHub, isOnline else {
+            throw OTodoError.transport(statusCode: nil, message: "Connect to download this attachment")
+        }
+        do {
+            let file = try await attachmentStore.download(attachment: remote, selection: selection, gitHub: authenticatedGitHub)
+            if let workspace = try await workspaceStore.load(selection: selection) {
+                try await attachmentStore.evict(selection: selection, workspace: workspace)
+            }
+            return file
+        } catch {
+            if let cached { return cached }
+            throw error
+        }
+    }
+
+    func pinAttachment(path: String, pinned: Bool, selection: RepositorySelection) async throws {
+        let fullPath = selection.storePath.isEmpty ? path : selection.storePath + "/" + path
+        if pinned {
+            _ = try await openAttachment(path: path, imported: nil, selection: selection)
+            if let workspace = try await workspaceStore.load(selection: selection),
+               let reference = workspace.pendingChanges.first(where: { $0.path == fullPath })?.payload.binaryFile {
+                try await attachmentStore.retainVerified(reference, path: fullPath, selection: selection)
+            }
+        }
+        try await attachmentStore.setPinned(path: fullPath, selection: selection, pinned: pinned)
+    }
+
     func createTask(draft: TaskEditorDraft) async {
         guard rootState == .workspace, let selection = workspaceSelection else {
             errorMessage = "No todo workspace is selected."
@@ -515,6 +584,7 @@ final class AppModel {
         errorMessage = nil
         statusMessage = "Saving todo on this device…"
         isBusy = true
+        var saved = false
         do {
             _ = try await taskService.addTask(
                 selection: selection,
@@ -527,8 +597,10 @@ final class AppModel {
                 recurrence: draft.recurrence,
                 recurrenceFrom: draft.recurrenceFrom,
                 body: draft.body,
-                parentID: draft.parentID
+                parentID: draft.parentID,
+                attachments: draft.attachments
             )
+            saved = true
             guard sessionID == operationSession else { return }
             syncFollowUpRequested = true
             let workspace = try await taskService.loadWorkspace(selection: selection)
@@ -543,8 +615,8 @@ final class AppModel {
         } catch {
             guard sessionID == operationSession else { return }
             isBusy = false
-            errorMessage = Self.message(for: error)
-            statusMessage = nil
+            errorMessage = saved ? nil : Self.message(for: error)
+            statusMessage = saved ? "Todo saved. Refresh could not finish: \(Self.message(for: error))" : nil
         }
     }
 
@@ -603,6 +675,7 @@ final class AppModel {
         errorMessage = nil
         statusMessage = "Saving todo on this device…"
         isBusy = true
+        var saved = false
         do {
             _ = try await taskService.editTask(
                 selection: selection,
@@ -619,8 +692,11 @@ final class AppModel {
                     recurrenceFrom: draft.recurrenceFrom,
                     body: draft.body,
                     parentID: draft.parentID
-                )
+                ),
+                attachments: draft.attachments,
+                removingAttachmentPaths: draft.removingAttachmentPaths
             )
+            saved = true
             guard sessionID == operationSession else { return }
             syncFollowUpRequested = true
             let workspace = try await taskService.loadWorkspace(selection: selection)
@@ -635,8 +711,8 @@ final class AppModel {
         } catch {
             guard sessionID == operationSession else { return }
             isBusy = false
-            errorMessage = Self.message(for: error)
-            statusMessage = nil
+            errorMessage = saved ? nil : Self.message(for: error)
+            statusMessage = saved ? "Todo saved. Refresh could not finish: \(Self.message(for: error))" : nil
         }
     }
 
@@ -938,13 +1014,15 @@ final class AppModel {
             gitHub: github,
             persistence: workspaceStore,
             configCodec: StrictStoreConfigCodec(),
-            taskCodec: ObsidianTaskCodec()
+            taskCodec: ObsidianTaskCodec(),
+            attachmentStore: attachmentStore
         )
     }
 
     private func apply(_ workspace: WorkspaceState) {
         workspaceSelection = workspace.selection
         configuration = workspace.configuration
+        attachmentCatalog = workspace.attachments
         projectChoices = workspace.knownProjectSlugs.sorted()
         tasks = workspace.tasks.map(\.task)
         hierarchy = TaskHierarchy(tasks: tasks)
@@ -1018,6 +1096,12 @@ final class AppModel {
                 statusMessage = Self.syncDescription(report)
             } else {
                 statusMessage = "Synchronization found \(report.conflicts.count) conflict\(report.conflicts.count == 1 ? "" : "s")."
+            }
+            if let authenticatedGitHub {
+                let failures = await attachmentStore.refreshPinned(attachments: workspace.attachments, selection: selection, gitHub: authenticatedGitHub)
+                guard sessionID == operationSession else { return }
+                attachmentRefreshErrors = failures.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }
+                try? await attachmentStore.evict(selection: selection, workspace: workspace)
             }
         } catch is CancellationError {
             return

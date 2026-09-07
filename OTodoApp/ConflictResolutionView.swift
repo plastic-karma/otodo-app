@@ -91,17 +91,21 @@ struct ConflictResolutionView: View {
     private func conflictSection(_ conflict: SyncConflict) -> some View {
         Section {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Affected task path")
+                Text("Affected path")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Text(verbatim: conflict.path)
                     .font(.body.monospaced())
                     .textSelection(.enabled)
-                    .accessibilityLabel("Affected task path, \(conflict.path)")
+                    .accessibilityLabel("Affected path, \(conflict.path)")
                     .accessibilityIdentifier("conflict-path.\(conflict.path)")
             }
             .padding(.vertical, 2)
 
+            if conflict.localPayload.binaryFile != nil {
+                Text("A different file already exists at this attachment path. Discard this import, then import the file again to create a fresh path.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            } else {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Keep My Version")
                     .font(.headline)
@@ -120,17 +124,19 @@ struct ConflictResolutionView: View {
                 .accessibilityIdentifier("conflict-keep-my-version.\(conflict.path)")
             }
             .padding(.vertical, 2)
+            }
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Use GitHub Version")
+                Text(conflict.localPayload.binaryFile != nil ? "Discard Conflicting Import" : "Use GitHub Version")
                     .font(.headline)
-                Text("Discards this device’s pending changes and replaces the task with GitHub’s version. If GitHub deleted the task, it will be removed here.")
+                Text(conflict.localPayload.binaryFile != nil ? "Removes the pending import and its links while retaining the existing vault file." : "Discards this device’s pending changes and replaces the task with GitHub’s version. If GitHub deleted the task, it will be removed here.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                Button("Use GitHub Version") {
+                Button(conflict.localPayload.binaryFile != nil ? "Discard Conflicting Import" : "Use GitHub Version") {
                     confirmation = ResolutionConfirmation(
                         path: conflict.path,
-                        resolution: .useRemote
+                        resolution: .useRemote,
+                        isAttachment: conflict.localPayload.binaryFile != nil
                     )
                 }
                 .buttonStyle(.bordered)
@@ -177,13 +183,14 @@ struct ConflictResolutionView: View {
 private struct ResolutionConfirmation {
     let path: String
     let resolution: WorkspaceConflictResolution
+    var isAttachment = false
 
     var title: String {
         switch resolution {
         case .keepLocal:
             return "Keep your version?"
         case .useRemote:
-            return "Use the GitHub version?"
+            return isAttachment ? "Discard this import?" : "Use the GitHub version?"
         }
     }
 
@@ -192,7 +199,7 @@ private struct ResolutionConfirmation {
         case .keepLocal:
             return "Keep My Version"
         case .useRemote:
-            return "Use GitHub Version"
+            return isAttachment ? "Discard Conflicting Import" : "Use GitHub Version"
         }
     }
 
@@ -201,7 +208,7 @@ private struct ResolutionConfirmation {
         case .keepLocal:
             return "For \(path), your version will replace GitHub’s current version during sync. If your version is a deletion, the GitHub todo will be deleted."
         case .useRemote:
-            return "For \(path), your pending changes will be discarded and GitHub’s current version will be used. If GitHub deleted the task, it will be removed from this device."
+            return isAttachment ? "The pending import and its links will be removed. Import the file again to use a fresh path." : "For \(path), your pending changes will be discarded and GitHub’s current version will be used. If GitHub deleted the task, it will be removed from this device."
         }
     }
 

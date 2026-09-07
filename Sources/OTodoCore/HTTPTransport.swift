@@ -23,6 +23,17 @@ public struct HTTPResponse: Sendable, Equatable {
 /// The sole networking boundary used by the GitHub clients.
 public protocol HTTPTransport: Sendable {
     func send(_ request: URLRequest) async throws -> HTTPResponse
+    func send(_ request: URLRequest, maximumResponseBodyBytes: Int) async throws -> HTTPResponse
+}
+
+public extension HTTPTransport {
+    func send(_ request: URLRequest, maximumResponseBodyBytes: Int) async throws -> HTTPResponse {
+        let response = try await send(request)
+        guard response.body.count <= maximumResponseBodyBytes else {
+            throw OTodoError.transport(statusCode: response.statusCode, message: "The HTTP response exceeded the attachment response limit")
+        }
+        return response
+    }
 }
 
 /// URLSession-backed production transport. Status handling remains the client's responsibility.
@@ -42,6 +53,10 @@ public final class URLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
     }
 
     public func send(_ request: URLRequest) async throws -> HTTPResponse {
+        try await send(request, maximumResponseBodyBytes: maximumResponseBodyBytes)
+    }
+
+    public func send(_ request: URLRequest, maximumResponseBodyBytes: Int) async throws -> HTTPResponse {
         do {
 #if canImport(FoundationNetworking)
             // swift-corelibs-foundation does not expose URLSession.AsyncBytes. Keep the
@@ -52,7 +67,7 @@ public final class URLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
             guard let response = response as? HTTPURLResponse else {
                 throw OTodoError.transport(statusCode: nil, message: "The server returned a non-HTTP response")
             }
-            try validateBodySize(data.count, response: response)
+            guard data.count <= maximumResponseBodyBytes else { throw responseTooLarge(response, maximumBytes: maximumResponseBodyBytes) }
             return HTTPResponse(
                 statusCode: response.statusCode,
                 headers: responseHeaders(response),
@@ -65,13 +80,13 @@ public final class URLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
                 throw OTodoError.transport(statusCode: nil, message: "The server returned a non-HTTP response")
             }
             if response.expectedContentLength > Int64(maximumResponseBodyBytes) {
-                throw responseTooLarge(response)
+                throw responseTooLarge(response, maximumBytes: maximumResponseBodyBytes)
             }
 
             var data = Data()
             for try await byte in bytes {
                 guard data.count < maximumResponseBodyBytes else {
-                    throw responseTooLarge(response)
+                    throw responseTooLarge(response, maximumBytes: maximumResponseBodyBytes)
                 }
                 data.append(byte)
             }
@@ -96,14 +111,14 @@ public final class URLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
 
     private func validateBodySize(_ count: Int, response: HTTPURLResponse) throws {
         guard count <= maximumResponseBodyBytes else {
-            throw responseTooLarge(response)
+            throw responseTooLarge(response, maximumBytes: maximumResponseBodyBytes)
         }
     }
 
-    private func responseTooLarge(_ response: HTTPURLResponse) -> OTodoError {
+    private func responseTooLarge(_ response: HTTPURLResponse, maximumBytes: Int) -> OTodoError {
         OTodoError.transport(
             statusCode: response.statusCode,
-            message: "The HTTP response exceeded the \(maximumResponseBodyBytes)-byte limit"
+            message: "The HTTP response exceeded the \(maximumBytes)-byte limit"
         )
     }
 

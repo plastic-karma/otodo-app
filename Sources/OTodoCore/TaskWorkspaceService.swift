@@ -86,6 +86,7 @@ public enum WorkspaceConflictResolution: Sendable, Equatable {
 /// Offline-first task operations. Every mutation is validated, reflected in the
 /// durable outbox, and saved before its result is returned.
 public actor TaskWorkspaceService {
+    private let attachmentStore: AttachmentStore?
     private let persistence: any WorkspacePersisting
     private let taskCodec: any TaskRecordCoding
     private let ulidGenerator: any ULIDGenerating
@@ -97,8 +98,10 @@ public actor TaskWorkspaceService {
         taskCodec: any TaskRecordCoding,
         ulidGenerator: any ULIDGenerating = ULIDGenerator(),
         now: @escaping @Sendable () -> Date = { Date() },
-        makeUUID: @escaping @Sendable () -> UUID = { UUID() }
+        makeUUID: @escaping @Sendable () -> UUID = { UUID() },
+        attachmentStore: AttachmentStore? = nil
     ) {
+        self.attachmentStore = attachmentStore
         self.persistence = persistence
         self.taskCodec = taskCodec
         self.ulidGenerator = ulidGenerator
@@ -256,7 +259,8 @@ public actor TaskWorkspaceService {
         recurrenceFrom: RecurrenceFrom? = nil,
         lastCompletedDate: CivilDate? = nil,
         body: String = "",
-        parentID: TaskID? = nil
+        parentID: TaskID? = nil,
+        attachments: [AttachmentDraft] = []
     ) async throws -> TodoTask {
         let workspace = try await requireWorkspace(selection: selection)
         let selectedState = state ?? workspace.configuration.defaultState
@@ -266,6 +270,7 @@ public actor TaskWorkspaceService {
         var occupied = Self.occupiedTaskLocations(in: workspace)
         let id = try generateUniqueID(in: workspace, at: timestamp, occupied: &occupied)
         let relativePath = "\(workspace.configuration.tasksDirectory)/\(id.rawValue).md"
+        let attachmentBody = try await addingAttachments(attachments, body: body, taskPath: relativePath, workspace: workspace)
         let task = try TodoTask(
             id: id,
             relativePath: relativePath,
@@ -278,7 +283,7 @@ public actor TaskWorkspaceService {
             recurrence: recurrence,
             recurrenceFrom: recurrenceFrom,
             lastCompletedDate: lastCompletedDate,
-            body: body,
+            body: attachmentBody,
             extraProperties: [
                 YAMLProperty(
                     name: "base",
@@ -303,13 +308,14 @@ public actor TaskWorkspaceService {
 
         var tasks = workspace.tasks
         tasks.append(document)
-        let pendingChanges = try upsertingPendingChange(
+        var pendingChanges = try upsertingPendingChange(
             path: repositoryPath,
             content: document.content,
             baseBlobSHA: nil,
             in: workspace.pendingChanges,
             at: timestamp
         )
+        pendingChanges += try attachmentChanges(attachments, selection: selection, at: timestamp)
         let updatedWorkspace = try Self.replacing(
             workspace,
             tasks: tasks,
@@ -492,7 +498,9 @@ public actor TaskWorkspaceService {
         _ update: TaskUpdate,
         lastCompletedDate: CivilDate?,
         taskIndex: Int,
-        in workspace: WorkspaceState
+        in workspace: WorkspaceState,
+        attachments: [AttachmentDraft] = [],
+        removingAttachmentPaths: [String] = []
     ) async throws -> TodoTask {
         try Self.validate(state: update.state, projects: update.projectSlugs, in: workspace)
         _ = try RecurrenceRule.validatePresence(
@@ -505,6 +513,14 @@ public actor TaskWorkspaceService {
         let repositoryPath = Self.repositoryPath(
             selection: workspace.selection, storeRelativePath: original.task.relativePath
         )
+        var attachmentBody = update.body
+        if !removingAttachmentPaths.isEmpty && !AttachmentLinks.enabled(configuration: workspace.configuration) {
+            throw OTodoError.validation(field: "attachments", message: "Attachments/ overlaps a configured record directory")
+        }
+        for path in removingAttachmentPaths {
+            attachmentBody = AttachmentLinks.unlink(body: attachmentBody, taskPath: original.task.relativePath, path: path, storePrefix: workspace.configuration.obsidianLinkPrefix)
+        }
+        attachmentBody = try await addingAttachments(attachments, body: attachmentBody, taskPath: original.task.relativePath, workspace: workspace)
         let editedTask = try TodoTask(
             id: original.task.id,
             relativePath: original.task.relativePath,
@@ -517,7 +533,7 @@ public actor TaskWorkspaceService {
             recurrence: update.recurrence,
             recurrenceFrom: update.recurrenceFrom,
             lastCompletedDate: lastCompletedDate,
-            body: update.body,
+            body: attachmentBody,
             extraProperties: original.task.extraProperties,
             parentID: update.parentID
         )
@@ -530,13 +546,14 @@ public actor TaskWorkspaceService {
 
         var tasks = workspace.tasks
         tasks[taskIndex] = document
-        let pendingChanges = try upsertingPendingChange(
+        var pendingChanges = try upsertingPendingChange(
             path: repositoryPath,
             content: document.content,
             baseBlobSHA: original.blobSHA,
             in: workspace.pendingChanges,
             at: now()
         )
+        pendingChanges += try attachmentChanges(attachments, selection: workspace.selection, at: now())
         let updatedWorkspace = try Self.replacing(
             workspace,
             tasks: tasks,
@@ -666,7 +683,9 @@ public actor TaskWorkspaceService {
         recurrence: String?,
         recurrenceFrom: RecurrenceFrom?,
         body: String,
-        parent: TaskParentChange = .preserve
+        parent: TaskParentChange = .preserve,
+        attachments: [AttachmentDraft] = [],
+        removingAttachmentPaths: [String] = []
     ) async throws -> TodoTask {
         let workspace = try await requireWorkspace(selection: selection)
         if parent != .preserve {
@@ -689,7 +708,7 @@ public actor TaskWorkspaceService {
         )
         return try await persistTaskUpdate(
             update, lastCompletedDate: update.recurrence == nil ? nil : expectedTask.lastCompletedDate,
-            taskIndex: taskIndex, in: workspace
+            taskIndex: taskIndex, in: workspace, attachments: attachments, removingAttachmentPaths: removingAttachmentPaths
         )
     }
 
@@ -765,6 +784,31 @@ public actor TaskWorkspaceService {
 
         var tasks = workspace.tasks
         var pendingChanges = workspace.pendingChanges
+        if conflict.localPayload.binaryFile != nil {
+            guard resolution == .useRemote else {
+                throw OTodoError.conflict(message: "Attachment path has different content. Discard this import, then import it again under a fresh path.")
+            }
+            pendingChanges.removeAll { $0.path == path }
+            for index in tasks.indices {
+                let original = tasks[index]
+                let body = AttachmentLinks.unlink(body: original.task.body, taskPath: original.task.relativePath, path: relativePath, storePrefix: workspace.configuration.obsidianLinkPrefix)
+                guard body != original.task.body else { continue }
+                var task = original.task
+                task.body = body
+                let document = try canonicalDocument(for: task, configuration: workspace.configuration, blobSHA: original.blobSHA)
+                tasks[index] = document
+                pendingChanges = try upsertingPendingChange(path: Self.repositoryPath(selection: selection, storeRelativePath: task.relativePath),
+                    content: document.content, baseBlobSHA: original.blobSHA, in: pendingChanges, at: now())
+            }
+            let conflicts = try workspace.conflicts.filter { $0.path != path }.map { existing in
+                guard existing.localContent != nil, let pending = pendingChanges.first(where: { $0.path == existing.path }) else { return existing }
+                return try SyncConflict(path: existing.path, baseBlobSHA: existing.baseBlobSHA, remoteBlobSHA: existing.remoteBlobSHA,
+                    localPayload: pending.payload, remotePayload: existing.remotePayload)
+            }
+            let updated = try Self.replacing(workspace, tasks: tasks, pendingChanges: pendingChanges, conflicts: conflicts)
+            try await persistence.save(updated, expectedRevision: workspace.revision)
+            return updated
+        }
         switch resolution {
         case .keepLocal:
             if let localContent = conflict.localContent {
@@ -789,12 +833,15 @@ public actor TaskWorkspaceService {
                 let destinationBlobSHA = tasks.first(where: {
                     $0.task.relativePath == destinationRelativePath
                 })?.blobSHA
-                let parsed = try taskCodec.parseTask(
+                var parsed = try taskCodec.parseTask(
                     id: id,
                     relativePath: destinationRelativePath,
                     text: localContent,
                     configuration: workspace.configuration
                 )
+                if relativePath != destinationRelativePath {
+                    parsed.body = AttachmentLinks.rebase(body: parsed.body, from: relativePath, to: destinationRelativePath, storePrefix: workspace.configuration.obsidianLinkPrefix)
+                }
                 try Self.validate(state: parsed.state, projects: parsed.projectSlugs, in: workspace)
                 let document = try canonicalDocument(
                     for: parsed,
@@ -1055,6 +1102,28 @@ public actor TaskWorkspaceService {
         }
     }
 
+    private func addingAttachments(_ drafts: [AttachmentDraft], body: String, taskPath: String, workspace: WorkspaceState) async throws -> String {
+        guard !drafts.isEmpty else { return body }
+        guard AttachmentLinks.enabled(configuration: workspace.configuration) else {
+            throw OTodoError.validation(field: "attachments", message: "Attachments/ overlaps a configured record directory")
+        }
+        guard let attachmentStore else { throw OTodoError.corruptLocalState(message: "Attachment storage is unavailable") }
+        var result = body
+        var paths = Set(workspace.pendingChanges.map(\.path) + workspace.attachments.map(\.path) + workspace.conflicts.map(\.path))
+        for draft in drafts {
+            let path = Self.repositoryPath(selection: workspace.selection, storeRelativePath: draft.path)
+            guard paths.insert(path).inserted else { throw OTodoError.conflict(message: "Attachment path already exists; re-import under a fresh path") }
+            _ = try await attachmentStore.read(draft.localFile, selection: workspace.selection)
+            result = try AttachmentLinks.append(body: result, taskPath: taskPath, path: draft.path, displayName: draft.displayName)
+        }
+        return result
+    }
+
+    private func attachmentChanges(_ drafts: [AttachmentDraft], selection: RepositorySelection, at date: Date) throws -> [PendingChange] {
+        try drafts.map { try PendingChange(id: $0.id, path: Self.repositoryPath(selection: selection, storeRelativePath: $0.path),
+            baseBlobSHA: nil, payload: .binaryFile($0.localFile), createdAt: date) }
+    }
+
     private static func replacing(
         _ workspace: WorkspaceState,
         knownProjectSlugs: [String]? = nil,
@@ -1075,7 +1144,8 @@ public actor TaskWorkspaceService {
             pendingChanges: pendingChanges,
             conflicts: conflicts,
             revision: workspace.revision + 1,
-            relationshipBlocks: try relationshipBlocks(tasks: tasks, conflicts: conflicts, in: workspace)
+            relationshipBlocks: try relationshipBlocks(tasks: tasks, conflicts: conflicts, in: workspace),
+            attachments: workspace.attachments
         )
     }
 

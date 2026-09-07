@@ -60,6 +60,12 @@ actor AuthenticatedGitHubService: GitHubServing {
         }
     }
 
+    func fetchAttachment(selection: RepositorySelection, attachment: AttachmentMetadata) async throws -> Data {
+        try await authenticated { client in
+            try await client.fetchAttachment(selection: selection, attachment: attachment)
+        }
+    }
+
     func commit(
         selection: RepositorySelection,
         changes: [RemoteChange],

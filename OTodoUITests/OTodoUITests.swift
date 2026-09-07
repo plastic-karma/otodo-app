@@ -3,6 +3,51 @@ import XCTest
 
 final class OTodoUITests: XCTestCase {
     @MainActor
+    func testAttachmentSelectionSavesOfflineAndClearsForAnotherTodo() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace", "-ui-testing-attachment-import"]
+        app.launch()
+        XCTAssertTrue(app.buttons["task-add"].waitForExistence(timeout: 10))
+        app.buttons["task-add"].tap()
+        let name = app.textFields["task-editor-name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap()
+        name.typeText("Attachment capture")
+        let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
+        let sample = app.buttons["attachment-import-sample"]
+        for _ in 0..<8 {
+            if sample.isHittable { break }
+            editor.swipeUp()
+        }
+        XCTAssertTrue(sample.isHittable)
+        sample.tap()
+        XCTAssertTrue(app.staticTexts["sample.txt"].waitForExistence(timeout: 5))
+        app.buttons["task-editor-save-another"].tap()
+        XCTAssertTrue(app.staticTexts["task-editor-saved-confirmation"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["sample.txt"].exists)
+        app.buttons["Cancel"].tap()
+        app.terminate()
+        app.launchArguments.removeAll { $0 == "-ui-testing-reset-workspace" }
+        app.launch()
+        XCTAssertTrue(app.buttons["task-add"].waitForExistence(timeout: 10))
+        let taskList = app.descendants(matching: .any).matching(identifier: "task-list").firstMatch
+        guard let row = requireTaskRow(named: "Attachment capture", state: "Pending", in: app,
+                                       taskList: taskList, description: "the saved attachment todo") else { return }
+        row.tap()
+        let open = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "attachment-open.")).firstMatch
+        for _ in 0..<8 {
+            if open.isHittable { break }
+            editor.swipeUp()
+        }
+        XCTAssertTrue(app.staticTexts["sample.txt"].exists)
+        XCTAssertTrue(app.staticTexts["Available offline"].waitForExistence(timeout: 5))
+        XCTAssertTrue(open.isHittable)
+        open.tap()
+        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 10))
+    }
+
+    @MainActor
     func testAddAndEditTodo() {
         continueAfterFailure = false
 

@@ -143,6 +143,8 @@ targets:
           NSExtensionAttributes:
             NSExtensionJavaScriptPreprocessingFile: ShareSource
             NSExtensionActivationRule:
+              NSExtensionActivationSupportsFileWithMaxCount: 20
+              NSExtensionActivationSupportsImageWithMaxCount: 20
               NSExtensionActivationSupportsText: true
               NSExtensionActivationSupportsWebURLWithMaxCount: 20
               NSExtensionActivationSupportsWebPageWithMaxCount: 1

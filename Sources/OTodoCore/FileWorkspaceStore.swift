@@ -8,7 +8,7 @@ import Glibc
 
 /// Persists each selected repository workspace as one versioned JSON document.
 public actor FileWorkspaceStore: WorkspacePersisting {
-    private static let formatVersion = 2
+    private static let formatVersion = 3
     private static let persistenceLock = NSLock()
 
     private struct Envelope: Codable {
@@ -25,7 +25,7 @@ public actor FileWorkspaceStore: WorkspacePersisting {
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             version = try container.decode(Int.self, forKey: .version)
-            guard version == 1 || version == 2 else {
+            guard (1...3).contains(version) else {
                 throw OTodoError.corruptLocalState(message: "Unsupported workspace persistence version \(version)")
             }
             let decoded = try container.decode(WorkspaceState.self, forKey: .workspace)
@@ -49,7 +49,7 @@ public actor FileWorkspaceStore: WorkspacePersisting {
         do {
             let data = try Data(contentsOf: url)
             let envelope = try Self.decoder().decode(Envelope.self, from: data)
-            guard envelope.version == 1 || envelope.version == Self.formatVersion else {
+            guard (1...Self.formatVersion).contains(envelope.version) else {
                 throw OTodoError.corruptLocalState(
                     message: "Unsupported workspace persistence version \(envelope.version)"
                 )
@@ -118,6 +118,14 @@ public actor FileWorkspaceStore: WorkspacePersisting {
             defer { _ = close(lockDescriptor) }
             #endif
 
+            for reference in workspace.pendingChanges.compactMap({ $0.payload.binaryFile }) + workspace.conflicts.flatMap({ [$0.localPayload.binaryFile, $0.remotePayload.binaryFile].compactMap { $0 } }) {
+                let file = try AttachmentStore.fileURL(rootURL: rootURL, reference: reference, selection: workspace.selection)
+                guard let attributes = try? fileManager.attributesOfItem(atPath: file.path),
+                      attributes[.type] as? FileAttributeType == .typeRegular,
+                      (attributes[.size] as? NSNumber)?.intValue == reference.byteSize else {
+                    throw OTodoError.corruptLocalState(message: "Attachment bytes must exist before workspace publication")
+                }
+            }
             let destinationURL = workspaceURL(for: workspace.selection)
             let destinationExists = fileManager.fileExists(atPath: destinationURL.path)
 
@@ -180,6 +188,38 @@ public actor FileWorkspaceStore: WorkspacePersisting {
                 throw OTodoError.corruptLocalState(
                     message: "Could not atomically save workspace: \(error.localizedDescription)"
                 )
+            }
+        }
+    }
+
+    /// Shares the transaction lock with save, preventing Cancel from deleting a concurrently committed import.
+    public func discardUnreferencedAttachment(_ reference: BinaryFileReference, selection: RepositorySelection) throws {
+        try Self.persistenceLock.withLock {
+            guard FileManager.default.fileExists(atPath: rootURL.path) else { return }
+            #if canImport(Darwin) || canImport(Glibc)
+            let descriptor = try acquireWorkspaceLock()
+            defer { _ = close(descriptor) }
+            #endif
+            try AttachmentDiskLock.withLock(rootURL: rootURL) {
+                let workspaceFile = workspaceURL(for: selection)
+                if FileManager.default.fileExists(atPath: workspaceFile.path) {
+                    let workspace = try loadPersistedWorkspace(at: workspaceFile, selection: selection)
+                    let references = workspace.pendingChanges.compactMap { $0.payload.binaryFile?.localReference }
+                        + workspace.conflicts.flatMap { [$0.localPayload.binaryFile?.localReference, $0.remotePayload.binaryFile?.localReference].compactMap { $0 } }
+                    guard !references.contains(reference.localReference) else { return }
+                }
+                // Cached copies can be referenced after a confirmed operation leaves the outbox.
+                let cache = AttachmentStore.selectionURL(rootURL: rootURL, selection: selection).appendingPathComponent("cache")
+                try AttachmentStore.rejectSymlinks(at: cache)
+                if FileManager.default.fileExists(atPath: cache.path) {
+                    for url in try FileManager.default.contentsOfDirectory(at: cache, includingPropertiesForKeys: nil) where url.pathExtension == "json" {
+                        try AttachmentStore.rejectSymlinks(at: url)
+                        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+                        if (object?["file"] as? [String: Any])?["localReference"] as? String == reference.localReference { return }
+                    }
+                }
+                let url = try AttachmentStore.fileURL(rootURL: rootURL, reference: reference, selection: selection)
+                if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
             }
         }
     }
@@ -252,7 +292,7 @@ public actor FileWorkspaceStore: WorkspacePersisting {
         do {
             let data = try Data(contentsOf: url)
             let envelope = try Self.decoder().decode(Envelope.self, from: data)
-            guard envelope.version == 1 || envelope.version == Self.formatVersion else {
+            guard (1...Self.formatVersion).contains(envelope.version) else {
                 throw OTodoError.corruptLocalState(
                     message: "Unsupported workspace persistence version \(envelope.version)"
                 )

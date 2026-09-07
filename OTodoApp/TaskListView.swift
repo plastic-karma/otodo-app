@@ -205,7 +205,8 @@ struct TaskListView: View {
                             projectChoices: model.projectChoices,
                             tagChoices: model.tagChoices,
                             hierarchy: model.hierarchy,
-                            workspaceTasks: model.tasks
+                            workspaceTasks: model.tasks,
+                            attachmentModel: model
                         ) { value in
                             switch presentation {
                             case .create:

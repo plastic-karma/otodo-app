@@ -238,8 +238,32 @@ public actor GitHubAPIClient: GitHubServing {
         return try GitSnapshot(
             headCommitSHA: state.headCommitSHA,
             rootTreeSHA: state.rootTreeSHA,
-            files: files
+            files: files,
+            attachments: try entries.filter { ($0.type == "blob" || $0.type == "tree") && ($0.path == "Attachments" || $0.path.hasPrefix("Attachments/")) }.map {
+                try AttachmentMetadata(path: joinedPath(selection.storePath, $0.path), blobSHA: $0.sha, byteSize: $0.size ?? 0, isSymlink: $0.mode == "120000", isDirectory: $0.type == "tree")
+            }
         )
+    }
+
+    public func fetchAttachment(selection: RepositorySelection, attachment: AttachmentMetadata) async throws -> Data {
+        let prefix = joinedPath(selection.storePath, "Attachments/")
+        guard !attachment.isSymlink, !attachment.isDirectory, attachment.path.hasPrefix(prefix), attachment.byteSize <= AttachmentLinks.maximumBytes else {
+            throw OTodoError.validation(field: "attachment", message: "Select an attachment inside this store no larger than 20 MiB")
+        }
+        let response = try await request(method: "GET",
+            path: repositoryPath(selection.owner, selection.name, suffix: "git/blobs/\(percentEncodePathSegment(attachment.blobSHA))"),
+            maximumResponseBodyBytes: 32 * 1_024 * 1_024)
+        try validate(response, context: "downloading attachment", notFoundResource: attachment.path)
+        let blob: GitHubBlobDTO = try decode(response, context: "downloading attachment")
+        guard blob.encoding.lowercased() == "base64" else {
+            throw OTodoError.transport(statusCode: response.statusCode, message: "Attachment response must be base64")
+        }
+        let data = try decodeBase64(blob.content, maximumBytes: AttachmentLinks.maximumBytes,
+            statusCode: response.statusCode, context: "downloading attachment", limitName: "attachment")
+        guard data.count == attachment.byteSize, GitBlobSHA.hexDigest(data) == attachment.blobSHA else {
+            throw OTodoError.transport(statusCode: response.statusCode, message: "Attachment does not match its size and Git SHA")
+        }
+        return data
     }
 
     public func commit(
@@ -268,8 +292,18 @@ public actor GitHubAPIClient: GitHubServing {
                 )
             }
 
-            if let content = change.content {
-                let blobRequest = GitHubCreateBlobRequestDTO(content: content)
+            if change.content != nil || change.binaryContent != nil {
+                if let bytes = change.binaryContent {
+                    guard bytes.count <= AttachmentLinks.maximumBytes else { throw resourceLimit("attachment exceeded 20 MiB") }
+                    guard !snapshot.attachments.contains(where: { change.path.hasPrefix($0.path + "/") && !$0.isDirectory }) else {
+                        throw OTodoError.conflict(message: "Attachment ancestor is a file or symbolic link")
+                    }
+                    if let remote = snapshot.attachments.first(where: { $0.path == change.path }), (remote.isSymlink || remote.isDirectory || remote.blobSHA != GitBlobSHA.hexDigest(bytes)) {
+                        throw OTodoError.conflict(message: "Attachment path already has different content; re-import under a fresh path")
+                    }
+                }
+                let blobRequest = GitHubCreateBlobRequestDTO(content: change.binaryContent?.base64EncodedString() ?? change.content!,
+                    encoding: change.binaryContent == nil ? "utf-8" : "base64")
                 let response = try await request(
                     method: "POST",
                     path: try repositoryPath(selection.owner, selection.name, suffix: "git/blobs"),
@@ -279,6 +313,9 @@ public actor GitHubAPIClient: GitHubServing {
                 let blob: GitHubCreatedObjectDTO = try decode(response, context: "creating blob for \(change.path)")
                 guard !blob.sha.isEmpty else {
                     throw OTodoError.transport(statusCode: response.statusCode, message: "GitHub returned an empty blob SHA for \(change.path)")
+                }
+                if let bytes = change.binaryContent, blob.sha != GitBlobSHA.hexDigest(bytes) {
+                    throw OTodoError.transport(statusCode: response.statusCode, message: "GitHub did not confirm the expected attachment SHA")
                 }
                 treeEntries.append(GitHubCreateTreeEntryDTO(path: change.path, sha: blob.sha))
             } else {
@@ -663,7 +700,8 @@ public actor GitHubAPIClient: GitHubServing {
         path: String,
         queryItems: [URLQueryItem] = [],
         body: Data? = nil,
-        requiresFreshResponse: Bool = false
+        requiresFreshResponse: Bool = false,
+        maximumResponseBodyBytes: Int? = nil
     ) async throws -> HTTPResponse {
         try Task.checkCancellation()
         guard !accessToken.isEmpty,
@@ -688,6 +726,7 @@ public actor GitHubAPIClient: GitHubServing {
         if body != nil {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
+        if let maximumResponseBodyBytes { return try await transport.send(request, maximumResponseBodyBytes: maximumResponseBodyBytes) }
         return try await transport.send(request)
     }
 

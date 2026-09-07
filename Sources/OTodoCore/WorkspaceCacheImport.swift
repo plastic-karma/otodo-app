@@ -39,7 +39,7 @@ extension WorkspaceState {
             selection: selection, configuration: configuration, knownProjectSlugs: knownProjectSlugs,
             tasks: imported, baseHeadCommitSHA: baseHeadCommitSHA, baseRootTreeSHA: baseRootTreeSHA,
             pendingChanges: pendingChanges, conflicts: conflicts, revision: revision,
-            relationshipBlocks: relationshipBlocks
+            relationshipBlocks: relationshipBlocks, attachments: attachments
         )
     }
 }

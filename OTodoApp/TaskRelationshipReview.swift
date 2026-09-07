@@ -58,7 +58,8 @@ struct TaskRelationshipReview: View {
                         projectChoices: model.projectChoices,
                         tagChoices: model.tagChoices,
                         hierarchy: model.hierarchy,
-                        workspaceTasks: model.tasks
+                        workspaceTasks: model.tasks,
+                            attachmentModel: model
                     ) { draft in
                         await model.updateTask(id: task.id, draft: draft)
                         return model.errorMessage

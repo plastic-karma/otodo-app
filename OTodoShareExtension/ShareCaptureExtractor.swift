@@ -8,10 +8,22 @@ enum ShareCaptureExtractor {
     struct Capture {
         let name: String
         let body: String
+        let files: [URL]
+
+        func cleanTemporaryFiles() {
+            for file in files { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        }
     }
 
     static func extract(_ items: [NSExtensionItem]) async throws -> Capture {
         var captures: [TaskCapture] = []
+        var files: [URL] = []
+        var succeeded = false
+        defer {
+            if !succeeded {
+                for file in files { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+            }
+        }
         for item in items {
             try Task.checkCancellation()
             var title = item.attributedTitle?.string
@@ -20,6 +32,22 @@ enum ShareCaptureExtractor {
             append(item.attributedContentText?.string, to: &texts)
 
             for provider in item.attachments ?? [] {
+                if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                    let url = try await loadURL(provider, identifier: UTType.fileURL.identifier)
+                    files.append(url)
+                    continue
+                }
+                // Prefer a file representation for binary data; URL and text providers keep
+                // their established source-context semantics.
+                if let identifier = provider.registeredTypeIdentifiers.first(where: {
+                    guard let type = UTType($0) else { return false }
+                    return type.conforms(to: .image) || (type.conforms(to: .data)
+                        && !type.conforms(to: .text) && !type.conforms(to: .url)
+                        && !type.conforms(to: .propertyList))
+                }) {
+                    files.append(try await loadFile(provider, identifier: identifier))
+                    continue
+                }
                 if provider.hasItemConformingToTypeIdentifier(UTType.propertyList.identifier),
                    let page = try await loadWebPage(provider) {
                     if !page.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -31,7 +59,8 @@ enum ShareCaptureExtractor {
                 }
                 if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
                     let url = try await loadURL(provider)
-                    if !urls.contains(url) { urls.append(url) }
+                    if url.isFileURL { files.append(url) }
+                    else if !urls.contains(url) { urls.append(url) }
                 } else if provider.hasItemConformingToTypeIdentifier(UTType.text.identifier) {
                     let identifier = provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier)
                         ? UTType.plainText.identifier : UTType.text.identifier
@@ -51,10 +80,56 @@ enum ShareCaptureExtractor {
             }
         }
 
-        guard let first = captures.first else {
-            throw CaptureError("No text or links were shared. Share text or a webpage with OTodo and try again.")
+        guard !captures.isEmpty || !files.isEmpty else {
+            throw CaptureError("No readable content was shared. Share text, links, files, or images with OTodo.")
         }
-        return Capture(name: first.name, body: captures.map(\.body).joined(separator: "\n\n---\n\n"))
+        try Task.checkCancellation()
+        succeeded = true
+        return Capture(name: captures.first?.name ?? files[0].lastPathComponent,
+                       body: captures.map(\.body).joined(separator: "\n\n---\n\n"), files: files)
+    }
+
+    private static func loadFile(_ provider: NSItemProvider, identifier: String) async throws -> URL {
+        let suggestedName = provider.suggestedName
+        return try await withCheckedThrowingContinuation { continuation in
+            provider.loadFileRepresentation(forTypeIdentifier: identifier) { url, error in
+                do {
+                    if let error { throw error }
+                    guard let url else { throw CaptureError("The source app did not provide a file.") }
+                    // The provider may delete this URL as soon as this callback returns.
+                    let copy = try copyFile(url, suggestedName: suggestedName)
+                    continuation.resume(returning: copy)
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
+    nonisolated private static func copyFile(_ source: URL, suggestedName: String? = nil) throws -> URL {
+        guard source.isFileURL else { throw CaptureError("Expected a local file.") }
+        let accessed = source.startAccessingSecurityScopedResource()
+        defer { if accessed { source.stopAccessingSecurityScopedResource() } }
+        let values = try source.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true,
+              let size = values.fileSize, size <= 20 * 1024 * 1024 else {
+            throw CaptureError("Attachments must be regular files up to 20 MiB.")
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var name = (suggestedName as NSString?)?.lastPathComponent ?? source.lastPathComponent
+        if name.isEmpty || name == "." || name == ".." { name = source.lastPathComponent }
+        if (name as NSString).pathExtension.isEmpty && !source.pathExtension.isEmpty { name += "." + source.pathExtension }
+        let target = directory.appendingPathComponent(name)
+        do {
+            try FileManager.default.copyItem(at: source, to: target)
+            let copied = try target.resourceValues(forKeys: [.fileSizeKey])
+            guard let copiedSize = copied.fileSize, copiedSize <= 20 * 1024 * 1024 else {
+                throw CaptureError("Attachments must be at most 20 MiB.")
+            }
+            return target
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
     }
 
     private static func append(_ text: String?, to texts: inout [String]) {
@@ -127,9 +202,9 @@ enum ShareCaptureExtractor {
         }
     }
 
-    private static func loadURL(_ provider: NSItemProvider) async throws -> URL {
+    private static func loadURL(_ provider: NSItemProvider, identifier: String = UTType.url.identifier) async throws -> URL {
         try await withCheckedThrowingContinuation { continuation in
-            provider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { item, error in
+            provider.loadItem(forTypeIdentifier: identifier, options: nil) { item, error in
                 if let error {
                     continuation.resume(throwing: CaptureError("Could not read a shared link: \(error.localizedDescription)"))
                     return
@@ -148,7 +223,9 @@ enum ShareCaptureExtractor {
                     continuation.resume(throwing: CaptureError("The source app did not provide a valid link. Try sharing the webpage again."))
                     return
                 }
-                continuation.resume(returning: url)
+                do {
+                    continuation.resume(returning: url.isFileURL ? try copyFile(url) : url)
+                } catch { continuation.resume(throwing: error) }
             }
         }
     }

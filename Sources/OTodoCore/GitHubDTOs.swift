@@ -88,7 +88,8 @@ struct GitHubCreatedObjectDTO: Decodable {
 
 struct GitHubCreateBlobRequestDTO: Encodable {
     let content: String
-    let encoding = "utf-8"
+    let encoding: String
+    init(content: String, encoding: String = "utf-8") { self.content = content; self.encoding = encoding }
 }
 
 struct GitHubCreateTreeRequestDTO: Encodable {

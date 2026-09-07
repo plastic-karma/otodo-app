@@ -31,6 +31,16 @@ Due reminders are opt-in from the Projects sidebar. When enabled, active dated t
 
 Open **Changelog** from the sidebar to review product features and visible improvements, newest first. Each entry shows its commit's exact UTC timestamp. The history is bundled with the app and available offline; CI and repository-maintenance changes are excluded.
 
+## Attachments
+
+Files and Photos can be selected in the todo editor, and files or images can be sent to OTodo from the system Share sheet. Selections are staged until Save; Save & Create Another starts with no selected files. Each file is limited to **20 MiB**, preserves its original bytes, and is stored at `Attachments/<ULID>/<sanitized filename>` in the selected todo store. Images use Markdown embeds; other files use links relative to the actual task location. Explicit Markdown links and Obsidian wikilinks into this folder are also recognized, including manually placed files. Shortened wikilinks need an explicit `Attachments/...` path to appear in the attachment list. Links inside code examples are ignored.
+
+Open an attachment to download and preview it, use Share to export it, or choose Keep Offline. Ordinary task sync downloads only the file catalog. The local cache uses a 256 MiB LRU budget; pinned files and pending imports are exempt. Pinned files refresh after sync; failed replacements retain an explicitly labeled older cached version. Missing or oversized files and download failures do not prevent ordinary todo editing. Remove Link only changes that todo's Markdown; completing, recurring, and deleting a todo retain vault files. Multiple tasks can share a file and children do not inherit attachments.
+
+Attachments work in store schemas **1 and 2** without an upgrade or configuration/frontmatter fields. A configured record directory overlapping `Attachments/` disables attachment operations. Existing custom properties, including a property named `attachments`, remain untouched. The local workspace persistence format is **3**; formats 1 and 2 migrate on save. Older app versions cannot open format 3. Files, body links, and pending binary uploads are saved together locally and published in one Git tree/commit. Different-content collisions require discarding the import and importing again under a fresh path.
+
+Desktop synchronization must include `Attachments/` along with tasks and projects. To paste files there from Obsidian, set **Settings → Files and links → Default location for new attachments → In the folder specified below**, then enter the vault-relative path to the todo store's `Attachments` folder. OTodo does not change vault-wide settings. Camera capture, scanning, Watch attachment controls, file deletion, and repository cleanup are outside this release.
+
 ## Subtasks
 
 Schema-2 stores support one optional parent per task at arbitrary depth. Choose
@@ -74,7 +84,7 @@ automatically.
 
 **Inbox** is a first-class view of active todos with no assigned projects, including undated work. Open it from the Home filters or the sidebar. It is not an Inbox project or tag. Assign a project or complete a todo to remove it from Inbox; use the existing editor to organize projects, tags, and dates.
 
-Choose **OTodo** in the iOS Share sheet to capture text or a URL. Review the proposed title and Markdown context, then **Save**. Safari capture preserves the webpage title, link, and selected text. In Shortcuts, use OTodo's **Add Todo** action with supplied **Todo** text and an optional **Source URL**. Siri's “Add a todo in OTodo” phrase prompts for the text rather than opening an empty editor.
+Choose **OTodo** in the iOS Share sheet to capture text, URLs, files, or images. Review the proposed title and Markdown context, then **Save**. Safari capture preserves the webpage title, link, and selected text. In Shortcuts, use OTodo's **Add Todo** action with supplied **Todo** text and an optional **Source URL**. Siri's “Add a todo in OTodo” phrase prompts for the text rather than opening an empty editor.
 
 System captures start without a parent, project, or deadline. After connecting a workspace, they save directly to the normal local workspace and outbox, including offline; OTodo reloads external captures and synchronizes through its normal path when activated. No separate capture database or direct GitHub writes are used.
 

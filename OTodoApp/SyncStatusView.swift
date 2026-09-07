@@ -63,6 +63,12 @@ struct SyncStatusView: View {
             }
             .buttonStyle(.borderless)
             .accessibilityIdentifier("sync-review-relationships")
+            if !model.attachmentRefreshErrors.isEmpty {
+                Text("\(model.attachmentRefreshErrors.count) offline attachment updates failed. Older cached files remain available.")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("attachment-refresh-status")
+            }
             if let detailText {
                 Text(detailText)
                     .font(.caption2)

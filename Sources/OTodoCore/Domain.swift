@@ -522,8 +522,9 @@ public struct GitSnapshot: Sendable, Codable, Equatable {
     public let headCommitSHA: String
     public let rootTreeSHA: String
     public let files: [RemoteFile]
+    public let attachments: [AttachmentMetadata]
 
-    public init(headCommitSHA: String, rootTreeSHA: String, files: [RemoteFile]) throws {
+    public init(headCommitSHA: String, rootTreeSHA: String, files: [RemoteFile], attachments: [AttachmentMetadata] = []) throws {
         guard !headCommitSHA.isEmpty, !rootTreeSHA.isEmpty else {
             throw OTodoError.validation(field: "snapshot", message: "Commit and root tree SHAs are required")
         }
@@ -533,48 +534,75 @@ public struct GitSnapshot: Sendable, Codable, Equatable {
         self.headCommitSHA = headCommitSHA
         self.rootTreeSHA = rootTreeSHA
         self.files = files
+        guard Set(attachments.map(\.path)).count == attachments.count else {
+            throw OTodoError.validation(field: "attachments", message: "Attachment paths must be unique")
+        }
+        self.attachments = attachments
     }
 
-    private enum CodingKeys: String, CodingKey { case headCommitSHA, rootTreeSHA, files }
+    private enum CodingKeys: String, CodingKey { case headCommitSHA, rootTreeSHA, files, attachments }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
             headCommitSHA: container.decode(String.self, forKey: .headCommitSHA),
             rootTreeSHA: container.decode(String.self, forKey: .rootTreeSHA),
-            files: container.decode([RemoteFile].self, forKey: .files)
+            files: container.decode([RemoteFile].self, forKey: .files),
+            attachments: container.decodeIfPresent([AttachmentMetadata].self, forKey: .attachments) ?? []
         )
     }
+}
+
+/// Explicit payloads prevent binary imports from ever being interpreted as deletions.
+public enum ChangePayload: Sendable, Codable, Equatable {
+    case text(String)
+    case binaryFile(BinaryFileReference)
+    case remoteBinary(AttachmentMetadata)
+    case deletion
+
+    public var text: String? { if case let .text(value) = self { value } else { nil } }
+    public var binaryFile: BinaryFileReference? { if case let .binaryFile(value) = self { value } else { nil } }
 }
 
 public struct PendingChange: Sendable, Codable, Equatable {
     public let id: UUID
     public let path: String
     public let baseBlobSHA: String?
-    /// UTF-8 file content, or `nil` to delete the path.
-    public let content: String?
+    public let payload: ChangePayload
+    public var content: String? { payload.text }
     public let createdAt: Date
 
     public init(id: UUID, path: String, baseBlobSHA: String?, content: String?, createdAt: Date) throws {
+        try self.init(id: id, path: path, baseBlobSHA: baseBlobSHA,
+                      payload: content.map(ChangePayload.text) ?? .deletion, createdAt: createdAt)
+    }
+
+    public init(id: UUID, path: String, baseBlobSHA: String?, payload: ChangePayload, createdAt: Date) throws {
         try DomainValidation.validateRelativePath(path, field: "path")
         self.id = id
         self.path = path
         self.baseBlobSHA = baseBlobSHA
-        self.content = content
+        if case .remoteBinary = payload { throw OTodoError.corruptLocalState(message: "An outbox upload requires local binary bytes") }
+        self.payload = payload
         self.createdAt = createdAt
     }
 
-    private enum CodingKeys: String, CodingKey { case id, path, baseBlobSHA, content, createdAt }
-
+    private enum CodingKeys: String, CodingKey { case id, path, baseBlobSHA, content, payload, createdAt }
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        try self.init(
-            id: container.decode(UUID.self, forKey: .id),
-            path: container.decode(String.self, forKey: .path),
-            baseBlobSHA: container.decodeIfPresent(String.self, forKey: .baseBlobSHA),
-            content: container.decodeIfPresent(String.self, forKey: .content),
-            createdAt: container.decode(Date.self, forKey: .createdAt)
-        )
+        let payload = try container.decodeIfPresent(ChangePayload.self, forKey: .payload)
+            ?? container.decodeIfPresent(String.self, forKey: .content).map(ChangePayload.text) ?? .deletion
+        try self.init(id: container.decode(UUID.self, forKey: .id), path: container.decode(String.self, forKey: .path),
+                      baseBlobSHA: container.decodeIfPresent(String.self, forKey: .baseBlobSHA), payload: payload,
+                      createdAt: container.decode(Date.self, forKey: .createdAt))
+    }
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(path, forKey: .path)
+        try container.encodeIfPresent(baseBlobSHA, forKey: .baseBlobSHA)
+        try container.encode(payload, forKey: .payload)
+        try container.encode(createdAt, forKey: .createdAt)
     }
 }
 
@@ -582,38 +610,44 @@ public struct SyncConflict: Sendable, Codable, Equatable {
     public let path: String
     public let baseBlobSHA: String?
     public let remoteBlobSHA: String?
-    /// This device's UTF-8 file content, or `nil` when this device deleted the path.
-    public let localContent: String?
-    public let remoteContent: String?
+    public let localPayload: ChangePayload
+    public let remotePayload: ChangePayload
+    public var localContent: String? { localPayload.text }
+    public var remoteContent: String? { remotePayload.text }
 
-    public init(
-        path: String,
-        baseBlobSHA: String?,
-        remoteBlobSHA: String?,
-        localContent: String?,
-        remoteContent: String?
-    ) throws {
+    public init(path: String, baseBlobSHA: String?, remoteBlobSHA: String?, localContent: String?, remoteContent: String?) throws {
+        try self.init(path: path, baseBlobSHA: baseBlobSHA, remoteBlobSHA: remoteBlobSHA,
+                      localPayload: localContent.map(ChangePayload.text) ?? .deletion,
+                      remotePayload: remoteContent.map(ChangePayload.text) ?? .deletion)
+    }
+    public init(path: String, baseBlobSHA: String?, remoteBlobSHA: String?, localPayload: ChangePayload, remotePayload: ChangePayload) throws {
         try DomainValidation.validateRelativePath(path, field: "path")
         self.path = path
         self.baseBlobSHA = baseBlobSHA
         self.remoteBlobSHA = remoteBlobSHA
-        self.localContent = localContent
-        self.remoteContent = remoteContent
+        self.localPayload = localPayload
+        self.remotePayload = remotePayload
     }
-
     private enum CodingKeys: String, CodingKey {
-        case path, baseBlobSHA, remoteBlobSHA, localContent, remoteContent
+        case path, baseBlobSHA, remoteBlobSHA, localContent, remoteContent, localPayload, remotePayload
     }
-
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        try self.init(
-            path: container.decode(String.self, forKey: .path),
-            baseBlobSHA: container.decodeIfPresent(String.self, forKey: .baseBlobSHA),
-            remoteBlobSHA: container.decodeIfPresent(String.self, forKey: .remoteBlobSHA),
-            localContent: container.decodeIfPresent(String.self, forKey: .localContent),
-            remoteContent: container.decodeIfPresent(String.self, forKey: .remoteContent)
-        )
+        try self.init(path: container.decode(String.self, forKey: .path),
+                      baseBlobSHA: container.decodeIfPresent(String.self, forKey: .baseBlobSHA),
+                      remoteBlobSHA: container.decodeIfPresent(String.self, forKey: .remoteBlobSHA),
+                      localPayload: container.decodeIfPresent(ChangePayload.self, forKey: .localPayload)
+                        ?? container.decodeIfPresent(String.self, forKey: .localContent).map(ChangePayload.text) ?? .deletion,
+                      remotePayload: container.decodeIfPresent(ChangePayload.self, forKey: .remotePayload)
+                        ?? container.decodeIfPresent(String.self, forKey: .remoteContent).map(ChangePayload.text) ?? .deletion)
+    }
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(path, forKey: .path)
+        try container.encodeIfPresent(baseBlobSHA, forKey: .baseBlobSHA)
+        try container.encodeIfPresent(remoteBlobSHA, forKey: .remoteBlobSHA)
+        try container.encode(localPayload, forKey: .localPayload)
+        try container.encode(remotePayload, forKey: .remotePayload)
     }
 }
 
@@ -668,6 +702,7 @@ public struct WorkspaceState: Sendable, Codable, Equatable {
     public let conflicts: [SyncConflict]
     public let revision: UInt64
     public let relationshipBlocks: [TaskRelationshipBlock]
+    public let attachments: [AttachmentMetadata]
 
     public init(
         selection: RepositorySelection,
@@ -679,7 +714,8 @@ public struct WorkspaceState: Sendable, Codable, Equatable {
         pendingChanges: [PendingChange],
         conflicts: [SyncConflict],
         revision: UInt64 = 0,
-        relationshipBlocks: [TaskRelationshipBlock] = []
+        relationshipBlocks: [TaskRelationshipBlock] = [],
+        attachments: [AttachmentMetadata] = []
     ) throws {
         guard !baseHeadCommitSHA.isEmpty, !baseRootTreeSHA.isEmpty else {
             throw OTodoError.validation(field: "workspace", message: "Base commit and tree SHAs are required")
@@ -713,11 +749,19 @@ public struct WorkspaceState: Sendable, Codable, Equatable {
         self.conflicts = conflicts
         self.revision = revision
         self.relationshipBlocks = relationshipBlocks
+        guard Set(attachments.map(\.path)).count == attachments.count else {
+            throw OTodoError.corruptLocalState(message: "Attachment paths must be unique")
+        }
+        let prefix = selection.storePath.isEmpty ? "Attachments/" : selection.storePath + "/Attachments/"
+        for pending in pendingChanges where pending.payload.binaryFile != nil {
+            guard pending.path.hasPrefix(prefix) else { throw OTodoError.corruptLocalState(message: "Binary outbox path is outside selected Attachments/") }
+        }
+        self.attachments = attachments
     }
 
     private enum CodingKeys: String, CodingKey {
         case selection, configuration, tasks, knownProjectSlugs, baseHeadCommitSHA, baseRootTreeSHA
-        case pendingChanges, conflicts, revision, relationshipBlocks
+        case pendingChanges, conflicts, revision, relationshipBlocks, attachments
     }
 
     public init(from decoder: any Decoder) throws {
@@ -735,29 +779,35 @@ public struct WorkspaceState: Sendable, Codable, Equatable {
             pendingChanges: container.decode([PendingChange].self, forKey: .pendingChanges),
             conflicts: container.decode([SyncConflict].self, forKey: .conflicts),
             revision: container.decodeIfPresent(UInt64.self, forKey: .revision) ?? 0,
-            relationshipBlocks: container.decodeIfPresent([TaskRelationshipBlock].self, forKey: .relationshipBlocks) ?? []
+            relationshipBlocks: container.decodeIfPresent([TaskRelationshipBlock].self, forKey: .relationshipBlocks) ?? [],
+            attachments: container.decodeIfPresent([AttachmentMetadata].self, forKey: .attachments) ?? []
         )
     }
 }
 
 public struct RemoteChange: Sendable, Codable, Equatable {
     public let path: String
-    /// UTF-8 file content, or `nil` to delete the path.
     public let content: String?
+    public let binaryContent: Data?
 
-    public init(path: String, content: String?) throws {
+    public init(path: String, content: String?, binaryContent: Data? = nil) throws {
         try DomainValidation.validateRelativePath(path, field: "path")
         self.path = path
+        guard content == nil || binaryContent == nil else {
+            throw OTodoError.validation(field: "payload", message: "A file cannot have both text and binary payloads")
+        }
         self.content = content
+        self.binaryContent = binaryContent
     }
 
-    private enum CodingKeys: String, CodingKey { case path, content }
+    private enum CodingKeys: String, CodingKey { case path, content, binaryContent }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
             path: container.decode(String.self, forKey: .path),
-            content: container.decodeIfPresent(String.self, forKey: .content)
+            content: container.decodeIfPresent(String.self, forKey: .content),
+            binaryContent: container.decodeIfPresent(Data.self, forKey: .binaryContent)
         )
     }
 }
