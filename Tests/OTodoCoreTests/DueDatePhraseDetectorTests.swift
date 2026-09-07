@@ -28,6 +28,28 @@ final class DueDatePhraseDetectorTests: XCTestCase {
         )
     }
 
+    func testTodayAndTodUseTheLocalDayAndWholeWords() throws {
+        var localCalendar = calendar
+        localCalendar.timeZone = TimeZone(secondsFromGMT: -8 * 60 * 60)!
+        let nearMidnight = calendar.date(
+            from: DateComponents(year: 2026, month: 9, day: 4, hour: 2)
+        )!
+        for phrase in ["ToDaY", "TOD"] {
+            let input = "📌 Call \(phrase) mum"
+            let detection = try XCTUnwrap(DueDatePhraseDetector.detect(
+                in: input, from: nearMidnight, calendar: localCalendar
+            ))
+            XCTAssertEqual(detection.dueDate.rawValue, "2026-09-03")
+            XCTAssertEqual(detection.nameWithoutPhrase, "📌 Call mum")
+            XCTAssertEqual((input as NSString).substring(with: detection.utf16Range), phrase)
+        }
+        for input in ["Todd calls", "todayish", "tod2", "antoday", "étodé"] {
+            XCTAssertNil(try DueDatePhraseDetector.detect(
+                in: input, from: nearMidnight, calendar: localCalendar
+            ), input)
+        }
+    }
+
     func testDetectsEveryWeekdayAsItsNextOccurrence() throws {
         let cases = [
             (["Sunday", "Sun"], "2026-09-06"),

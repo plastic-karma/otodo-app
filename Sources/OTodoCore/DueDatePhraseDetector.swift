@@ -19,6 +19,10 @@ public enum DueDatePhraseDetector {
         var candidate: Candidate?
         for index in words.indices {
             let word = words[index].normalized
+            if word == "today" || word == "tod" {
+                candidate = Candidate(range: words[index].range, meaning: .days(0))
+                continue
+            }
             if word == "tomorrow" {
                 candidate = Candidate(range: words[index].range, meaning: .days(1))
                 continue
