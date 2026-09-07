@@ -416,7 +416,9 @@ public actor TaskWorkspaceService {
         selection: RepositorySelection,
         id: TaskID,
         expectedTask: TodoTask,
-        update: TaskUpdate
+        update: TaskUpdate,
+        attachments: [AttachmentDraft] = [],
+        removingAttachmentPaths: [String] = []
     ) async throws -> TodoTask {
         let workspace = try await requireWorkspace(selection: selection)
         let taskIndex = try Self.editableTaskIndex(id: id, expectedTask: expectedTask, in: workspace)
@@ -424,7 +426,9 @@ public actor TaskWorkspaceService {
             update,
             lastCompletedDate: update.recurrence == nil ? nil : expectedTask.lastCompletedDate,
             taskIndex: taskIndex,
-            in: workspace
+            in: workspace,
+            attachments: attachments,
+            removingAttachmentPaths: removingAttachmentPaths
         )
     }
 
@@ -800,10 +804,29 @@ public actor TaskWorkspaceService {
                 pendingChanges = try upsertingPendingChange(path: Self.repositoryPath(selection: selection, storeRelativePath: task.relativePath),
                     content: document.content, baseBlobSHA: original.blobSHA, in: pendingChanges, at: now())
             }
+            // Retired-directory task versions may exist only in the outbox or conflict evidence.
+            // Remove their body associations too, so a later keep-local relocation cannot restore the discarded import.
+            for index in pendingChanges.indices {
+                let pending = pendingChanges[index]
+                guard let content = pending.content,
+                      let taskPath = try? Self.storeRelativePath(for: pending.path, selection: selection),
+                      (try? Self.taskIDFromBasename(for: taskPath)) != nil else { continue }
+                let unlinked = AttachmentLinks.unlinkRecord(content: content, taskPath: taskPath, path: relativePath,
+                    storePrefix: workspace.configuration.obsidianLinkPrefix)
+                if unlinked != content {
+                    pendingChanges[index] = try PendingChange(id: pending.id, path: pending.path, baseBlobSHA: pending.baseBlobSHA,
+                        content: unlinked, createdAt: pending.createdAt)
+                }
+            }
             let conflicts = try workspace.conflicts.filter { $0.path != path }.map { existing in
-                guard existing.localContent != nil, let pending = pendingChanges.first(where: { $0.path == existing.path }) else { return existing }
+                guard let localContent = existing.localContent,
+                      let taskPath = try? Self.storeRelativePath(for: existing.path, selection: selection),
+                      (try? Self.taskIDFromBasename(for: taskPath)) != nil else { return existing }
+                let latestContent = pendingChanges.first(where: { $0.path == existing.path })?.content ?? localContent
+                let unlinked = AttachmentLinks.unlinkRecord(content: latestContent, taskPath: taskPath, path: relativePath,
+                    storePrefix: workspace.configuration.obsidianLinkPrefix)
                 return try SyncConflict(path: existing.path, baseBlobSHA: existing.baseBlobSHA, remoteBlobSHA: existing.remoteBlobSHA,
-                    localPayload: pending.payload, remotePayload: existing.remotePayload)
+                    localPayload: .text(unlinked), remotePayload: existing.remotePayload)
             }
             let updated = try Self.replacing(workspace, tasks: tasks, pendingChanges: pendingChanges, conflicts: conflicts)
             try await persistence.save(updated, expectedRevision: workspace.revision)

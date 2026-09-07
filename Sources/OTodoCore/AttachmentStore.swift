@@ -203,9 +203,11 @@ public actor AttachmentStore {
         let protected = Set(workspace.pendingChanges.compactMap { $0.payload.binaryFile?.localReference }
             + workspace.conflicts.flatMap { [$0.localPayload.binaryFile?.localReference, $0.remotePayload.binaryFile?.localReference].compactMap { $0 } })
         let cached = try AttachmentDiskLock.withLock(rootURL: rootURL) { try entries(selection: selection) }
-        var total = cached.reduce(0) { $0 + $1.file.byteSize }
-        for entry in cached.sorted(by: { $0.accessedAt < $1.accessedAt }) where total > cacheBudget {
-            guard !entry.pinned, !protected.contains(entry.file.localReference) else { continue }
+        // Pins and durable imports are exempt from both eviction and the ordinary cache budget.
+        // Counting them would evict every new download once exempt files exceeded the budget.
+        let evictable = cached.filter { !$0.pinned && !protected.contains($0.file.localReference) }
+        var total = evictable.reduce(0) { $0 + $1.file.byteSize }
+        for entry in evictable.sorted(by: { $0.accessedAt < $1.accessedAt }) where total > cacheBudget {
             let removed = try AttachmentDiskLock.withLock(rootURL: rootURL) {
                 guard let current = try loadEntry(path: entry.path, selection: selection), !current.pinned,
                       current.file == entry.file, current.accessedAt == entry.accessedAt else { return false }

@@ -55,6 +55,24 @@ public enum AttachmentLinks {
         return result as String
     }
 
+    /// Rewrites only the body of durable raw task evidence, including records in a retired task directory.
+    static func unlinkRecord(content: String, taskPath: String, path: String, storePrefix: String) -> String {
+        let opening: Int
+        if content.hasPrefix("---\r\n") { opening = 5 }
+        else if content.hasPrefix("---\n") { opening = 4 }
+        else { return content }
+        var lineStart = content.index(content.startIndex, offsetBy: opening)
+        while let newline = content[lineStart...].firstIndex(of: "\n") {
+            let line = content[lineStart..<newline]
+            let next = content.index(after: newline)
+            if line == "---" || line == "---\r" {
+                return String(content[..<next]) + unlink(body: String(content[next...]), taskPath: taskPath, path: path, storePrefix: storePrefix)
+            }
+            lineStart = next
+        }
+        return content
+    }
+
     public static func append(body: String, taskPath: String, path: String, displayName: String) throws -> String {
         try validate(path: path)
         if references(body: body, taskPath: taskPath).contains(where: { $0.path == path }) { return body }

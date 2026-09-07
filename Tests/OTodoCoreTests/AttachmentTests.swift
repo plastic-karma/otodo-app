@@ -59,6 +59,30 @@ final class AttachmentTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testTaskUpdateOverloadAddsAndRemovesAttachmentsInOneSave() async throws {
+        let f = try await Fixture()
+        defer { f.cleanup() }
+        let old = try await f.bytes.stage(data: Data([1]), filename: "old.pdf", selection: f.selection)
+        let task = try await f.service.addTask(selection: f.selection, name: "Original", attachments: [old])
+        let before = try await f.service.loadWorkspace(selection: f.selection)
+        let added = try await f.bytes.stage(data: Data([2, 3]), filename: "replacement.pdf", selection: f.selection)
+        var update = TaskUpdate(task: task)
+        update.name = "Updated from the editor"
+        // This is the exact TaskUpdate-based overload invoked by AppModel's editor save.
+        let edited = try await f.service.editTask(selection: f.selection, id: task.id, expectedTask: task,
+            update: update, attachments: [added], removingAttachmentPaths: [old.path])
+        let after = try await f.service.loadWorkspace(selection: f.selection)
+        XCTAssertEqual(after.revision, before.revision + 1)
+        XCTAssertEqual(edited.name, update.name)
+        XCTAssertEqual(AttachmentLinks.references(body: edited.body, taskPath: edited.relativePath).map(\.path), [added.path])
+        XCTAssertEqual(after.tasks.first?.task, edited)
+        XCTAssertEqual(after.pendingChanges.first { $0.path == "todos/" + added.path }?.payload, .binaryFile(added.localFile))
+        XCTAssertEqual(after.pendingChanges.first { $0.path == "todos/" + task.relativePath }?.id,
+            before.pendingChanges.first { $0.path == "todos/" + task.relativePath }?.id)
+        let retained = try await f.bytes.read(old.localFile, selection: f.selection)
+        XCTAssertEqual(retained, Data([1]))
+    }
+
     func testBytesSurviveContainerRelocationAndFailedTaskSave() async throws {
         let f = try await Fixture()
         defer { f.cleanup() }
@@ -189,6 +213,42 @@ final class AttachmentTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(bytes, Data([42]))
         let commits = await f.remote.committed()
         XCTAssertTrue(commits.isEmpty)
+    }
+
+    func testPinsAndPendingImportsDoNotConsumeTheEvictableBudget() async throws {
+        let f = try await Fixture(cacheBudget: 3)
+        defer { f.cleanup() }
+        let pinned = try await f.bytes.stage(data: Data(repeating: 1, count: 6), filename: "pinned.pdf", selection: f.selection)
+        _ = try await f.service.addTask(selection: f.selection, name: "Pinned", attachments: [pinned])
+        _ = try await f.engine.sync(selection: f.selection)
+        try await f.bytes.setPinned(path: "todos/" + pinned.path, selection: f.selection, pinned: true)
+        let pending = try await f.bytes.stage(data: Data(repeating: 2, count: 5), filename: "pending.pdf", selection: f.selection)
+        _ = try await f.service.addTask(selection: f.selection, name: "Pending", attachments: [pending])
+        try await f.bytes.retainVerified(pending.localFile, path: "todos/" + pending.path, selection: f.selection)
+        let workspace = try await f.service.loadWorkspace(selection: f.selection)
+
+        let oldPath = "todos/Attachments/old.pdf", newPath = "todos/Attachments/new.pdf"
+        await f.remote.putAttachment(path: oldPath, data: Data([3, 3]))
+        await f.remote.putAttachment(path: newPath, data: Data([4, 4]))
+        let snapshot = try await f.remote.fetchSnapshot(selection: f.selection)
+        let oldMetadata = try XCTUnwrap(snapshot.attachments.first { $0.path == oldPath })
+        let newMetadata = try XCTUnwrap(snapshot.attachments.first { $0.path == newPath })
+        let old = try await f.bytes.download(attachment: oldMetadata, selection: f.selection, gitHub: f.remote)
+        try await f.bytes.evict(selection: f.selection, workspace: workspace)
+        XCTAssertEqual(try Data(contentsOf: old.url), Data([3, 3]))
+
+        let new = try await f.bytes.download(attachment: newMetadata, selection: f.selection, gitHub: f.remote)
+        try await f.bytes.evict(selection: f.selection, workspace: workspace)
+        XCTAssertEqual(try Data(contentsOf: new.url), Data([4, 4]))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: old.url.path))
+        // The app opens and evicts before offering Keep offline; the downloaded entry must still exist.
+        try await f.bytes.setPinned(path: newPath, selection: f.selection, pinned: true)
+        let kept = try await f.bytes.cachedFile(path: newPath, selection: f.selection)
+        XCTAssertEqual(kept?.isPinned, true)
+        let protected = try await f.bytes.cachedFile(path: "todos/" + pending.path, selection: f.selection)
+        XCTAssertNotNil(protected)
+        let pinnedData = try await f.bytes.read(pinned.localFile, selection: f.selection)
+        XCTAssertEqual(pinnedData.count, 6)
     }
 
     func testPinnedReplacementFailureRetainsOlderVersionAndEvictionProtectsPendingAndPins() async throws {
@@ -328,6 +388,39 @@ final class AttachmentTests: XCTestCase, @unchecked Sendable {
         _ = try await f.engine.sync(selection: f.selection)
         let committed = await f.remote.committed()
         XCTAssertFalse(committed.flatMap { $0 }.contains { $0.content?.contains(draft.path) == true })
+    }
+
+    func testDiscardImportRewritesRetiredTaskConflictBodyWithoutChangingFrontmatter() async throws {
+        let f = try await Fixture()
+        defer { f.cleanup() }
+        let draft = try await f.bytes.stage(data: Data([1]), filename: "retired.pdf", selection: f.selection)
+        let task = try await f.service.addTask(selection: f.selection, name: "Retired", attachments: [draft])
+        let state = try await f.service.loadWorkspace(selection: f.selection)
+        let document = try XCTUnwrap(state.tasks.first)
+        let custom = "attachments: \"[[\(draft.path)]]\"\n"
+        let raw = "---\n" + custom + String(document.content.dropFirst(4))
+        let moved = try StoreConfiguration(schemaVersion: 1, tasksDirectory: "Work", projectsDirectory: "Projects",
+            obsidianLinkPrefix: "", defaultState: "open", states: state.configuration.states)
+        let taskPath = "todos/" + task.relativePath, binaryPath = "todos/" + draft.path
+        let pending = try state.pendingChanges.map { operation in
+            operation.path == taskPath ? try PendingChange(id: operation.id, path: operation.path, baseBlobSHA: "old-base", content: raw, createdAt: operation.createdAt) : operation
+        }
+        let conflicts = [try SyncConflict(path: taskPath, baseBlobSHA: "old-base", remoteBlobSHA: nil, localContent: raw, remoteContent: nil),
+            try SyncConflict(path: binaryPath, baseBlobSHA: nil, remoteBlobSHA: "collision", localPayload: .binaryFile(draft.localFile),
+                remotePayload: .remoteBinary(AttachmentMetadata(path: binaryPath, blobSHA: "collision", byteSize: 1)))]
+        let retired = try WorkspaceState(selection: state.selection, configuration: moved, tasks: [],
+            baseHeadCommitSHA: state.baseHeadCommitSHA, baseRootTreeSHA: state.baseRootTreeSHA,
+            pendingChanges: pending, conflicts: conflicts, revision: state.revision + 1)
+        try await f.persistence.save(retired, expectedRevision: state.revision)
+        let discarded = try await f.service.useRemoteConflict(selection: f.selection, path: binaryPath)
+        let remaining = try XCTUnwrap(discarded.pendingChanges.first)
+        XCTAssertEqual(remaining.id, pending.first { $0.path == taskPath }?.id)
+        XCTAssertEqual(remaining.createdAt, pending.first { $0.path == taskPath }?.createdAt)
+        XCTAssertTrue(try XCTUnwrap(remaining.content).hasPrefix("---\n" + custom))
+        let restored = try await f.service.keepLocalConflict(selection: f.selection, path: taskPath)
+        XCTAssertEqual(restored.tasks.first?.task.relativePath, "Work/" + task.id.rawValue + ".md")
+        XCTAssertTrue(AttachmentLinks.references(body: try XCTUnwrap(restored.tasks.first).task.body, taskPath: "Work/" + task.id.rawValue + ".md").isEmpty)
+        XCTAssertEqual(restored.tasks.first?.task.extraProperties.first { $0.name == "attachments" }?.value, .string("[[\(draft.path)]]"))
     }
 
     func testDirectoryAndAncestorSymlinkCollisionsPublishNothing() async throws {

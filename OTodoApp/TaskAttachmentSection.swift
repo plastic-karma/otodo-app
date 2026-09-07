@@ -199,7 +199,12 @@ private struct AttachmentRow: View {
             if let failure { Text(failure).font(.caption).foregroundStyle(.red) }
         }
         .quickLookPreview($previewURL)
-        .task(id: model.attachmentCatalog) { await refreshCachedFile() }
+        .task(id: CacheRefreshKey(catalog: model.attachmentCatalog, revision: model.attachmentCacheRevision)) { await refreshCachedFile() }
+    }
+
+    private struct CacheRefreshKey: Equatable {
+        let catalog: [AttachmentMetadata]
+        let revision: UInt64
     }
 
     private var status: String {

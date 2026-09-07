@@ -40,6 +40,7 @@ final class AppModel {
     private(set) var pendingChangeCount = 0
     private(set) var attachmentCatalog: [AttachmentMetadata] = []
     private(set) var attachmentRefreshErrors: [String] = []
+    private(set) var attachmentCacheRevision: UInt64 = 0
     private(set) var conflictCount = 0
     private(set) var conflicts: [SyncConflict] = []
     private(set) var isOnline: Bool
@@ -1100,6 +1101,7 @@ final class AppModel {
             if let authenticatedGitHub {
                 let failures = await attachmentStore.refreshPinned(attachments: workspace.attachments, selection: selection, gitHub: authenticatedGitHub)
                 guard sessionID == operationSession else { return }
+                attachmentCacheRevision &+= 1
                 attachmentRefreshErrors = failures.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }
                 try? await attachmentStore.evict(selection: selection, workspace: workspace)
             }
