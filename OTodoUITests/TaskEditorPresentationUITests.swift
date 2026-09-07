@@ -105,6 +105,7 @@ final class TaskEditorPresentationUITests: XCTestCase {
         name.tap()
         name.typeText("Review schedule\n")
         openPanel("schedule", revealing: "task-editor-relative-due-date", in: app)
+        attachScreenshot(in: app, name: "Recurrence reset preserves Stats history")
         let relative = app.textFields["task-editor-relative-due-date"]
         relative.tap()
         relative.typeText("in 6 hours")

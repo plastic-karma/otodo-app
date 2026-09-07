@@ -188,7 +188,7 @@ In the todo editor, open **Schedule**, choose **Repeat → Daily, Weekly, Monthl
 
 Tap the circle or choose **Done** to complete the current occurrence. OTodo advances the same task record, keeps its parent, exact due time, notes, projects, tags, and custom front matter, records the completion date, and returns it to the configured default state. The next date is strictly after the completion day (and after the current due date when counting from schedule). The change is durable offline and uses the normal coalesced outbox; reminders, Today widgets, and Watch snapshots then reflect the next due date.
 
-Touch and hold an open recurring todo and choose **Finish series**, or select a terminal State in the editor, to end the series without scheduling another occurrence. Reopening restores the existing date and rule. **Repeat → None** removes the rule, anchor, and completion history and makes it a one-off todo. Invalid rules, dates outside the supported calendar, stale edits, or unresolved conflicts leave the saved task unchanged.
+Touch and hold an open recurring todo and choose **Finish series**, or select a terminal State in the editor, to end the series without scheduling another occurrence. Reopening restores the existing date and rule. **Repeat → None** removes the recurrence rule, anchor, and `last_completed_date` scheduling marker and makes it a one-off todo. Previously recorded Stats completions in `otodo_completion_history` are retained. Invalid rules, dates outside the supported calendar, stale edits, or unresolved conflicts leave the saved task unchanged.
 
 ## Saved filters
 

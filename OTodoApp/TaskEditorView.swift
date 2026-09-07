@@ -893,7 +893,7 @@ private struct TaskRecurrenceFields: View {
                         + " Choose a terminal State to finish the series without scheduling another occurrence."
                     )
                 } else {
-                    Text("None makes this a one-off todo and clears its completion history.")
+                    Text("None makes this a one-off todo. Previously recorded completions stay in Stats.")
                 }
             }
             .font(.footnote)
