@@ -81,6 +81,7 @@ struct TaskEditorView: View {
     @State private var recurrenceError: String?
     @State private var recurrenceRule: RecurrenceRule?
     @State private var initialRecurrenceSettings: TaskRecurrenceFields.Settings
+    @State private var isEditorPresented = true
     @State private var isImportingAttachments = false
     @State private var isSaving = false
     @State private var saveError: String?
@@ -300,7 +301,8 @@ struct TaskEditorView: View {
                     if let attachmentModel, let attachmentSelection, AttachmentLinks.enabled(configuration: configuration) {
                         TaskAttachmentSection(
                             model: attachmentModel, selection: attachmentSelection,
-                            draft: $draft, configuration: configuration, isImporting: $isImportingAttachments
+                            draft: $draft, configuration: configuration, isImporting: $isImportingAttachments,
+                            isEditorPresented: $isEditorPresented
                         )
                     }
 
@@ -365,7 +367,9 @@ struct TaskEditorView: View {
                 }
             }
         }
+        .onAppear { isEditorPresented = true }
         .onDisappear {
+            isEditorPresented = false
             if let attachmentModel, let attachmentSelection {
                 let drafts = draft.attachments
                 Task { await attachmentModel.discardAttachmentDrafts(drafts, selection: attachmentSelection) }

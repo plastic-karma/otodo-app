@@ -6,7 +6,7 @@ final class OTodoUITests: XCTestCase {
     func testAttachmentSelectionSavesOfflineAndClearsForAnotherTodo() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace", "-ui-testing-attachment-import"]
+        app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace", "-ui-testing-attachment-import", "-ui-testing-slow-attachment-import"]
         app.launch()
         XCTAssertTrue(app.buttons["task-add"].waitForExistence(timeout: 10))
         app.buttons["task-add"].tap()
@@ -22,6 +22,13 @@ final class OTodoUITests: XCTestCase {
         }
         XCTAssertTrue(sample.isHittable)
         sample.tap()
+        // An import belongs to the editor even while its section scrolls offscreen.
+        editor.swipeDown()
+        editor.swipeDown()
+        for _ in 0..<8 {
+            if sample.isHittable { break }
+            editor.swipeUp()
+        }
         XCTAssertTrue(app.staticTexts["sample.txt"].waitForExistence(timeout: 5))
         app.buttons["task-editor-save-another"].tap()
         XCTAssertTrue(app.staticTexts["task-editor-saved-confirmation"].waitForExistence(timeout: 5))

@@ -16,7 +16,7 @@ struct TaskAttachmentSection: View {
     @State private var photos: [PhotosPickerItem] = []
     @Binding var isImporting: Bool
     @State private var importError: String?
-    @State private var isVisible = true
+    @Binding var isEditorPresented: Bool
 
     private var links: [AttachmentLink] {
         let path = draft.preservedTask?.relativePath ?? configuration.tasksDirectory + "/draft.md"
@@ -58,7 +58,10 @@ struct TaskAttachmentSection: View {
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-attachment-import") {
                 Button("Import Sample File") {
                     importOperation {
-                        [try await model.attachmentStore.stage(
+                        if ProcessInfo.processInfo.arguments.contains("-ui-testing-slow-attachment-import") {
+                            try await Task.sleep(for: .milliseconds(1500))
+                        }
+                        return [try await model.attachmentStore.stage(
                             data: Data("Attachment UI test\n".utf8), filename: "sample.txt", selection: selection
                         )]
                     }
@@ -111,8 +114,6 @@ struct TaskAttachmentSection: View {
             }
             photos = []
         }
-        .onAppear { isVisible = true }
-        .onDisappear { isVisible = false }
     }
 
     private func importOperation(_ operation: @escaping @MainActor () async throws -> [AttachmentDraft]) {
@@ -123,7 +124,7 @@ struct TaskAttachmentSection: View {
             defer { isImporting = false }
             do {
                 let staged = try await operation()
-                if isVisible { draft.attachments.append(contentsOf: staged) }
+                if isEditorPresented { draft.attachments.append(contentsOf: staged) }
                 else { await model.discardAttachmentDrafts(staged, selection: selection) }
             } catch { importError = error.localizedDescription }
         }
