@@ -321,7 +321,7 @@ def run_group(output, group, products=None):
     command = [
         "xcodebuild", "test-without-building", "-xctestrun", str(products / manifest["xctestrun"]),
         "-destination", f"platform=iOS Simulator,id={state['id']}", "-destination-timeout", "60",
-        "-resultBundlePath", str(result), "-parallel-testing-enabled", "NO", "-test-iterations", "1",
+        "-resultBundlePath", str(result), "-parallel-testing-enabled", "NO",
         "-test-timeouts-enabled", "YES", "-default-test-execution-time-allowance", "360",
         "-maximum-test-execution-time-allowance", "600", "-collect-test-diagnostics", "on-failure",
         *[f"-only-testing:{test}" for test in expected],

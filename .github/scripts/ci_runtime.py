@@ -241,6 +241,7 @@ def run_command(arguments, *, stage, timeout, log_path=None, capture=False, env=
     returncode = 1
     timed_out = False
     startup_timed_out = False
+    output_drained = True
     cancellation = [None]
     key = uuid.uuid4().hex
     _ACTIVE[key] = cancellation
@@ -272,11 +273,12 @@ def run_command(arguments, *, stage, timeout, log_path=None, capture=False, env=
         drain_at = None
         while selector.get_map() or process.poll() is None:
             now = time.monotonic()
+            running = process.poll() is None
             if cancellation[0] is None and cancel_event is not None and cancel_event.is_set():
                 cancellation[0] = signal.SIGTERM
             startup_expired = (startup_timeout is not None and now >= started + startup_timeout
                                and (evidence.startup_seconds is None or evidence.startup_seconds > startup_timeout))
-            if stop_at is None and (cancellation[0] is not None or now >= deadline or startup_expired):
+            if stop_at is None and (cancellation[0] is not None or (running and (now >= deadline or startup_expired))):
                 timed_out = cancellation[0] is None
                 startup_timed_out = timed_out and startup_expired
                 returncode = 124 if timed_out else 128 + cancellation[0]
@@ -286,14 +288,27 @@ def run_command(arguments, *, stage, timeout, log_path=None, capture=False, env=
                     evidence.issue(f"{stage} exceeded its {timeout:g}s deadline" if timed_out else f"{stage} cancelled by signal {cancellation[0]}")
                 _kill_group(process, signal.SIGTERM)
                 stop_at = now
-            if stop_at is None and process.poll() is not None and selector.get_map():
+            if stop_at is None and not running and selector.get_map():
                 if drain_at is None:
                     drain_at = now + 2
                 elif now >= drain_at:
-                    returncode = process.returncode or 1
-                    evidence.issue(f"{stage} exited but descendants kept output streams open")
-                    _kill_group(process, signal.SIGTERM)
-                    stop_at = now
+                    # Launchers such as simctl can finish successfully while
+                    # OS-managed services retain their inherited descriptors.
+                    # Their parent status is authoritative; EOF is not another
+                    # operation to wait for or a reason to invent a failure.
+                    output_drained = False
+                    for selected in list(selector.get_map().values()):
+                        state = selected.data
+                        remaining = state["decoder"].decode(b"", final=True)
+                        if remaining:
+                            state["destination"].write(remaining)
+                            state["destination"].flush()
+                            if capture and state["stdout"]:
+                                captured.append(remaining)
+                            state["pending"] += remaining
+                        if state["pending"]:
+                            evidence.consume(state["pending"])
+                    break
             if stop_at is not None and kill_at is None and now >= stop_at + 3:
                 _kill_group(process, signal.SIGKILL)
                 kill_at = now
@@ -374,6 +389,8 @@ def run_command(arguments, *, stage, timeout, log_path=None, capture=False, env=
         _restore_handlers()
         metrics.update({"completed_at": _utc_now(), "elapsed_seconds": round(time.monotonic() - started, 3),
                         "returncode": returncode, "timed_out": timed_out, "first_issue": evidence.first_issue,
+                        "process_exit_code": process.returncode if process is not None else None,
+                        "output_drained": output_drained,
                         "startup_seconds": round(evidence.startup_seconds, 3) if evidence.startup_seconds is not None else None,
                         "startup_timed_out": startup_timed_out,
                         "first_output_seconds": evidence.first_output_seconds,

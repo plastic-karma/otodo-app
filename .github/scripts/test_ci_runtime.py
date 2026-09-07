@@ -237,6 +237,32 @@ class RuntimeTests(unittest.TestCase):
                         {"identifier": "Target/Class/testGood", "status": "passed", "duration_seconds": 0.01},
                     ])
 
+    def test_successful_launcher_does_not_fail_on_inherited_service_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            release, finished = root / "release", root / "finished"
+            child = (
+                "import sys,time; from pathlib import Path; "
+                "release,finished=map(Path,sys.argv[1:]); deadline=time.monotonic()+6;\n"
+                "while not release.exists() and time.monotonic()<deadline: time.sleep(.02)\n"
+                "finished.touch()"
+            )
+            launcher = "import subprocess,sys; subprocess.Popen([sys.executable,'-c',*sys.argv[1:]])"
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(RUNTIME), "run", "--stage", "service-launch", "--timeout", "10", "--",
+                     sys.executable, "-c", launcher, child, str(release), str(finished)],
+                    env={**os.environ, "CI_RESULTS_DIR": directory}, capture_output=True, timeout=15,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                self.assertNotIn(b"::error", result.stderr)
+            finally:
+                release.touch()
+                deadline = time.monotonic() + 8
+                while not finished.exists() and time.monotonic() < deadline:
+                    time.sleep(.02)
+            self.assertTrue(finished.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
