@@ -492,12 +492,18 @@ struct TaskListView: View {
         return (projects.sorted(), inferred?.tags ?? [])
     }
 
+    private var creationDueDate: CivilDate? {
+        guard !isUpcoming, selectedFilterID == "today" else { return nil }
+        return TaskSchedule.civilDate(from: .now)
+    }
+
     private func presentNewTodo() {
         guard let configuration = model.configuration else { return }
         let defaults = creationDefaults
         var draft = TaskEditorDraft(configuration: configuration)
         draft.projectSlugs = defaults.projectSlugs
         draft.tags = defaults.tags
+        draft.dueDate = creationDueDate
         editorPresentation = .create(draft, id: UUID())
     }
 
@@ -508,6 +514,7 @@ struct TaskListView: View {
         draft.projectSlugs = defaults.projectSlugs
         draft.tags = defaults.tags
         draft.parentID = task.id
+        draft.dueDate = creationDueDate
         editorPresentation = .create(draft, id: UUID())
     }
 

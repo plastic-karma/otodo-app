@@ -1,0 +1,103 @@
+import Foundation
+import XCTest
+
+final class TodayCreationUITests: XCTestCase {
+    @MainActor
+    func testTodayCreationPersistsAndExplicitDateWinsWithoutLeakingToOtherViews() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace"]
+        app.launch()
+        defer { app.terminate() }
+
+        let today = app.buttons["task-filter-today"]
+        XCTAssertTrue(today.waitForExistence(timeout: 8))
+        XCTAssertTrue(today.isSelected)
+        create("Finish draft", in: app)
+        let created = row("Finish draft", in: app)
+        XCTAssertTrue(created.waitForExistence(timeout: 8), "A new Today todo must stay visible after saving")
+        XCTAssertTrue(created.label.contains("Due: \(dateString(dayOffset: 0))"))
+        XCTAssertFalse(created.label.contains(" at "), "Today supplies a date, not an exact time")
+
+        let snapshot = XCTAttachment(screenshot: app.screenshot())
+        snapshot.name = "New todo remains in Today"
+        snapshot.lifetime = .keepAlways
+        add(snapshot)
+
+        create("Call editor tomorrow", in: app)
+        app.buttons["task-filter-active"].tap()
+        let tomorrow = row("Call editor", in: app)
+        reveal(tomorrow, in: app)
+        XCTAssertTrue(tomorrow.waitForExistence(timeout: 8))
+        XCTAssertTrue(tomorrow.label.contains("Due: \(dateString(dayOffset: 1))"), "An explicit phrase overrides the view's default date")
+
+        create("Someday review", in: app)
+        let undated = row("Someday review", in: app)
+        reveal(undated, in: app)
+        XCTAssertTrue(undated.waitForExistence(timeout: 8))
+        XCTAssertFalse(undated.label.contains("Due:"), "Active must not reuse Today's date default")
+
+        // Upcoming can retain Today as its selected filter; the mode must still win.
+        let list = app.descendants(matching: .any).matching(identifier: "task-list").firstMatch
+        for _ in 0..<6 where !today.isHittable { list.swipeDown() }
+        app.buttons["task-filter-today"].tap()
+        app.buttons["project-sidebar-toggle"].tap()
+        let upcoming = app.buttons["upcoming-open"]
+        XCTAssertTrue(upcoming.waitForExistence(timeout: 8))
+        upcoming.tap()
+        create("Weekly planning", in: app)
+
+        app.terminate()
+        app.launchArguments = ["-ui-testing"]
+        app.launch()
+        XCTAssertTrue(today.waitForExistence(timeout: 8))
+        XCTAssertTrue(created.waitForExistence(timeout: 8), "Today's due date must survive offline relaunch")
+        XCTAssertTrue(created.label.contains("Due: \(dateString(dayOffset: 0))"))
+        XCTAssertFalse(tomorrow.exists)
+        XCTAssertFalse(undated.exists)
+        app.buttons["task-filter-active"].tap()
+        let upcomingCreated = row("Weekly planning", in: app)
+        reveal(upcomingCreated, in: app)
+        XCTAssertTrue(upcomingCreated.waitForExistence(timeout: 8))
+        XCTAssertFalse(upcomingCreated.label.contains("Due:"), "Upcoming creation must remain undated")
+    }
+
+    @MainActor
+    private func create(_ name: String, in app: XCUIApplication) {
+        let add = app.buttons["task-add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 8))
+        add.tap()
+        let title = app.textFields["task-editor-name"]
+        XCTAssertTrue(title.waitForExistence(timeout: 8))
+        title.tap()
+        title.typeText(name)
+        let save = app.buttons["task-editor-save"]
+        XCTAssertTrue(save.isEnabled)
+        save.tap()
+        XCTAssertTrue(title.waitForNonExistence(timeout: 8))
+    }
+
+    @MainActor
+    private func row(_ name: String, in app: XCUIApplication) -> XCUIElement {
+        app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@",
+            "task-row-", "\(name). State: Pending"
+        )).firstMatch
+    }
+
+    @MainActor
+    private func reveal(_ row: XCUIElement, in app: XCUIApplication) {
+        if row.waitForExistence(timeout: 2) { return }
+        let list = app.descendants(matching: .any).matching(identifier: "task-list").firstMatch
+        for _ in 0..<6 where !row.exists { list.swipeUp() }
+        for _ in 0..<6 where !row.exists { list.swipeDown() }
+    }
+
+    private func dateString(dayOffset: Int) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        let date = calendar.date(byAdding: .day, value: dayOffset, to: .now)!
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", components.year!, components.month!, components.day!)
+    }
+}
