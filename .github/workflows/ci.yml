@@ -10,6 +10,11 @@ on:
         required: false
         default: false
         type: boolean
+      test_filter:
+        description: Optional Xcode test identifier for focused diagnosis (blank runs the full suite)
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -206,20 +211,27 @@ jobs:
             GITHUB_CLIENT_ID="$GH_OAUTH_CLIENT_ID"
 
       - name: Run UI tests without rebuilding
+        env:
+          TEST_FILTER: ${{ inputs.test_filter }}
         run: |
           set -euo pipefail
+          test_arguments=()
+          if [ -n "$TEST_FILTER" ]; then
+            test_arguments+=("-only-testing:$TEST_FILTER")
+          fi
           xcodebuild test-without-building \
             -project "$PROJECT" \
             -scheme "$SCHEME" \
             -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -resultBundlePath "$RUNNER_TEMP/xcode-results/test.xcresult" \
+            "${test_arguments[@]}" \
             CODE_SIGNING_ALLOWED=YES \
             CODE_SIGN_IDENTITY=- \
             GITHUB_CLIENT_ID="$GH_OAUTH_CLIENT_ID"
 
       - name: Export UI snapshots
-        if: ${{ !cancelled() && inputs.export_ui_snapshots }}
+        if: ${{ !cancelled() && (inputs.export_ui_snapshots || failure()) }}
         run: |
           set -euo pipefail
           if [ ! -d "$RUNNER_TEMP/xcode-results/test.xcresult" ]; then
@@ -232,7 +244,7 @@ jobs:
             --output-path "$output"
 
       - name: Upload UI snapshots
-        if: ${{ !cancelled() && inputs.export_ui_snapshots }}
+        if: ${{ !cancelled() && (inputs.export_ui_snapshots || failure()) }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ui-snapshots

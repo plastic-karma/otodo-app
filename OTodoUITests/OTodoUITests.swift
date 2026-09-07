@@ -14,12 +14,18 @@ final class OTodoUITests: XCTestCase {
         let name = app.textFields["task-editor-name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         name.tap()
-        name.typeText("Attachment capture")
+        name.typeText("Attachment capture\n")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
         let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
         let sample = app.buttons["attachment-import-sample"]
         for _ in 0..<8 {
             if sample.isHittable { break }
-            editor.swipeUp()
+            editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+                .press(forDuration: 0.1, thenDragTo: editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35)))
+        }
+        if !sample.isHittable {
+            print(app.debugDescription)
+            attachDiagnostics(in: app, name: "Attachment import control was not reachable")
         }
         XCTAssertTrue(sample.isHittable)
         sample.tap()
@@ -33,6 +39,8 @@ final class OTodoUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["sample.txt"].waitForExistence(timeout: 5))
         app.buttons["task-editor-save-another"].tap()
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-editor-saved-confirmation").firstMatch.waitForExistence(timeout: 5))
+        name.typeText("\n")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
         for _ in 0..<8 {
             if sample.isHittable { break }
             editor.swipeUp()
