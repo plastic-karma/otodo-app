@@ -360,7 +360,7 @@ public actor TaskWorkspaceService {
                 projectSlugs: projectSlugs,
                 tags: tags,
                 dueDate: detected?.dueDate,
-                dueTime: nil,
+                dueTime: detected?.dueTime,
                 recurrence: nil,
                 recurrenceFrom: nil,
                 lastCompletedDate: nil,

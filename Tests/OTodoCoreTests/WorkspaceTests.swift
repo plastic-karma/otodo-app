@@ -361,7 +361,7 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
 
         let added = try await service.addTasks(
             selection: selection,
-            names: [" \t ", "  Buy milk tomorrow  ", "", "Call Alex tomorrow", "Read 2026-10-01"],
+            names: [" \t ", "  Buy milk tomorrow at 14:30  ", "", "Call Alex in 2 minutes", "Read 2026-10-01"],
             projectSlugs: defaults.projectSlugs,
             tags: defaults.tags,
             calendar: calendar
@@ -371,6 +371,11 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(added.map(\.dueDate), [
             try CivilDate(rawValue: "2026-09-06"),
             try CivilDate(rawValue: "2026-09-06"),
+            nil,
+        ])
+        XCTAssertEqual(added.map(\.dueTime), [
+            try CivilTime(rawValue: "14:30"),
+            try CivilTime(rawValue: "00:01"),
             nil,
         ])
         let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
