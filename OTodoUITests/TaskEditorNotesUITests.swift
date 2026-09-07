@@ -35,7 +35,7 @@ final class TaskEditorNotesUITests: XCTestCase {
         XCTAssertEqual(notes.value as? String, original)
 
         // Changing the title's detected-date highlight exercises native attributed-text updates.
-        reveal(name, in: app, upwards: false)
+        reveal(name, in: app)
         name.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)).tap()
         name.typeText(" tomorrow")
         reveal(notes, in: app)
@@ -103,13 +103,7 @@ final class TaskEditorNotesUITests: XCTestCase {
     }
 
     @MainActor
-    private func reveal(_ element: XCUIElement, in app: XCUIApplication, upwards: Bool = true) {
-        let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
-        for _ in 0..<8 {
-            if element.exists && element.isHittable { break }
-            if upwards { editor.swipeUp() } else { editor.swipeDown() }
-        }
-        XCTAssertTrue(element.waitForExistence(timeout: 8))
-        XCTAssertTrue(element.isHittable)
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
+        app.revealTaskEditorElement(element)
     }
 }

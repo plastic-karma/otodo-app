@@ -217,6 +217,7 @@ struct TaskListView: View {
                             }
                             return model.errorMessage
                         }
+                        .id(presentation.id)
                         .presentationDetents([.large])
                     } else {
                         ContentUnavailableView(

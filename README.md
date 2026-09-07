@@ -23,7 +23,7 @@ Tap **+** to add a todo. Touch and hold **+** to choose **New Todo**, **Bulk Add
 
 In the **New Todo** editor, **Save & Create Another** saves without closing, confirms the save, and returns focus to a fresh name. It keeps the selected parent, state, projects, and tags, but clears notes, recurrence, and the previous todo's schedule. From **Today**, the next draft starts due today again; other views start undated. Normal **Save** still saves and closes; editing an existing todo does not offer repeated creation.
 
-Tap **Notes** to write or edit multiline Markdown after entering a title. Notes use the same durable offline save as the rest of the todo and remain available after restarting the app.
+The new/edit editor starts with a prominent title and immediately editable Markdown notes. Tap **Add notes…** to write multiple lines; notes use the same durable offline save as the rest of the todo and remain available after restarting the app. **Schedule** expands date, optional time, relative-date entry for new todos, and repeat controls. **Details** expands state, parent, projects, and tags. Both rows summarize existing values while collapsed, and saving without opening either panel preserves those values. **Save & Create Another** returns to the focused, collapsed layout.
 
 Add OTodo's **Today** widget to the Home Screen to see active todos due today or overdue without opening the app. The widget refreshes when OTodo's tasks change and at the next local day boundary.
 
@@ -50,7 +50,7 @@ Desktop synchronization must include `Attachments/` along with tasks and project
 ## Subtasks
 
 Schema-2 stores support one optional parent per task at arbitrary depth. Choose
-**Add Subtask** on a task, or use the editor's **Parent** picker to attach,
+**Add Subtask** on a task, or use the editor's **Details → Parent** picker to attach,
 reparent, or choose **No Parent** to detach. Search covers the complete cached
 workspace, including terminal tasks and tasks outside the current filter.
 Candidates show their full IDs; the current task and its descendants are excluded.
@@ -119,7 +119,7 @@ The entire batch is validated and saved atomically to the normal durable outbox,
 
 ## Recurring todos
 
-In the todo editor, choose **Repeat → Daily, Weekly, Monthly, or Yearly**, enter a positive interval, and set a due date. Weekly rules can select weekdays; monthly and yearly rules can select days of the month; yearly rules can also select months. Empty selections use the anchor date's corresponding values. The current due date must match explicit selections before the todo can be saved.
+In the todo editor, open **Schedule**, choose **Repeat → Daily, Weekly, Monthly, or Yearly**, enter a positive interval, and set a due date. Weekly rules can select weekdays; monthly and yearly rules can select days of the month; yearly rules can also select months. Empty selections use the anchor date's corresponding values. The current due date must match explicit selections before the todo can be saved.
 
 **Count from → Scheduled date** retains the scheduled cadence and skips missed occurrences. **Completion date** starts from the day you complete the occurrence. Calendar dates that do not exist are skipped rather than shortened: a monthly January 31 occurrence advances to March 31, and a February 29 yearly occurrence waits for a leap year.
 

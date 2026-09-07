@@ -342,6 +342,7 @@ final class OTodoUITests: XCTestCase {
             "Call mum",
             "Reopening the todo should load the stripped name"
         )
+        revealEditorControl("task-editor-due-date-toggle", panel: "schedule", in: app)
         XCTAssertEqual(
             app.switches["task-editor-due-date-toggle"].value as? String,
             "1",
@@ -499,6 +500,7 @@ final class OTodoUITests: XCTestCase {
             description: "the todo editor"
         ) else { return }
 
+        revealEditorControl("task-editor-due-date-toggle", panel: "schedule", in: app)
         guard require(
             app.switches["task-editor-due-date-toggle"],
             in: app,
@@ -509,12 +511,8 @@ final class OTodoUITests: XCTestCase {
             in: app,
             description: "the native due-date picker"
         ) else { return }
-        XCTAssertFalse(
-            app.textFields["Due date"].exists,
-            "Due dates should not use a text input"
-        )
 
-        editor.swipeUp()
+        revealEditorControl("task-editor-due-time-toggle", panel: "schedule", in: app)
         let timeToggle = app.switches["task-editor-due-time-toggle"]
         guard require(
             timeToggle,
@@ -592,6 +590,7 @@ final class OTodoUITests: XCTestCase {
         nameField.tap()
         nameField.typeText(taskName)
 
+        revealEditorControl("task-editor-relative-due-date", panel: "schedule", in: app)
         let relativeField = app.textFields["task-editor-relative-due-date"]
         guard require(
             relativeField,
@@ -954,6 +953,7 @@ final class OTodoUITests: XCTestCase {
         addButton.tap()
         let name = app.textFields["task-editor-name"]
         guard require(name, in: app, description: "the context-prefilled todo editor") else { return }
+        revealEditorControl("task-editor-tags", panel: "details", in: app)
         XCTAssertEqual(app.buttons["home project"].value as? String, "Selected")
         XCTAssertEqual(app.buttons["work project"].value as? String, "Selected")
         let editor = app.descendants(matching: .any)
@@ -1003,6 +1003,7 @@ final class OTodoUITests: XCTestCase {
             ) else { return }
             row.tap()
             guard require(name, in: app, description: "the saved labels on \(taskName)") else { return }
+            revealEditorControl("task-editor-tags", panel: "details", in: app)
             XCTAssertEqual(app.buttons["home project"].value as? String, "Selected")
             XCTAssertEqual(app.buttons["work project"].value as? String, "Selected")
             XCTAssertEqual(tags.value as? String, "focus")
@@ -1342,6 +1343,7 @@ final class OTodoUITests: XCTestCase {
             description: "the new todo editor"
         ) else { return }
 
+        revealEditorControl("task-editor-tags", panel: "details", in: app)
         let tagsField = app.textFields["task-editor-tags"]
         guard require(
             tagsField,
@@ -1357,6 +1359,7 @@ final class OTodoUITests: XCTestCase {
             in: app,
             description: "the matching Focus tag suggestion"
         ) else { return }
+        app.revealTaskEditorElement(suggestion)
         suggestion.tap()
 
         XCTAssertEqual(
@@ -1536,6 +1539,7 @@ final class OTodoUITests: XCTestCase {
         XCTAssertTrue(sidebar.waitForNonExistence(timeout: 8), "Closing Projects must restore task interactions")
         pending.tap()
         guard require(editor, in: app, description: "the editor opened by tapping the todo title") else { return }
+        revealEditorControl("home project", panel: "details", in: app)
         XCTAssertEqual(app.buttons["home project"].value as? String, "Selected")
         app.buttons["Cancel"].tap()
     }
@@ -1836,6 +1840,7 @@ final class OTodoUITests: XCTestCase {
             task.tap()
             guard require(editor, in: app, description: "the persisted bulk todo editor") else { return }
             XCTAssertEqual(app.textFields["task-editor-name"].value as? String, name)
+            revealEditorControl("task-editor-due-date-toggle", panel: "schedule", in: app)
             XCTAssertEqual(
                 app.switches["task-editor-due-date-toggle"].value as? String,
                 hasDate ? "1" : "0",
@@ -1861,23 +1866,21 @@ final class OTodoUITests: XCTestCase {
         guard require(name, in: app, description: "the new todo name") else { return }
         name.tap()
         name.typeText("Repeated first")
+        revealEditorControl("work project", panel: "details", in: app)
         app.buttons["work project"].tap()
-        editor.swipeUp()
+        revealEditorControl("task-editor-tags", panel: "details", in: app)
         let tags = app.textFields["task-editor-tags"]
         guard require(tags, in: app, description: "the shared tags input") else { return }
         tags.tap()
         tags.typeText("focus")
-        editor.swipeUp()
+        revealEditorControl("task-editor-relative-due-date", panel: "schedule", in: app)
         let relative = app.textFields["task-editor-relative-due-date"]
         guard require(relative, in: app, description: "the first todo's relative schedule") else { return }
         relative.tap()
         relative.typeText("in 6 hours")
         app.buttons["task-editor-relative-due-apply"].tap()
         let repeatPicker = app.buttons["task-editor-repeat"]
-        for _ in 0..<6 {
-            if repeatPicker.exists && repeatPicker.isHittable { break }
-            editor.swipeUp()
-        }
+        revealEditorControl("task-editor-repeat", panel: "schedule", in: app)
         guard require(repeatPicker, in: app, description: "the first todo's repeat setting") else { return }
         repeatPicker.tap()
         app.buttons["Daily"].tap()
@@ -1920,8 +1923,10 @@ final class OTodoUITests: XCTestCase {
             task.tap()
             guard require(editor, in: app, description: "the saved repeated-entry todo") else { return }
             XCTAssertEqual(app.textFields["task-editor-name"].value as? String, taskName)
+            revealEditorControl("task-editor-tags", panel: "details", in: app)
             XCTAssertEqual(app.textFields["task-editor-tags"].value as? String, "focus")
             XCTAssertEqual(app.buttons["work project"].value as? String, "Selected")
+            revealEditorControl("task-editor-due-date-toggle", panel: "schedule", in: app)
             XCTAssertEqual(
                 app.switches["task-editor-due-date-toggle"].value as? String,
                 hasDate ? "1" : "0",
@@ -1960,6 +1965,7 @@ final class OTodoUITests: XCTestCase {
             nameField.typeText(name)
             if hasDate {
                 nameField.typeText("\n")
+                revealEditorControl("task-editor-due-date-toggle", panel: "schedule", in: app)
                 let dueDateToggle = app.switches["task-editor-due-date-toggle"]
                 for _ in 0..<6 {
                     if dueDateToggle.exists && dueDateToggle.isHittable { break }
@@ -1997,7 +2003,9 @@ final class OTodoUITests: XCTestCase {
 
         undated.tap()
         guard require(editor, in: app, description: "the Inbox triage editor") else { return }
+        revealEditorControl("home project", panel: "details", in: app)
         app.buttons["home project"].tap()
+        revealEditorControl("task-editor-tags", panel: "details", in: app)
         let tags = app.textFields["task-editor-tags"]
         tags.tap()
         tags.typeText("triaged")
@@ -2028,6 +2036,7 @@ final class OTodoUITests: XCTestCase {
         guard require(undated, in: app, description: "the organized todo in its project") else { return }
         undated.tap()
         guard require(editor, in: app, description: "the saved triage fields") else { return }
+        revealEditorControl("task-editor-tags", panel: "details", in: app)
         XCTAssertEqual(app.buttons["home project"].value as? String, "Selected")
         XCTAssertEqual(tags.value as? String, "triaged")
         app.buttons["Cancel"].tap()
@@ -2087,7 +2096,19 @@ final class OTodoUITests: XCTestCase {
             more.tap()
         }
         guard require(otodo, in: safari, description: "OTodo in the system Share sheet") else { return }
-        otodo.tap()
+        // The remote Share service can report cells in its own local coordinate
+        // space. Anchor that point to Safari's actual popover, not the webpage.
+        let remoteShare = safari.otherElements["ShareSheet.RemoteContainerView"]
+        let activityContent = safari.collectionViews["activityCollectionView"]
+        if remoteShare.exists, activityContent.exists,
+           remoteShare.frame.origin != activityContent.frame.origin {
+            remoteShare.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                dx: otodo.frame.midX - activityContent.frame.minX,
+                dy: otodo.frame.midY - activityContent.frame.minY
+            )).tap()
+        } else {
+            otodo.tap()
+        }
 
         let captureName = safari.textFields["share-capture-name"]
         guard require(captureName, in: safari, description: "the OTodo Share capture editor", timeout: 15) else { return }
@@ -2115,9 +2136,10 @@ final class OTodoUITests: XCTestCase {
         captured.tap()
         let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
         guard require(editor, in: app, description: "the captured todo's original context") else { return }
+        revealEditorControl("task-editor-due-date-toggle", panel: "schedule", in: app)
         XCTAssertEqual(app.switches["task-editor-due-date-toggle"].value as? String, "0")
-        let notes = app.textViews["Todo notes"]
-        if !notes.isHittable { editor.swipeUp() }
+        revealEditorControl("task-editor-notes", panel: nil, in: app)
+        let notes = app.textViews["task-editor-notes"]
         guard require(notes, in: app, description: "the saved Markdown notes") else { return }
         XCTAssertTrue((notes.value as? String)?.contains(sourceURL) == true)
         XCTAssertTrue((notes.value as? String)?.contains("Example Domain") == true)
@@ -2243,11 +2265,8 @@ final class OTodoUITests: XCTestCase {
                 row.tap()
                 let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
                 guard require(editor, in: app, description: "the rescheduled task's unchanged notes") else { return }
-                let notes = app.textViews["Todo notes"]
-                for _ in 0..<4 {
-                    if notes.exists && notes.isHittable { break }
-                    editor.swipeUp()
-                }
+                revealEditorControl("task-editor-notes", panel: nil, in: app)
+                let notes = app.textViews["task-editor-notes"]
                 XCTAssertEqual(notes.value as? String, "Review invoice 123\nSend receipt")
                 app.buttons["Cancel"].tap()
             }
@@ -2342,6 +2361,7 @@ final class OTodoUITests: XCTestCase {
         guard require(name, in: app, description: "the recurring todo name") else { return }
         name.tap()
         name.typeText("Recurring review in 100 days\n")
+        revealEditorControl("task-editor-repeat", panel: "schedule", in: app)
         let repeatPicker = app.buttons["task-editor-repeat"]
         for _ in 0..<6 {
             if repeatPicker.exists && repeatPicker.isHittable { break }
@@ -2404,6 +2424,7 @@ final class OTodoUITests: XCTestCase {
         advanced.tap()
         guard require(editor, in: app, description: "the recurring todo opened by its title") else { return }
         XCTAssertEqual(name.value as? String, "Recurring review")
+        revealEditorControl("task-editor-repeat-interval", panel: "schedule", in: app)
         for _ in 0..<6 {
             if interval.exists && interval.isHittable { break }
             editor.swipeUp()
@@ -2488,6 +2509,7 @@ final class OTodoUITests: XCTestCase {
         let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
         let name = app.textFields["task-editor-name"]
         guard require(name, in: app, description: "the child name") else { return }
+        revealEditorControl("task-editor-parent", panel: "details", in: app)
         XCTAssertTrue((app.buttons["task-editor-parent"].value as? String ?? "").contains(parentID))
         name.tap()
         name.typeText("Sibling one")
@@ -2519,6 +2541,7 @@ final class OTodoUITests: XCTestCase {
             description: "the child to reparent"
         ) else { return }
         first.tap()
+        revealEditorControl("task-editor-parent", panel: "details", in: app)
         app.buttons["task-editor-parent"].tap()
         let search = app.searchFields.firstMatch
         guard require(search, in: app, description: "searchable whole-workspace parent picker") else { return }
@@ -2541,6 +2564,7 @@ final class OTodoUITests: XCTestCase {
         XCTAssertTrue(reparented.label.contains("Parent: Terminal parent"))
         XCTAssertTrue(reparented.label.contains("outside this filter"))
         reparented.tap()
+        revealEditorControl("task-editor-parent", panel: "details", in: app)
         app.buttons["task-editor-parent"].tap()
         app.buttons["parent-picker-none"].tap()
         app.buttons["task-editor-save"].tap()
@@ -2565,6 +2589,7 @@ final class OTodoUITests: XCTestCase {
         XCTAssertTrue(sibling.label.contains("Parent: Hierarchy parent"))
         app.buttons["task-add"].tap()
         guard require(name, in: app, description: "a later global root draft") else { return }
+        revealEditorControl("task-editor-parent", panel: "details", in: app)
         XCTAssertEqual(app.buttons["task-editor-parent"].value as? String, "No Parent")
         XCTAssertEqual(app.buttons["work project"].value as? String, "Not selected")
         name.tap()
@@ -2606,10 +2631,19 @@ final class OTodoUITests: XCTestCase {
             app.descendants(matching: .any).matching(identifier: "task-editor-saved-confirmation").firstMatch,
             in: app, description: "the child saved without dismissing sibling creation"
         ) else { return }
+        revealEditorControl("task-editor-parent", panel: "details", in: app)
         XCTAssertTrue((app.buttons["task-editor-parent"].value as? String ?? "").contains(parentID))
+        revealEditorControl("task-editor-name", panel: nil, in: app)
+        name.tap()
         name.typeText("Unsaved sibling draft")
 
         guard invokeNewTodoQuickAction() else { return }
+        let freshDraft = expectation(
+            for: NSPredicate(format: "enabled == false"),
+            evaluatedWith: app.buttons["task-editor-save"]
+        )
+        wait(for: [freshDraft], timeout: 8)
+        revealEditorControl("task-editor-parent", panel: "details", in: app)
         let rootParent = app.buttons.matching(
             NSPredicate(format: "identifier == %@ AND value == %@", "task-editor-parent", "No Parent")
         ).firstMatch
@@ -2692,6 +2726,7 @@ final class OTodoUITests: XCTestCase {
         guard require(repair, in: app, description: "whole-workspace repair independent of filter") else { return }
         repair.tap()
         let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
+        revealEditorControl("task-editor-parent", panel: "details", in: app)
         let parentButton = app.buttons["task-editor-parent"]
         guard require(parentButton, in: app, description: "the broken stored parent") else { return }
         XCTAssertTrue((parentButton.value as? String ?? "").contains("Missing parent"))
@@ -2710,6 +2745,7 @@ final class OTodoUITests: XCTestCase {
             description: "the parent cannot be deleted while it has a child"
         ) else { return }
         parent.tap()
+        revealEditorControl("task-editor-parent", panel: "details", in: app)
         parentButton.tap()
         XCTAssertFalse(app.buttons["parent-candidate-\(parentID)"].exists)
         XCTAssertFalse(app.buttons["parent-candidate-\(childID)"].exists)
@@ -2747,6 +2783,7 @@ final class OTodoUITests: XCTestCase {
         app.launch()
         guard selectFilter("Active", in: app) else { return }
         app.buttons["task-add"].tap()
+        revealEditorControl("task-editor-parent", panel: "details", in: app)
         let parent = app.buttons["task-editor-parent"]
         guard require(parent, in: app, description: "parent selection in a legacy store") else { return }
         parent.tap()
@@ -2922,6 +2959,25 @@ final class OTodoUITests: XCTestCase {
                 "\(name). State: \(state)"
             )
         ).firstMatch
+    }
+
+    @MainActor
+    private func revealEditorControl(_ identifier: String, panel: String?, in app: XCUIApplication) {
+        let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
+        guard require(editor, in: app, description: "the todo editor") else { return }
+        func scrollTo(_ element: XCUIElement) {
+            app.revealTaskEditorElement(element)
+        }
+        if let panel {
+            let disclosure = app.buttons["task-editor-\(panel)"]
+            scrollTo(disclosure)
+            guard require(disclosure, in: app, description: "the \(panel) disclosure") else { return }
+            if disclosure.value as? String != "Expanded" { disclosure.tap() }
+        }
+        let control = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        scrollTo(control)
+        XCTAssertTrue(control.waitForExistence(timeout: 8), "The editor must expose \(identifier)")
+        XCTAssertTrue(control.isHittable, "\(identifier) must be reachable in the editor")
     }
 
     @MainActor

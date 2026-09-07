@@ -16,7 +16,7 @@ struct HighlightedTaskNameField: UIViewRepresentable {
     func makeUIView(context: Context) -> NameTextField {
         let textField = NameTextField()
         textField.borderStyle = .none
-        textField.placeholder = "Name"
+        textField.placeholder = "What needs doing?"
         textField.backgroundColor = .clear
         textField.clearButtonMode = .whileEditing
         textField.autocapitalizationType = .sentences
@@ -46,8 +46,10 @@ struct HighlightedTaskNameField: UIViewRepresentable {
             textField.setNeedsLayout()
         }
         let validHighlightRange = validatedHighlightRange
+        let font = UIFont.preferredFont(forTextStyle: .title2)
         guard textField.attributedText?.string != text
                 || context.coordinator.appliedHighlightRange != validHighlightRange
+                || textField.font != font
         else {
             return
         }
@@ -60,7 +62,6 @@ struct HighlightedTaskNameField: UIViewRepresentable {
                 textField.offset(from: textField.beginningOfDocument, to: selection.end)
             )
         }
-        let font = UIFont.preferredFont(forTextStyle: .body)
         let baseAttributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: UIColor.label,
