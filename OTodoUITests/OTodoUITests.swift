@@ -61,7 +61,17 @@ final class OTodoUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Available offline"].waitForExistence(timeout: 5))
         XCTAssertTrue(open.isHittable)
         open.tap()
-        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 10))
+        let preview = app.otherElements["QLPreviewControllerView"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars["sample.txt"].waitForExistence(timeout: 5), "Preview titles must use the attachment name, not its private cache key")
+        let contents = preview.textViews.matching(
+            NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "Attachment UI test", "Attachment UI test")
+        ).firstMatch
+        XCTAssertTrue(contents.waitForExistence(timeout: 10), "Quick Look must show the saved file's actual contents")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Saved attachment content in Quick Look"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     @MainActor
@@ -576,14 +586,20 @@ final class OTodoUITests: XCTestCase {
             description: "the todo name field"
         ) else { return }
         nameField.tap()
-        nameField.typeText(taskName)
+        nameField.typeText(taskName + "\n")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
 
         let relativeField = app.textFields["task-editor-relative-due-date"]
+        for _ in 0..<6 {
+            if relativeField.isHittable { break }
+            editor.swipeUp()
+        }
         guard require(
             relativeField,
             in: app,
             description: "the relative due-date field"
         ) else { return }
+        XCTAssertTrue(relativeField.isHittable)
         relativeField.tap()
         for character in "in 6 hours" {
             relativeField.typeText(String(character))
