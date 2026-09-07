@@ -277,7 +277,8 @@ struct TaskEditorView: View {
                 }
                 .navigationTitle(draft.preservedTask == nil ? "New Todo" : "Edit Todo")
                 .navigationBarTitleDisplayMode(.inline)
-                .toolbarBackground(.hidden, for: .navigationBar)
+                .toolbarBackground(OTodoTheme.formCanvas, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
                 .interactiveDismissDisabled(isSaving)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {

@@ -95,7 +95,8 @@ struct TaskBulkEditorView: View {
             .background(OTodoTheme.formCanvas.ignoresSafeArea())
             .navigationTitle("Bulk Add")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbarBackground(OTodoTheme.formCanvas, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .interactiveDismissDisabled(isSaving)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

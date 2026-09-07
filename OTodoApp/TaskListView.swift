@@ -166,7 +166,8 @@ struct TaskListView: View {
                 }
                 .navigationTitle(isUpcoming ? "Upcoming" : selectedProject.map(projectDisplayName) ?? "Todos")
                 .navigationBarTitleDisplayMode(.inline)
-                .toolbarBackground(.hidden, for: .navigationBar)
+                .toolbarBackground(Color(uiColor: .systemBackground), for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Button {

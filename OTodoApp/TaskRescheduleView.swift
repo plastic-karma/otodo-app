@@ -136,7 +136,8 @@ struct TaskRescheduleView: View {
             .background(OTodoTheme.formCanvas.ignoresSafeArea())
             .navigationTitle(isBulk ? "Reschedule \(tasks.count) todos" : "Reschedule")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbarBackground(OTodoTheme.formCanvas, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .interactiveDismissDisabled(isSaving)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
