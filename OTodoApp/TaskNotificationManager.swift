@@ -5,7 +5,7 @@ import UserNotifications
 
 @MainActor
 @Observable
-final class TaskNotificationManager {
+final class TaskNotificationManager: NSObject, UNUserNotificationCenterDelegate {
     enum Status: Equatable {
         case checking
         case notRequested
@@ -19,6 +19,9 @@ final class TaskNotificationManager {
     private(set) var status: Status = .checking
     private(set) var isUpdating = false
     private(set) var errorMessage: String?
+    private(set) var pendingTaskID: TaskID?
+
+    @ObservationIgnored private var lastResponse: TaskNotificationResponse?
 
     @ObservationIgnored private let center: UNUserNotificationCenter
     @ObservationIgnored private let defaults: UserDefaults
@@ -29,10 +32,45 @@ final class TaskNotificationManager {
     ) {
         self.center = center
         self.defaults = defaults
+        super.init()
     }
 
     var isEnabled: Bool {
         status == .enabled
+    }
+
+    /// Install before application launch finishes so a cold-start tap is retained.
+    func registerResponseDelegate() {
+        center.delegate = self
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        // UNNotificationResponse stays on its delivery executor. Only this Sendable
+        // snapshot crosses to the main actor; returning completes the OS callback.
+        let snapshot = TaskNotificationResponse(response)
+        await handle(snapshot)
+    }
+
+    func handle(_ response: TaskNotificationResponse) {
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+              response.requestIdentifier.hasPrefix(TaskReminderPlanner.identifierPrefix),
+              let rawTaskID = response.taskID,
+              let taskID = try? TaskID(rawValue: rawTaskID),
+              response != lastResponse
+        else { return }
+
+        // Scene connection and the notification delegate can deliver the same tap.
+        // Remember it after consumption too, without blocking a later reminder.
+        lastResponse = response
+        pendingTaskID = taskID
+    }
+
+    func consumePendingTaskRequest() -> TaskID? {
+        defer { pendingTaskID = nil }
+        return pendingTaskID
     }
 
     func synchronize(tasks: [TodoTask], states: [WorkflowState]) async {
@@ -193,5 +231,35 @@ final class TaskNotificationManager {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .autoupdatingCurrent
         return calendar
+    }
+}
+
+/// Value snapshot shared by scene connection and notification-center delivery.
+struct TaskNotificationResponse: Sendable, Equatable {
+    let requestIdentifier: String
+    let actionIdentifier: String
+    let taskID: String?
+    let deliveredAt: Date
+
+    init(
+        requestIdentifier: String,
+        actionIdentifier: String,
+        taskID: String?,
+        deliveredAt: Date
+    ) {
+        self.requestIdentifier = requestIdentifier
+        self.actionIdentifier = actionIdentifier
+        self.taskID = taskID
+        self.deliveredAt = deliveredAt
+    }
+
+    init(_ response: UNNotificationResponse) {
+        let notification = response.notification
+        self.init(
+            requestIdentifier: notification.request.identifier,
+            actionIdentifier: response.actionIdentifier,
+            taskID: notification.request.content.userInfo["task_id"] as? String,
+            deliveredAt: notification.date
+        )
     }
 }
