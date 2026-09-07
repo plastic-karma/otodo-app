@@ -33,6 +33,11 @@ final class OTodoUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["sample.txt"].waitForExistence(timeout: 5))
         app.buttons["task-editor-save-another"].tap()
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-editor-saved-confirmation").firstMatch.waitForExistence(timeout: 5))
+        for _ in 0..<8 {
+            if sample.isHittable { break }
+            editor.swipeUp()
+        }
+        XCTAssertTrue(sample.isHittable)
         XCTAssertFalse(app.staticTexts["sample.txt"].exists)
         app.buttons["Cancel"].tap()
         app.terminate()
