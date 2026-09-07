@@ -4,6 +4,7 @@ import PhotosUI
 import QuickLook
 import QuickLookThumbnailing
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 /// Imports live in the editor until its one workspace transaction succeeds.
@@ -161,7 +162,7 @@ private struct AttachmentRow: View {
     let remove: () -> Void
     @State private var file: AttachmentCachedFile?
     @State private var thumbnail: UIImage?
-    @State private var previewURL: URL?
+    @State private var preview: AttachmentPreviewItem?
     @State private var failure: String?
     @State private var isLoading = false
 
@@ -199,7 +200,9 @@ private struct AttachmentRow: View {
             .disabled(isLoading)
             if let failure { Text(failure).font(.caption).foregroundStyle(.red) }
         }
-        .quickLookPreview($previewURL)
+        .sheet(item: $preview) { item in
+            AttachmentPreview(item: item)
+        }
         .task(id: CacheRefreshKey(catalog: model.attachmentCatalog, revision: model.attachmentCacheRevision)) { await refreshCachedFile() }
     }
 
@@ -232,7 +235,7 @@ private struct AttachmentRow: View {
             do {
                 file = try await model.openAttachment(path: path, imported: imported, selection: selection)
                 if let file {
-                    if preview { previewURL = file.url }
+                    if preview { self.preview = AttachmentPreviewItem(url: file.url, name: name) }
                     await makeThumbnail(file.url)
                 }
             } catch { failure = error.localizedDescription }
@@ -256,6 +259,51 @@ private struct AttachmentRow: View {
                                                   scale: 2, representationTypes: .thumbnail)
         if let result = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request) {
             thumbnail = result.uiImage
+        }
+    }
+}
+
+private final class AttachmentPreviewItem: NSObject, QLPreviewItem, Identifiable {
+    let previewItemURL: URL?
+    let previewItemTitle: String?
+
+    init(url: URL, name: String) {
+        previewItemURL = url
+        previewItemTitle = name
+    }
+}
+
+private struct AttachmentPreview: UIViewControllerRepresentable {
+    @Environment(\.dismiss) private var dismiss
+    let item: AttachmentPreviewItem
+
+    func makeCoordinator() -> Coordinator { Coordinator(item: item) }
+
+    func makeUIViewController(context: Context) -> UINavigationController {
+        let controller = QLPreviewController()
+        controller.dataSource = context.coordinator
+        controller.navigationItem.leftBarButtonItem = UIBarButtonItem(
+            systemItem: .done,
+            primaryAction: UIAction { _ in dismiss() }
+        )
+        controller.navigationItem.leftBarButtonItem?.accessibilityIdentifier = "attachment-preview-close"
+        return UINavigationController(rootViewController: controller)
+    }
+
+    func updateUIViewController(_ controller: UINavigationController, context: Context) {
+        guard context.coordinator.item !== item else { return }
+        context.coordinator.item = item
+        (controller.viewControllers.first as? QLPreviewController)?.reloadData()
+    }
+
+    final class Coordinator: NSObject, QLPreviewControllerDataSource {
+        var item: AttachmentPreviewItem
+        init(item: AttachmentPreviewItem) { self.item = item }
+
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+
+        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> any QLPreviewItem {
+            item
         }
     }
 }

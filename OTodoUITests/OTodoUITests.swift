@@ -68,11 +68,16 @@ final class OTodoUITests: XCTestCase {
         open.tap()
         let preview = app.otherElements["QLPreviewControllerView"]
         XCTAssertTrue(preview.waitForExistence(timeout: 10))
-        let previewText = app.textViews.matching(NSPredicate(
-            format: "value CONTAINS %@ OR label == %@", "Attachment UI test", "Attachment UI test"
-        )).firstMatch
-        guard require(previewText, in: app, description: "the offline attachment preview contents") else { return }
-        let closePreview = app.buttons["QLOverlayDoneButtonAccessibilityIdentifier"]
+        XCTAssertTrue(app.navigationBars["sample.txt"].waitForExistence(timeout: 5), "Preview titles must use the attachment name, not its private cache key")
+        let contents = preview.textViews.matching(
+            NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "Attachment UI test", "Attachment UI test")
+        ).firstMatch
+        XCTAssertTrue(contents.waitForExistence(timeout: 10), "Quick Look must show the saved file's actual contents")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Saved attachment content in Quick Look"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let closePreview = app.buttons["attachment-preview-close"]
         XCTAssertTrue(closePreview.waitForExistence(timeout: 5))
         closePreview.tap()
         XCTAssertTrue(preview.waitForNonExistence(timeout: 5))
@@ -588,15 +593,21 @@ final class OTodoUITests: XCTestCase {
             description: "the todo name field"
         ) else { return }
         nameField.tap()
-        nameField.typeText(taskName)
+        nameField.typeText(taskName + "\n")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
 
         revealEditorControl("task-editor-relative-due-date", panel: "schedule", in: app)
         let relativeField = app.textFields["task-editor-relative-due-date"]
+        for _ in 0..<6 {
+            if relativeField.isHittable { break }
+            editor.swipeUp()
+        }
         guard require(
             relativeField,
             in: app,
             description: "the relative due-date field"
         ) else { return }
+        XCTAssertTrue(relativeField.isHittable)
         relativeField.tap()
         for character in "in 6 hours" {
             relativeField.typeText(String(character))
