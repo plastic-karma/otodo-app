@@ -8,6 +8,8 @@ Open **Sort todos** (the up/down arrows beside Filters) to choose **Due date (ea
 
 Tap a todo's circle to complete it without opening the editor. Completed todos remain available in **All**; tap their checked circle to reopen them in the configured default state. Tapping the title or details still opens the editor, and both state changes use the same durable offline save and sync path as editing.
 
+Each todo shows its title and at most one quiet metadata line. The deadline takes priority, followed by a repeat icon and one context: ancestry, the first project, or the first tag. Additional projects or tags use a `+N` count instead of wrapping. The completion circle carries state; the editor and VoiceOver retain the full state, ancestry, projects, tags, and schedule.
+
 Sidebar badges count only open todos across all dates, independent of the selected filter or project. **Inbox** counts todos without an assigned project, including undated work; its badge updates when a todo is created, organized, completed, reopened, or deleted. Configured terminal states are excluded from Inbox, individual project counts, and the **All Todos** count.
 
 Touch and hold a todo for **Done**, **Reschedule**, **Add Subtask**, and **Delete**. Done is available only for open todos; Delete is available for both open and completed todos but refuses tasks that still have children.
