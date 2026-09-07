@@ -330,11 +330,28 @@ struct TaskEditorView: View {
                                 .accessibilityIdentifier("task-editor-validation")
                         }
                     }
+                    if draft.preservedTask == nil && dynamicTypeSize.isAccessibilitySize {
+                        Section {
+                            saveAnotherButton
+                        }
+                    }
                 }
                 .disabled(isSaving)
                 .accessibilityIdentifier("task-editor")
                 .scrollContentBackground(.hidden)
                 .background(OTodoTheme.formCanvas.ignoresSafeArea())
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if draft.preservedTask == nil && !dynamicTypeSize.isAccessibilitySize {
+                        VStack(spacing: 0) {
+                            Divider()
+                            saveAnotherButton
+                                .buttonStyle(.bordered)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 8)
+                        }
+                        .background(OTodoTheme.formCanvas)
+                    }
+                }
                 .navigationTitle(draft.preservedTask == nil ? "New Todo" : "Edit Todo")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(.hidden, for: .navigationBar)
@@ -355,15 +372,6 @@ struct TaskEditorView: View {
                         .disabled(isSaveDisabled)
                     }
 
-                    if draft.preservedTask == nil {
-                        ToolbarItem(placement: .bottomBar) {
-                            Button("Save & Create Another") {
-                                save(createAnother: true)
-                            }
-                            .accessibilityIdentifier("task-editor-save-another")
-                            .disabled(isSaveDisabled)
-                        }
-                    }
                 }
                 .overlay {
                     if isSaving {
@@ -394,6 +402,18 @@ struct TaskEditorView: View {
                 schemaVersion: configuration.schemaVersion
             )
         }
+    }
+
+    private var saveAnotherButton: some View {
+        Button {
+            save(createAnother: true)
+        } label: {
+            Text("Save & Create Another")
+                .font(.subheadline.weight(.medium))
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .accessibilityIdentifier("task-editor-save-another")
+        .disabled(isSaveDisabled)
     }
 
     private var parentDescription: String {

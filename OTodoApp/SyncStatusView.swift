@@ -205,6 +205,9 @@ struct SyncStatusView: View {
         if !model.conflicts.isEmpty {
             return "Sync needs attention"
         }
+        if !model.attachmentRefreshErrors.isEmpty {
+            return "Attachment updates need attention"
+        }
         if !model.isOnline {
             return "Saved on this device"
         }
@@ -218,8 +221,7 @@ struct SyncStatusView: View {
     }
 
     private var primarySymbol: String {
-        if hasRelationshipIssues { return "exclamationmark.triangle" }
-        if !model.conflicts.isEmpty {
+        if requiresAttention {
             return "exclamationmark.triangle"
         }
         if !model.isOnline {
