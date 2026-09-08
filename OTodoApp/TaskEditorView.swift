@@ -895,7 +895,7 @@ private struct TaskEditorSubtaskInput: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("New subtask name", text: nameBinding)
+            TextField("New subtask name", text: $name)
                 .accessibilityLabel("New subtask name")
                 .accessibilityIdentifier("task-editor-subtask-name")
                 .focused($isFocused)
@@ -904,6 +904,9 @@ private struct TaskEditorSubtaskInput: View {
                 .onChange(of: isFocused) { _, focused in
                     if focused { onFocus() }
                 }
+                .onChange(of: !name.isEmpty) { _, pending in
+                    onPendingChange(pending)
+                }
             HStack {
                 Button("Add Subtask", systemImage: "plus", action: add)
                     .buttonStyle(.borderless)
@@ -911,27 +914,13 @@ private struct TaskEditorSubtaskInput: View {
                     .disabled(!canAdd)
                 if !name.isEmpty {
                     Spacer()
-                    Button("Clear") { nameBinding.wrappedValue = "" }
+                    Button("Clear") { name = "" }
                         .buttonStyle(.borderless)
                         .accessibilityLabel("Clear new subtask name")
                         .accessibilityIdentifier("task-editor-subtask-clear")
                 }
             }
         }
-    }
-
-    private var nameBinding: Binding<String> {
-        Binding(
-            get: { name },
-            set: { value in
-                let wasPending = !name.isEmpty
-                name = value
-                let isPending = !value.isEmpty
-                if isPending != wasPending {
-                    onPendingChange(isPending)
-                }
-            }
-        )
     }
 
     private var canAdd: Bool {
@@ -941,11 +930,9 @@ private struct TaskEditorSubtaskInput: View {
 
     private func add() {
         guard canAdd else { return }
-        let childName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        isFocused = false
+        onAdd(name.trimmingCharacters(in: .whitespacesAndNewlines))
         name = ""
         onPendingChange(false)
-        onAdd(childName)
     }
 }
 

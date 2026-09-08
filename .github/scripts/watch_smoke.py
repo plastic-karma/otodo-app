@@ -159,10 +159,12 @@ def observe_states(output, states, pids, observed):
 
 def wait_for_snapshot(path, *, output, states, pids, expected=None):
     # Absolute budget, never reset by transient readiness or partial progress.
-    # Cold paired simulators can take over three minutes for their first reply.
+    # Cold pairs have taken nearly five minutes just to become reachable.
+    # Leave room for the real request/reply after that first readiness event.
+    timeout = 600
     started = time.monotonic()
-    deadline = started + 300
-    progress(output, "snapshot-wait-started", source=str(path), timeoutSeconds=300)
+    deadline = started + timeout
+    progress(output, "snapshot-wait-started", source=str(path), timeoutSeconds=timeout)
     observed = {}
     last_snapshot = None
     while time.monotonic() < deadline:
@@ -185,7 +187,7 @@ def wait_for_snapshot(path, *, output, states, pids, expected=None):
                      elapsedSeconds=round(time.monotonic() - started, 3))
             return value
         time.sleep(1)
-    raise RuntimeError(f"The live companion snapshot did not arrive within 300s at {path}; "
+    raise RuntimeError(f"The live companion snapshot did not arrive within {timeout}s at {path}; "
                        f"expected names: {sorted(EXPECTED_NAMES)}; observed snapshot: {json.dumps(last_snapshot)}; "
                        f"last app-owned state: {json.dumps(observed)}")
 

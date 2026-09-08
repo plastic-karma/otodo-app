@@ -5,6 +5,7 @@ final class TaskEditorPresentationUITests: XCTestCase {
     @MainActor
     func testFocusedEditorPreservesHiddenDetailsInLightAndDark() throws {
         continueAfterFailure = false
+        executionTimeAllowance = 600
         for appearance in ["light", "dark"] {
             let app = XCUIApplication()
             app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace", "-ui-testing-\(appearance)"]

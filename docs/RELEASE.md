@@ -148,6 +148,8 @@ For simulators, Xcode can leave the ordinary codesign entitlement dictionary emp
 
 Watch CI uses the same preinstalled iPhone selection as iOS CI, pairs it with a fresh compatible Watch, and completes both simulator boots before compilation. It requires `bootstatus` to report `Finished`: a zero exit status alone is insufficient because CoreSimulator can return zero after `Data Migration Failed`. A failed migration stops the job before app installation or connectivity checks; inspect the retained `boot-phone.log` and `boot-watch.log` before retrying on a fresh runner.
 
+The Watch snapshot wait has a fixed ten-minute deadline, including cold-pair readiness and actual request/reply delivery; progress never resets that deadline. Full iOS partitions have a one-hour execution budget for the complete compiled suite, separate from their simulator preparation and retained diagnostics.
+
 ## Run manually: artifact only
 
 In GitHub:

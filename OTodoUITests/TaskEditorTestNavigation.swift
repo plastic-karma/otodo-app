@@ -15,11 +15,15 @@ extension XCUIApplication {
         )).firstMatch
         let footer = buttons["task-editor-save-another"]
         let keyboard = keyboards.firstMatch
+        let done = buttons["task-editor-keyboard-done"]
 
         func viewport() -> CGRect {
             let top = max(editor.frame.minY, navigation.frame.maxY) + 8
             var bottom = editor.frame.maxY - 8
-            if keyboard.exists { bottom = min(bottom, keyboard.frame.minY - 52) }
+            if keyboard.exists {
+                bottom = min(bottom, keyboard.frame.minY - 52)
+                if done.exists { bottom = min(bottom, done.frame.minY - 8) }
+            }
             if footer.exists { bottom = min(bottom, footer.frame.minY - 8) }
             return CGRect(x: editor.frame.minX, y: top, width: editor.frame.width, height: max(0, bottom - top))
         }
@@ -29,7 +33,6 @@ extension XCUIApplication {
             return element.frame.minY >= visible.minY && element.frame.maxY <= visible.maxY
         }
         if isUnobscured() { return }
-        let done = buttons["task-editor-keyboard-done"]
         if keyboard.exists && done.exists && done.isHittable { done.tap() }
 
         for attempt in 0..<12 {
