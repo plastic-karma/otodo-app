@@ -46,7 +46,11 @@ extension XCUIApplication {
             let origin = coordinate(withNormalizedOffset: .zero)
             let start = origin.withOffset(CGVector(dx: visible.maxX - 6, dy: scrollUp ? low : high))
             let end = origin.withOffset(CGVector(dx: visible.maxX - 6, dy: scrollUp ? high : low))
-            start.press(forDuration: 0.05, thenDragTo: end)
+            // Stop before lifting so momentum cannot skip past the visible region.
+            start.press(
+                forDuration: 0.05, thenDragTo: end,
+                withVelocity: .slow, thenHoldForDuration: 0.2
+            )
         }
         XCTAssertTrue(element.exists, "The editor must expose the requested control", file: file, line: line)
         XCTAssertTrue(isUnobscured(), "The editor control must be clear of navigation, keyboard, and save controls", file: file, line: line)
