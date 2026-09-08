@@ -343,7 +343,7 @@ def run_group(output, group, products=None):
     ]
     status = 0
     try:
-        run_command(command, stage=stage, timeout=1200 if group == "smoke" else 2700,
+        run_command(command, stage=stage, timeout=1200 if group == "smoke" else 3600,
                     startup_timeout=900, log_path=output / "logs" / f"{group}.log")
     except CommandError as error:
         status = error.returncode

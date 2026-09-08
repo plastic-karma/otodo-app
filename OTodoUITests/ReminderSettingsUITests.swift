@@ -36,7 +36,9 @@ final class ReminderSettingsUITests: XCTestCase {
         XCTAssertTrue(name.waitForExistence(timeout: 8))
         let title = "Foreground timed reminder"
         name.tap()
-        name.typeText("\(title) in 2 minutes\n")
+        // Relative times round up to the next whole minute: allow up to two
+        // minutes here, rather than scheduling beyond the banner wait window.
+        name.typeText("\(title) in 1 minute\n")
         app.buttons["task-editor-save"].tap()
         XCTAssertTrue(name.waitForNonExistence(timeout: 8))
         XCTAssertEqual(app.state, .runningForeground)
