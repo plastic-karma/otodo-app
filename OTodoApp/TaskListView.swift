@@ -190,8 +190,10 @@ struct TaskListView: View {
                             .accessibilityIdentifier("upcoming-select")
                         }
                     }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        sortMenu
+                    if !isUpcoming {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            sortMenu
+                        }
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Filters", systemImage: "line.3.horizontal.decrease") {
@@ -1122,7 +1124,7 @@ struct TaskListView: View {
             filterID: selectedFilter.id,
             query: selectedFilter.query,
             selectedProject: selectedProject,
-            sortOrder: model.taskSortOrder,
+            sortOrder: isUpcoming ? .dueDate : model.taskSortOrder,
             dates: dates,
             isUpcoming: isUpcoming,
             workspaceKey: model.workspaceSelection.map(FileWorkspaceStore.selectionKey(for:)),

@@ -2344,6 +2344,52 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testUpcomingKeepsChronologicalOrderWithoutChangingTodoSortPreference() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace", "-ui-testing-agenda-ordering"]
+        app.launch()
+        guard selectFilter("Active", in: app) else { return }
+        let sidebar = app.buttons["project-sidebar-toggle"]
+        let earlier = taskRow(named: "Zulu earlier deadline", state: "Pending", in: app)
+        let later = taskRow(named: "Alpha later deadline", state: "Pending", in: app)
+
+        for choice in ["Created date (newest first)", "Alphabetical (A–Z)"] {
+            app.buttons["task-sort"].tap()
+            app.buttons[choice].tap()
+            let todoOrder = XCTNSPredicateExpectation(
+                predicate: NSPredicate { _, _ in
+                    earlier.isHittable && later.isHittable && later.frame.minY < earlier.frame.minY
+                }, object: nil
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [todoOrder], timeout: 8), .completed)
+            sidebar.tap()
+            app.buttons["upcoming-open"].tap()
+            let taskList = app.descendants(matching: .any).matching(identifier: "task-list").firstMatch
+            for _ in 0..<6 {
+                if earlier.isHittable && later.isHittable { break }
+                taskList.swipeUp()
+            }
+            let agendaOrder = XCTNSPredicateExpectation(
+                predicate: NSPredicate { _, _ in
+                    earlier.isHittable && later.isHittable && earlier.frame.minY < later.frame.minY
+                }, object: nil
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [agendaOrder], timeout: 8), .completed)
+            XCTAssertFalse(app.buttons["task-sort"].exists)
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "Upcoming deadlines remain chronological with \(choice)"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+            sidebar.tap()
+            app.buttons["tasks-open"].tap()
+            let sort = app.buttons["task-sort"]
+            guard require(sort, in: app, description: "the preserved Todos sort preference") else { return }
+            XCTAssertEqual(sort.value as? String, choice)
+        }
+    }
+
+    @MainActor
     func testRecurringOccurrencePersistsAndSeriesCanFinish() throws {
         continueAfterFailure = false
         let app = XCUIApplication()

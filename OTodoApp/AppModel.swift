@@ -1277,6 +1277,12 @@ final class AppModel {
                         ("01ARZ3NDEKTSV4RRFFQ69G5FB1", "Later review", "todo", "work", try Self.uiTestDate(dayOffset: 14)),
                     ]
                 }
+                if ProcessInfo.processInfo.arguments.contains("-ui-testing-agenda-ordering") {
+                    seeds = [
+                        ("01ARZ3NDEKTSV4RRFFQ69G5FAV", "Zulu earlier deadline", "todo", "work", try Self.uiTestDate(dayOffset: 10)),
+                        ("01ARZ3NDEKTSV4RRFFQ69G5FAW", "Alpha later deadline", "todo", "work", try Self.uiTestDate(dayOffset: 14)),
+                    ]
+                }
                 if includesSubtaskFixtures {
                     seeds = [
                         ("01ARZ3NDEKTSV4RRFFQ69G5FAV", "Hierarchy parent", "todo", "work", nil),
