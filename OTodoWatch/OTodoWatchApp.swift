@@ -9,6 +9,7 @@ struct OTodoWatchApp: App {
         WindowGroup {
             WatchTodayView(receiver: .shared)
                 .tint(Color(red: 0.70, green: 0.45, blue: 0.94))
+                .fontDesign(.rounded)
         }
     }
 }

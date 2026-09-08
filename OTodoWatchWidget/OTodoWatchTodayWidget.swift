@@ -192,6 +192,7 @@ private struct OTodoWatchTodayWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: WatchComplicationProvider()) { entry in
             WatchComplicationView(entry: entry)
+                .fontDesign(.rounded)
         }
         .configurationDisplayName("Today & Overdue")
         .description("Saved todos from your iPhone, updated for today even while offline.")

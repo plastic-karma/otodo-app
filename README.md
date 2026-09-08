@@ -26,7 +26,7 @@ The sidebar separates **Todos**, **Upcoming**, and **Inbox** from project scope.
 
 **Bulk Add** accepts one todo per nonblank line and previews each stripped name and resulting date/time. From **Today**, names without schedule phrases default to today; other views keep them undated. A date phrase overrides the view default, and a clock alone means today. Detected phrases are removed on save. The entire batch is validated and saved together on the device, so an invalid line cannot leave a partially created batch.
 
-In the **New Todo** editor, **Save & Create Another** saves without closing, confirms the save, and returns focus to a fresh name. It keeps the selected parent, state, projects, and tags, but clears notes, recurrence, and the previous todo's schedule. From **Today**, the next draft starts due today again; other views start undated. Normal **Save** still saves and closes; editing an existing todo does not offer repeated creation.
+In the **New Todo** editor, **Save & Create Another** saves without closing, confirms the save, and returns focus to a fresh name. It keeps the selected parent, state, projects, and tags, but clears notes, the link, queued subtasks, recurrence, and the previous todo's schedule. From **Today**, the next draft starts due today again; other views start undated. Normal **Save** still saves and closes; editing an existing todo does not offer repeated creation.
 
 The new/edit editor starts with a prominent title and immediately editable Markdown notes. Tap **Add notes…** to write multiple lines; notes use the same durable offline save as the rest of the todo and remain available after restarting the app. **Schedule** expands date, optional time, relative-date entry for new todos, and repeat controls. **Details** expands state, parent, projects, and tags. Both rows summarize existing values while collapsed, and saving without opening either panel preserves those values. **Save & Create Another** returns to the focused, collapsed layout.
 
@@ -36,17 +36,27 @@ Add OTodo's **Today** widget to the Home Screen to see active todos due today or
 
 The shared palette follows the system appearance: light mode uses indigo accents, while dark mode uses legible lavender foregrounds, neutral raised surfaces, and subdued dark fills behind white labels.
 
+The app, Share capture, widgets, and Watch use native **SF Rounded** with semantic text styles and Dynamic Type. The task-name field follows the same design without rebuilding its font on every keystroke; no downloaded font files are required.
+
 Task names recognize full weekday names and common abbreviations (`Sun`, `Mon`, `Tue`/`Tues`, `Wed`, `Thu`/`Thur`/`Thurs`, `Fri`, `Sat`), plus `today`/`tod`, `tomorrow`, `in N days`, `in N weeks`, `in N months`, `next week`, and `next month`. Matching is case-insensitive and uses whole words; abbreviations can have a trailing period. `today` and `tod` mean the current day in the device's local calendar. A weekday means its next occurrence, including next week when entered on that weekday.
 
 Names also recognize 24-hour `HH:mm` clocks (`00:00`–`23:59`) and 12-hour `h[:mm] am/pm` clocks (`9am`, `3:05 PM`, `12 am`), optionally preceded by `at`. Bare hours and ambiguous one-digit 24-hour clocks such as `9:30` are not recognized; use `09:30` or `9:30 am`. Invalid clocks such as `25:00`, `12:60`, or `13 pm`, embedded identifiers, and URL/path tokens stay untouched. `in N hours` and `in N minutes` use the same positive-integer relative-date rules as the Schedule field, including rounding forward to the next minute and crossing local midnight or daylight-saving transitions.
 
 The last date phrase and last time phrase each win independently. An explicit date overrides the editor's selected calendar date; an explicit time overrides its selected time. A clock without a date keeps an already-selected calendar date, otherwise it defaults to local today (even if that clock has already passed). Relative hours/minutes supply both date and time. Date-only phrases preserve a selected time. The editor highlights only the contributing phrases, and saving removes those phrases with surrounding separator cleanup, not intervening title words: `Call tomorrow with Alex at 3 pm` saves as `Call with Alex` with `due_date` and `due_time`. Share and Shortcuts captures remain intentionally undated and do not parse schedule phrases from names.
 
-Due reminders are opt-in from the Projects sidebar. When enabled, active dated todos schedule local iOS notifications at their exact due time, or at 9:00 AM in the device time zone for date-only todos; an already-due todo gets a near-term reminder, and completing, deleting, or rescheduling a todo reconciles its pending alert. If notification access was denied, the control opens the app's iOS Settings page.
+Due reminders are opt-in. Open **Due reminders** in the Projects sidebar, then **Enable Reminders** and allow iOS notifications. **At due time** uses each active dated todo's exact time, or 9:00 AM in the device time zone for date-only todos. Choose **5 minutes before**, **1 hour before**, or a custom positive number of hours or calendar days, then **Apply Timing**. The saved setting applies to all due reminders on this device without changing Git records; invalid input leaves it unchanged. Calendar days preserve the local clock across daylight-saving transitions, while hours are elapsed time.
+
+Elapsed, undelivered reminders are scheduled shortly. Completed, deleted, and rescheduled tasks reconcile their alerts, and already-delivered occurrences are not repeated when timing changes. iOS allows up to 64 pending reminders; delivered occurrences do not consume those slots. Alerts can appear while OTodo is foregrounded as well as in the background, subject to iOS notification permissions and Focus. The settings screen exposes authorization errors, scheduling failures, a retry action, and the app's iOS notification settings.
 
 Tapping a due reminder opens that exact todo in its editor, including after a cold start and when the current filter or project hides it. The request waits for the cached workspace to load, so it also works offline. If another editor or sheet is open, finish or dismiss it first; the reminder never replaces unsaved work. A reminder for a task no longer in the workspace is ignored rather than opening a different task.
 
 Open **Changelog** from the sidebar to review product features and visible improvements, newest first. Each entry shows its commit's exact UTC timestamp. The history is bundled with the app and available offline; CI and repository-maintenance changes are excluded.
+
+## Task links
+
+Use **Link** in the new/edit editor to store an optional HTTP or HTTPS URL. **Open Link** opens it only after an explicit tap; the clear button removes it on Save. Links survive offline relaunch, completion, rescheduling, and unrelated edits.
+
+The shared Markdown field is an optional quoted `url`, written after `parent` and before `due_date` and omitted when absent. It works in schema 1 and 2 without changing schema assets or upgrading stores. The matching Rust CLI supports `add --url`, `edit --url`, and `edit --clear-url`, and advertises `task_urls` through `capabilities`. Both clients reject malformed/non-web URLs and preserve valid spelling after trimming explicit input.
 
 ## Attachments
 
@@ -125,9 +135,13 @@ reparent, or choose **No Parent** to detach. Search covers the complete cached
 workspace, including terminal tasks and tasks outside the current filter.
 Candidates show their full IDs; the current task and its descendants are excluded.
 
-Subtasks inherit no metadata from their parent. Every state, project, tag, due
-date/time, recurrence rule, reminder, and Today/Watch/widget eligibility remains
-record-local. Completing or finishing a parent's series leaves its children
+Both **New Todo** and **Edit Todo** also have a **Subtasks** section. Enter a child name and tap **Add Subtask** to queue it; remove queued children before saving if needed. Existing direct children are shown in the parent editor. **Save** publishes the parent and every queued child atomically to the durable offline workspace and outbox. A bad child name, stale parent, conflict, or failed save publishes none of the batch. Unqueued text must be added or cleared before saving. Explicit date phrases in child names use the existing name parser.
+
+Subtasks inherit no metadata from their parent. New queued children start in the
+configured default state without projects, tags, a schedule, or a link unless
+their own name explicitly supplies a date/time. Each task keeps its own workflow,
+schedule, recurrence, and Today/Watch/widget eligibility; reminders use that
+task's schedule and the device's reminder settings. Completing or finishing a parent's series leaves its children
 unchanged. Deleting any task with direct children is refused, including terminal
 children; explicitly detach, reparent, or delete those children first.
 

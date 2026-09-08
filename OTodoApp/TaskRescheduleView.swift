@@ -180,8 +180,8 @@ struct TaskRescheduleView: View {
             return "Days, weeks, months, and years change only dates. Hours or minutes set both date and time. Kept times remain different when your todos have different times."
         }
         return timeChange == .set
-            ? "The todo and its reminder use this exact time."
-            : "Date-only reminders arrive at 9:00 AM."
+            ? "This is the todo's exact due time. Notifications follow your Due reminders settings."
+            : "Date-only reminders are based on 9:00 AM, with the lead time from Due reminders settings."
     }
 
     private var validationMessage: String? {

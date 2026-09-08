@@ -15,16 +15,20 @@ final class TaskNotificationManager: NSObject, UNUserNotificationCenterDelegate 
     }
 
     private static let enabledDefaultsKey = "notifications.reminders-enabled"
+    private static let leadTimeDefaultsKey = "notifications.reminder-lead-time"
 
     private(set) var status: Status = .checking
     private(set) var isUpdating = false
     private(set) var errorMessage: String?
     private(set) var pendingTaskID: TaskID?
+    private(set) var leadTime: TaskReminderLeadTime
 
     @ObservationIgnored private var lastResponse: TaskNotificationResponse?
 
     @ObservationIgnored private let center: UNUserNotificationCenter
     @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private var synchronizationTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingSynchronizations = 0
 
     init(
         center: UNUserNotificationCenter = .current(),
@@ -32,6 +36,15 @@ final class TaskNotificationManager: NSObject, UNUserNotificationCenterDelegate 
     ) {
         self.center = center
         self.defaults = defaults
+        if let stored = defaults.dictionary(forKey: Self.leadTimeDefaultsKey),
+           let value = stored["value"] as? Int,
+           let rawUnit = stored["unit"] as? String,
+           let unit = TaskReminderLeadTime.Unit(rawValue: rawUnit),
+           let preference = TaskReminderLeadTime(value: value, unit: unit) {
+            leadTime = preference
+        } else {
+            leadTime = .atDueTime
+        }
         super.init()
     }
 
@@ -42,6 +55,16 @@ final class TaskNotificationManager: NSObject, UNUserNotificationCenterDelegate 
     /// Install before application launch finishes so a cold-start tap is retained.
     func registerResponseDelegate() {
         center.delegate = self
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        guard notification.request.identifier.hasPrefix(TaskReminderPlanner.identifierPrefix) else {
+            return []
+        }
+        return [.banner, .list, .sound]
     }
 
     nonisolated func userNotificationCenter(
@@ -74,14 +97,83 @@ final class TaskNotificationManager: NSObject, UNUserNotificationCenterDelegate 
     }
 
     func synchronize(tasks: [TodoTask], states: [WorkflowState]) async {
+        await enqueueSynchronization(tasks: tasks, states: states)
+    }
+
+    func enable(tasks: [TodoTask], states: [WorkflowState]) async {
+        guard !isUpdating else { return }
+        defaults.set(true, forKey: Self.enabledDefaultsKey)
+        await enqueueSynchronization(tasks: tasks, states: states, requestAuthorization: true)
+    }
+
+    func disable() async {
+        defaults.set(false, forKey: Self.enabledDefaultsKey)
+        await enqueueSynchronization(tasks: [], states: [])
+    }
+
+    func setLeadTime(
+        _ preference: TaskReminderLeadTime,
+        tasks: [TodoTask],
+        states: [WorkflowState]
+    ) async {
+        leadTime = preference
+        if preference == .atDueTime {
+            defaults.removeObject(forKey: Self.leadTimeDefaultsKey)
+        } else {
+            defaults.set(
+                ["value": preference.value, "unit": preference.unit.rawValue],
+                forKey: Self.leadTimeDefaultsKey
+            )
+        }
+        await enqueueSynchronization(tasks: tasks, states: states)
+    }
+
+    private func enqueueSynchronization(
+        tasks: [TodoTask],
+        states: [WorkflowState],
+        requestAuthorization: Bool = false
+    ) async {
+        // Native add/remove operations must not interleave across preference,
+        // workspace, and scene changes, or an older request can win the race.
+        let previous = synchronizationTask
+        pendingSynchronizations += 1
+        isUpdating = true
+        let operation = Task { @MainActor in
+            await previous?.value
+            await applySynchronization(
+                tasks: tasks, states: states, requestAuthorization: requestAuthorization
+            )
+        }
+        synchronizationTask = operation
+        await operation.value
+        pendingSynchronizations -= 1
+        isUpdating = pendingSynchronizations > 0
+        if !isUpdating {
+            synchronizationTask = nil
+        }
+    }
+
+    private func applySynchronization(
+        tasks: [TodoTask],
+        states: [WorkflowState],
+        requestAuthorization: Bool
+    ) async {
         errorMessage = nil
-        let settings = await center.notificationSettings()
+        var settings = await center.notificationSettings()
+        if requestAuthorization, settings.authorizationStatus == .notDetermined {
+            do {
+                _ = try await center.requestAuthorization(options: [.alert, .sound])
+                settings = await center.notificationSettings()
+            } catch {
+                status = .notRequested
+                errorMessage = error.localizedDescription
+                return
+            }
+        }
         switch settings.authorizationStatus {
         case .notDetermined:
             status = .notRequested
-            if !remindersEnabledPreference {
-                await clearTaskReminders()
-            }
+            await clearTaskReminders()
         case .denied:
             status = .denied
             await clearTaskReminders()
@@ -99,78 +191,44 @@ final class TaskNotificationManager: NSObject, UNUserNotificationCenterDelegate 
         }
     }
 
-    func enable(tasks: [TodoTask], states: [WorkflowState]) async {
-        guard !isUpdating else { return }
-        isUpdating = true
-        errorMessage = nil
-        defer { isUpdating = false }
-
-        do {
-            let settings = await center.notificationSettings()
-            let isAuthorized: Bool
-            switch settings.authorizationStatus {
-            case .notDetermined:
-                isAuthorized = try await center.requestAuthorization(options: [.alert, .sound])
-            case .authorized, .provisional, .ephemeral:
-                isAuthorized = true
-            case .denied:
-                isAuthorized = false
-            @unknown default:
-                isAuthorized = false
-            }
-
-            defaults.set(true, forKey: Self.enabledDefaultsKey)
-            guard isAuthorized else {
-                status = .denied
-                return
-            }
-
-            status = .enabled
-            await replaceTaskReminders(tasks: tasks, states: states)
-        } catch {
-            defaults.set(false, forKey: Self.enabledDefaultsKey)
-            status = .notRequested
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    func disable() async {
-        defaults.set(false, forKey: Self.enabledDefaultsKey)
-        errorMessage = nil
-        status = .disabled
-        await clearTaskReminders()
-    }
-
     private var remindersEnabledPreference: Bool {
         defaults.bool(forKey: Self.enabledDefaultsKey)
     }
 
     private func replaceTaskReminders(tasks: [TodoTask], states: [WorkflowState]) async {
-        let calendar = Self.localGregorianCalendar
-        let reminders = TaskReminderPlanner.reminders(
-            for: tasks,
-            states: states,
-            calendar: calendar
-        )
-        let desiredIdentifiers = Set(reminders.map(\.identifier))
-        let pending = await center.pendingNotificationRequests()
-        let pendingIdentifiers = pending.lazy
-            .map(\.identifier)
-            .filter { $0.hasPrefix(TaskReminderPlanner.identifierPrefix) }
-        center.removePendingNotificationRequests(withIdentifiers: Array(pendingIdentifiers))
-
+        let calendar = TaskSchedule.calendar
         let delivered = await center.deliveredNotifications()
         let deliveredIdentifiers = Set(
             delivered.lazy
                 .map { $0.request.identifier }
                 .filter { $0.hasPrefix(TaskReminderPlanner.identifierPrefix) }
         )
-        let staleDeliveredIdentifiers = deliveredIdentifiers.subtracting(desiredIdentifiers)
+        let terminalStateIDs = Set(states.lazy.filter(\.isTerminal).map(\.id))
+        let activeIdentifiers = Set(tasks.lazy
+            .filter { !terminalStateIDs.contains($0.state) }
+            .compactMap { TaskReminderPlanner.identifier(for: $0) })
+        let staleDeliveredIdentifiers = deliveredIdentifiers.subtracting(activeIdentifiers)
         if !staleDeliveredIdentifiers.isEmpty {
             center.removeDeliveredNotifications(withIdentifiers: Array(staleDeliveredIdentifiers))
         }
+        let reminders = TaskReminderPlanner.reminders(
+            for: tasks,
+            states: states,
+            calendar: calendar,
+            leadTime: leadTime,
+            excludingIdentifiers: deliveredIdentifiers
+        )
+        let desiredIdentifiers = Set(reminders.map(\.identifier))
+        let pending = await center.pendingNotificationRequests()
+        let stalePendingIdentifiers = pending.lazy
+            .map(\.identifier)
+            .filter {
+                $0.hasPrefix(TaskReminderPlanner.identifierPrefix)
+                    && !desiredIdentifiers.contains($0)
+            }
+        center.removePendingNotificationRequests(withIdentifiers: Array(stalePendingIdentifiers))
 
-        for reminder in reminders where !deliveredIdentifiers.contains(reminder.identifier) {
+        for reminder in reminders {
             let content = UNMutableNotificationContent()
             content.title = notificationTitle(for: reminder.timing)
             content.body = reminder.taskName
@@ -194,10 +252,12 @@ final class TaskNotificationManager: NSObject, UNUserNotificationCenterDelegate 
                 trigger: trigger
             )
 
+            // Adding the same identifier replaces its trigger atomically, keeping
+            // the old pending request if the native scheduler rejects this one.
             do {
                 try await center.add(request)
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = "Could not schedule “\(reminder.taskName)”: \(error.localizedDescription)"
             }
         }
     }
@@ -227,11 +287,6 @@ final class TaskNotificationManager: NSObject, UNUserNotificationCenterDelegate 
         }
     }
 
-    private static var localGregorianCalendar: Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .autoupdatingCurrent
-        return calendar
-    }
 }
 
 /// Value snapshot shared by scene connection and notification-center delivery.

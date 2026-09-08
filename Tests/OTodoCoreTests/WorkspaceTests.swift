@@ -2000,6 +2000,64 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
             XCTAssertEqual(durable, initial)
         }
     }
+    func testEditorBatchStorageFailureAndIDExhaustionPublishNoPartialParent() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration(schemaVersion: 2)
+        let store = FileWorkspaceStore(rootURL: directory)
+        let baseline = try makeWorkspace(selection: selection, configuration: configuration)
+        try await store.save(baseline, expectedRevision: nil)
+        let services = [
+            TaskWorkspaceService(
+                persistence: CapacityLimitedWorkspaceStore(store: store, maximumTaskCount: 1),
+                taskCodec: ObsidianTaskCodec()
+            ),
+            TaskWorkspaceService(
+                persistence: store, taskCodec: ObsidianTaskCodec(),
+                ulidGenerator: FixedULIDGenerator(id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"))
+            ),
+        ]
+        for service in services {
+            do {
+                _ = try await service.addTask(
+                    selection: selection, name: "Parent", subtaskNames: ["Child"]
+                )
+                XCTFail("Persistence failure or exhausted unique IDs must reject the whole batch")
+            } catch {}
+            let after = try await loadRequired(store, selection: selection)
+            XCTAssertEqual(after, baseline)
+        }
+    }
+
+    func testEditorBatchRevisionRacePreservesConcurrentWorkspaceAndPublishesNoChildren() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration(schemaVersion: 2)
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(
+            makeWorkspace(selection: selection, configuration: configuration), expectedRevision: nil
+        )
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+        let parent = try await service.addTask(selection: selection, name: "Parent")
+        let snapshot = try await loadRequired(store, selection: selection)
+        _ = try await service.addProject(selection: selection, slug: "concurrent", title: "Concurrent project")
+        let concurrent = try await loadRequired(store, selection: selection)
+        let staleService = TaskWorkspaceService(
+            persistence: SnapshotWorkspaceStore(store: store, snapshot: snapshot), taskCodec: ObsidianTaskCodec()
+        )
+        var update = TaskUpdate(task: parent)
+        update.name = "Must not publish"
+        await assertConflict {
+            _ = try await staleService.editTask(
+                selection: selection, id: parent.id, expectedTask: parent, update: update,
+                subtaskNames: ["Child"]
+            )
+        }
+        let after = try await loadRequired(store, selection: selection)
+        XCTAssertEqual(after, concurrent)
+    }
 }
 
 private func loadRequired(
@@ -2096,10 +2154,11 @@ private func makeSelection() throws -> RepositorySelection {
 
 private func makeConfiguration(
     tasksDirectory: String = "Tasks",
-    obsidianLinkPrefix: String = ""
+    obsidianLinkPrefix: String = "",
+    schemaVersion: Int = 1
 ) throws -> StoreConfiguration {
     try StoreConfiguration(
-        schemaVersion: 1,
+        schemaVersion: schemaVersion,
         tasksDirectory: tasksDirectory,
         projectsDirectory: "Projects",
         obsidianLinkPrefix: obsidianLinkPrefix,

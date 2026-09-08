@@ -8,7 +8,7 @@ public struct ObsidianTaskCodec: TaskRecordCoding, Sendable {
 
     private static let coreKeys: Set<String> = [
         "name", "state", "projects", "tags", "due_date", "due_time", "recurrence",
-        "recurrence_from", "last_completed_date",
+        "recurrence_from", "last_completed_date", "url",
     ]
 
     public init() {}
@@ -51,6 +51,12 @@ public struct ObsidianTaskCodec: TaskRecordCoding, Sendable {
             parentID = id
         } else {
             parentID = nil
+        }
+        let url: String?
+        if values["url"] == .null {
+            url = nil
+        } else {
+            url = try Self.optionalString(values, key: "url")
         }
         let dueDate = try Self.optionalDate(values, key: "due_date")
         let dueTime = try Self.optionalTime(values, key: "due_time")
@@ -98,7 +104,8 @@ public struct ObsidianTaskCodec: TaskRecordCoding, Sendable {
             lastCompletedDate: lastCompletedDate,
             body: document.body,
             extraProperties: extras,
-            parentID: parentID
+            parentID: parentID,
+            url: url
         )
     }
 
@@ -134,7 +141,8 @@ public struct ObsidianTaskCodec: TaskRecordCoding, Sendable {
             lastCompletedDate: task.lastCompletedDate,
             body: task.body,
             extraProperties: task.extraProperties,
-            parentID: task.parentID
+            parentID: task.parentID,
+            url: task.url
         )
         let reserved = configuration.schemaVersion == 2 ? Self.coreKeys.union(["id", "parent"]) : Self.coreKeys.union(["id"])
         try SafeYAML.validateProperties(task.extraProperties, reserved: reserved)
@@ -151,6 +159,9 @@ public struct ObsidianTaskCodec: TaskRecordCoding, Sendable {
         try YAMLWriter.appendStringList(tags, key: "tags", to: &output)
         if let parentID = task.parentID {
             output += "parent: \(try YAMLWriter.quoted(parentID.rawValue))\n"
+        }
+        if let url = task.url {
+            output += "url: \(try YAMLWriter.quoted(url))\n"
         }
         if let dueDate = task.dueDate {
             output += "due_date: \(dueDate.rawValue)\n"

@@ -14,6 +14,8 @@ struct TaskEditorDraft: Equatable, Sendable {
     var recurrence: String?
     var recurrenceFrom: RecurrenceFrom?
     var body: String
+    var url: String?
+    var subtaskNames: [String] = []
     var attachments: [AttachmentDraft] = []
     var removingAttachmentPaths: [String] = []
 
@@ -33,6 +35,7 @@ struct TaskEditorDraft: Equatable, Sendable {
         recurrence = nil
         recurrenceFrom = nil
         body = ""
+        url = nil
         preservedTask = nil
     }
 
@@ -47,6 +50,7 @@ struct TaskEditorDraft: Equatable, Sendable {
         recurrence = task.recurrence
         recurrenceFrom = task.recurrenceFrom
         body = task.body
+        url = task.url
         preservedTask = task
     }
 
@@ -92,6 +96,7 @@ struct TaskEditorView: View {
     @State private var nameFocusRequest = 0
     @State private var requestsNameFocus = false
     @State private var isParentPickerPresented = false
+    @State private var hasPendingSubtask = false
     @FocusState private var notesFocused: Bool
     @State private var isScheduleExpanded = false
     @State private var isDetailsExpanded = false
@@ -235,6 +240,15 @@ struct TaskEditorView: View {
                             identifier: "task-editor-details", beforeToggle: dismissKeyboard
                         ))
                     }
+
+                    Section("Link") {
+                        TaskEditorLinkFields(url: $draft.url, onFocus: {
+                            requestsNameFocus = false
+                            notesFocused = false
+                        })
+                    }
+
+                    subtaskSection
 
                     if let attachmentModel, let attachmentSelection, AttachmentLinks.enabled(configuration: configuration) {
                         TaskAttachmentSection(
@@ -494,6 +508,62 @@ struct TaskEditorView: View {
         }
     }
 
+    private var subtaskSection: some View {
+        Section("Subtasks") {
+            if let taskID = draft.preservedTask?.id {
+                ForEach(hierarchy.children(of: taskID), id: \.id) { child in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(child.name)
+                        Text(configuration.states.first(where: { $0.id == child.state })?.name ?? child.state)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("task-editor-existing-subtask-\(child.id.rawValue)")
+                }
+            }
+            if configuration.schemaVersion >= 2 {
+                ForEach(draft.subtaskNames.indices, id: \.self) { index in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(draft.subtaskNames[index])
+                            Text("Not saved yet")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(role: .destructive) {
+                            draft.subtaskNames.remove(at: index)
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Remove \(draft.subtaskNames[index])")
+                        .accessibilityIdentifier("task-editor-remove-subtask-\(index)")
+                    }
+                    .accessibilityIdentifier("task-editor-queued-subtask-\(index)")
+                }
+                TaskEditorSubtaskInput(
+                    onFocus: {
+                        requestsNameFocus = false
+                        notesFocused = false
+                    },
+                    onPendingChange: { hasPendingSubtask = $0 },
+                    onAdd: { draft.subtaskNames.append($0) }
+                )
+                .id(nameFocusRequest)
+                Text("Tap Add to queue each child. Save creates the parent and queued subtasks together. Children start in the default state without inheriting projects, tags, dates, or links.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Subtasks require a schema 2 store. This schema 1 store is not upgraded automatically.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("task-editor-subtasks-unavailable")
+            }
+        }
+    }
+
     private var saveAnotherButton: some View {
         Button {
             save(createAnother: true)
@@ -591,6 +661,11 @@ struct TaskEditorView: View {
         if !configuration.states.contains(where: { $0.id == draft.state }) {
             return "Choose a configured state."
         }
+        do {
+            try DomainValidation.validateURL(normalizedURL)
+        } catch {
+            return error.localizedDescription
+        }
 
         let projects = TaskEditorDraft.parseCommaSeparated(projectsText)
         if Set(projects).count != projects.count {
@@ -631,7 +706,7 @@ struct TaskEditorView: View {
     }
 
     private var isSaveDisabled: Bool {
-        validationMessage != nil || hasPendingRelativeDueDate || isImportingAttachments || isSaving
+        validationMessage != nil || hasPendingRelativeDueDate || hasPendingSubtask || isImportingAttachments || isSaving
     }
 
     private func save(createAnother: Bool = false) {
@@ -643,6 +718,7 @@ struct TaskEditorView: View {
         value.tags = TaskEditorDraft.parseCommaSeparated(tagsText)
         value.dueDate = resolvedDueDate
         value.dueTime = resolvedDueTime
+        value.url = normalizedURL
         requestsNameFocus = false
         notesFocused = false
         isSaving = true
@@ -659,6 +735,9 @@ struct TaskEditorView: View {
                 draft.removingAttachmentPaths = []
                 draft.name = ""
                 draft.body = ""
+                draft.url = nil
+                draft.subtaskNames = []
+                hasPendingSubtask = false
                 draft.dueDate = defaultsToToday ? TaskSchedule.civilDate(from: .now) : nil
                 draft.dueTime = nil
                 draft.recurrence = nil
@@ -681,6 +760,12 @@ struct TaskEditorView: View {
                 dismiss()
             }
         }
+    }
+
+    private var normalizedURL: String? {
+        guard let value = draft.url?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else { return nil }
+        return value
     }
 
     private var selectedDueDate: CivilDate? {
@@ -711,7 +796,7 @@ struct TaskEditorView: View {
         if hasDueTime {
             return "Choose the calendar date and exact due time."
         }
-        return "Choose a calendar date. Date-only reminders arrive at 9:00 AM."
+        return "Choose a calendar date. Date-only reminders are based on 9:00 AM, with the lead time from Due reminders settings."
     }
 
     private static func detectDueDatePhrase(in name: String) -> DetectedDueDatePhrase? {
@@ -745,6 +830,110 @@ struct TaskEditorView: View {
 
     private static func isLowercaseLetterOrDigit(_ value: UInt8) -> Bool {
         (97 ... 122).contains(value) || (48 ... 57).contains(value)
+    }
+}
+
+private struct TaskEditorLinkFields: View {
+    @Binding var url: String?
+    let onFocus: () -> Void
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack {
+            TextField("https://example.com", text: Binding(
+                get: { url ?? "" },
+                set: { url = $0.isEmpty ? nil : $0 }
+            ))
+            .keyboardType(.URL)
+            .textContentType(.URL)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .accessibilityLabel("Todo link")
+            .accessibilityIdentifier("task-editor-url")
+            .focused($isFocused)
+            .onChange(of: isFocused) { _, focused in
+                if focused { onFocus() }
+            }
+            if url != nil {
+                Button {
+                    url = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Clear link")
+                .accessibilityIdentifier("task-editor-clear-url")
+            }
+        }
+        if let destination {
+            Link(destination: destination) {
+                Label("Open Link", systemImage: "arrow.up.right.square")
+            }
+            .accessibilityHint("Opens this URL in your browser")
+            .accessibilityIdentifier("task-editor-open-url")
+        }
+    }
+
+    private var destination: URL? {
+        guard let value = url?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else { return nil }
+        do {
+            try DomainValidation.validateURL(value)
+            return URL(string: value)
+        } catch {
+            return nil
+        }
+    }
+}
+
+/// Only Add and pending-state transitions reach the parent; typing never rebuilds date inputs.
+private struct TaskEditorSubtaskInput: View {
+    let onFocus: () -> Void
+    let onPendingChange: (Bool) -> Void
+    let onAdd: (String) -> Void
+    @State private var name = ""
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("New subtask name", text: $name)
+                .accessibilityLabel("New subtask name")
+                .accessibilityIdentifier("task-editor-subtask-name")
+                .focused($isFocused)
+                .submitLabel(.done)
+                .onSubmit(add)
+                .onChange(of: isFocused) { _, focused in
+                    if focused { onFocus() }
+                }
+                .onChange(of: !name.isEmpty) { _, pending in
+                    onPendingChange(pending)
+                }
+            HStack {
+                Button("Add Subtask", systemImage: "plus", action: add)
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("task-editor-subtask-add")
+                    .disabled(!canAdd)
+                if !name.isEmpty {
+                    Spacer()
+                    Button("Clear") { name = "" }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Clear new subtask name")
+                        .accessibilityIdentifier("task-editor-subtask-clear")
+                }
+            }
+        }
+    }
+
+    private var canAdd: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !name.contains("\n") && !name.contains("\r")
+    }
+
+    private func add() {
+        guard canAdd else { return }
+        onAdd(name.trimmingCharacters(in: .whitespacesAndNewlines))
+        name = ""
+        onPendingChange(false)
     }
 }
 

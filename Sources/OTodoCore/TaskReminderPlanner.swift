@@ -1,5 +1,44 @@
 import Foundation
 
+/// Device-local timing, deliberately separate from the task's persisted due date.
+public struct TaskReminderLeadTime: Sendable, Equatable {
+    public enum Unit: String, Sendable {
+        case minutes
+        case hours
+        case days
+    }
+
+    public let value: Int
+    public let unit: Unit
+
+    public static let atDueTime = TaskReminderLeadTime()
+    public static let fiveMinutes = TaskReminderLeadTime(value: 5, unit: .minutes)!
+    public static let oneHour = TaskReminderLeadTime(value: 1, unit: .hours)!
+
+    public init?(value: Int, unit: Unit) {
+        guard value > 0 else { return nil }
+        self.value = value
+        self.unit = unit
+    }
+
+    private init() {
+        value = 0
+        unit = .minutes
+    }
+
+    fileprivate func fireDate(before dueDate: Date, calendar: Calendar) -> Date? {
+        switch unit {
+        case .minutes:
+            return dueDate.addingTimeInterval(-Double(value) * 60)
+        case .hours:
+            return dueDate.addingTimeInterval(-Double(value) * 3_600)
+        case .days:
+            // A calendar day is not always 24 hours at a daylight-saving boundary.
+            return calendar.date(byAdding: .day, value: -value, to: dueDate)
+        }
+    }
+}
+
 public enum TaskReminderTiming: Sendable, Equatable {
     case overdue
     case dueToday
@@ -38,13 +77,23 @@ public enum TaskReminderPlanner {
     public static let identifierPrefix = "otodo.task."
     public static let maximumPendingReminders = 64
 
+    public static func identifier(for task: TodoTask) -> String? {
+        guard let dueDate = task.dueDate else { return nil }
+        let timeIdentity = task.dueTime.map {
+            $0.rawValue.replacingOccurrences(of: ":", with: "")
+        } ?? "date"
+        return "\(identifierPrefix)\(task.id.rawValue).\(dueDate.rawValue).\(timeIdentity)"
+    }
+
     public static func reminders(
         for tasks: [TodoTask],
         states: [WorkflowState],
         now: Date = .now,
         calendar: Calendar = .autoupdatingCurrent,
         defaultHour: Int = 9,
-        minimumLeadTime: TimeInterval = 60
+        minimumLeadTime: TimeInterval = 60,
+        leadTime: TaskReminderLeadTime = .atDueTime,
+        excludingIdentifiers: Set<String> = []
     ) -> [TaskReminder] {
         precondition((0 ... 23).contains(defaultHour), "defaultHour must be in 0...23")
         precondition(minimumLeadTime > 0, "minimumLeadTime must be positive")
@@ -55,12 +104,15 @@ public enum TaskReminderPlanner {
         return tasks.compactMap { task -> TaskReminder? in
             guard !terminalStateIDs.contains(task.state),
                   let dueDate = task.dueDate,
+                  let identifier = Self.identifier(for: task),
+                  !excludingIdentifiers.contains(identifier),
                   let scheduledDate = Self.scheduledDate(
                       for: dueDate,
                       time: task.dueTime,
                       defaultHour: defaultHour,
                       calendar: calendar
-                  )
+                  ),
+                  let advancedDate = leadTime.fireDate(before: scheduledDate, calendar: calendar)
             else {
                 return nil
             }
@@ -75,14 +127,11 @@ public enum TaskReminderPlanner {
                 timing = .upcoming
             }
 
-            let fireDate = scheduledDate > now
-                ? scheduledDate
+            let fireDate = advancedDate > now
+                ? advancedDate
                 : now.addingTimeInterval(minimumLeadTime)
-            let timeIdentity = task.dueTime.map {
-                $0.rawValue.replacingOccurrences(of: ":", with: "")
-            } ?? "date"
             return TaskReminder(
-                identifier: "\(identifierPrefix)\(task.id.rawValue).\(dueDate.rawValue).\(timeIdentity)",
+                identifier: identifier,
                 taskID: task.id,
                 taskName: task.name,
                 dueDate: dueDate,
@@ -92,6 +141,9 @@ public enum TaskReminderPlanner {
             )
         }
         .sorted { lhs, rhs in
+            if lhs.fireDate != rhs.fireDate {
+                return lhs.fireDate < rhs.fireDate
+            }
             if lhs.dueDate != rhs.dueDate {
                 return lhs.dueDate < rhs.dueDate
             }

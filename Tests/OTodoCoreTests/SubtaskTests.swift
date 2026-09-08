@@ -333,6 +333,196 @@ final class SubtaskTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(workspace.pendingChanges.map(\.path), [child.relativePath])
     }
 
+    func testEditorBatchPublishesParentChildrenAndCompletionAsOneRevision() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (_, service, selection) = try await seed([], at: directory)
+        let parent = try await service.addTask(
+            selection: selection, name: "Parent", state: "done", tags: ["parent-only"],
+            dueDate: CivilDate(rawValue: "2026-09-08"), body: "Parent notes",
+            url: "https://example.com/Parent", subtaskNames: ["First child", "Second child"]
+        )
+        let created = try await service.loadWorkspace(selection: selection)
+        XCTAssertEqual(created.revision, 1)
+        XCTAssertEqual(Set(created.pendingChanges.map(\.path)), Set(created.tasks.map(\.task.relativePath)))
+        let children = TaskHierarchy(tasks: created.tasks.map(\.task)).children(of: parent.id)
+        XCTAssertEqual(Set(children.map(\.name)), ["First child", "Second child"])
+        XCTAssertEqual(TaskCompletionHistory.read(parent).events.first?.usesSubtasks, true)
+        for child in children {
+            XCTAssertEqual(child.state, "open")
+            XCTAssertTrue(child.tags.isEmpty)
+            XCTAssertTrue(child.projectSlugs.isEmpty)
+            XCTAssertNil(child.dueDate)
+            XCTAssertNil(child.url)
+            XCTAssertNil(child.recurrence)
+            XCTAssertNil(child.lastCompletedDate)
+            XCTAssertTrue(child.body.isEmpty)
+            XCTAssertTrue(TaskCompletionHistory.read(child).events.isEmpty)
+        }
+        var update = TaskUpdate(task: parent)
+        update.name = "Edited parent"
+        let edited = try await service.editTask(
+            selection: selection, id: parent.id, expectedTask: parent, update: update,
+            subtaskNames: ["Third child"]
+        )
+        let saved = try await service.loadWorkspace(selection: selection)
+        XCTAssertEqual(saved.revision, 2)
+        XCTAssertEqual(saved.tasks.count, 4)
+        XCTAssertEqual(saved.tasks.filter { $0.task.parentID == edited.id }.count, 3)
+        XCTAssertEqual(TaskCompletionHistory.read(edited).events.count, 1)
+        for child in children {
+            XCTAssertEqual(saved.tasks.first { $0.task.id == child.id }?.task, child)
+        }
+    }
+
+    func testEditorBatchRejectsInvalidChildStaleParentAndLegacySchemaWithoutPublication() async throws {
+        for schema in [1, 2] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let (_, service, selection) = try await seed([], at: directory, schema: schema)
+            let baseline = try await service.loadWorkspace(selection: selection)
+            for invalidName in ["", "tomorrow"] {
+                do {
+                    _ = try await service.addTask(
+                        selection: selection, name: "Must not appear", subtaskNames: ["Valid child", invalidName]
+                    )
+                    XCTFail("The complete parent/children mutation must refuse invalid input")
+                } catch {}
+                let afterAdd = try await service.loadWorkspace(selection: selection)
+                XCTAssertEqual(afterAdd, baseline)
+            }
+            let parent = try await service.addTask(selection: selection, name: "Existing parent")
+            let beforeEdit = try await service.loadWorkspace(selection: selection)
+            var update = TaskUpdate(task: parent)
+            update.name = "Must not publish"
+            do {
+                _ = try await service.editTask(
+                    selection: selection, id: parent.id, expectedTask: parent, update: update,
+                    subtaskNames: schema == 1 ? ["Valid child"] : ["Valid child", "Invalid\nchild"]
+                )
+                XCTFail("No partial parent edit or children may be saved")
+            } catch {}
+            let afterEdit = try await service.loadWorkspace(selection: selection)
+            XCTAssertEqual(afterEdit, beforeEdit)
+            var stale = parent
+            stale.name = "Stale editor snapshot"
+            do {
+                _ = try await service.editTask(
+                    selection: selection, id: parent.id, expectedTask: stale, update: update,
+                    subtaskNames: ["Valid child"]
+                )
+                XCTFail("Stale parent must refuse the entire batch")
+            } catch let error as OTodoError {
+                guard case .conflict = error else { return XCTFail("\(error)") }
+            }
+            let afterStale = try await service.loadWorkspace(selection: selection)
+            XCTAssertEqual(afterStale, beforeEdit)
+        }
+    }
+
+    func testEditorBatchRejectsBrokenParentAncestryWithoutPublishingEdit() async throws {
+        let broken = try task(id(1), parent: id(99))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (_, service, selection) = try await seed([broken], at: directory)
+        let before = try await service.loadWorkspace(selection: selection)
+        var update = TaskUpdate(task: broken)
+        update.name = "Must not publish"
+        do {
+            _ = try await service.editTask(
+                selection: selection, id: broken.id, expectedTask: broken, update: update,
+                subtaskNames: ["Child"]
+            )
+            XCTFail("New children cannot extend broken ancestry")
+        } catch let error as OTodoError {
+            guard case .validation(field: "parent", message: _) = error else { return XCTFail("\(error)") }
+        }
+        let after = try await service.loadWorkspace(selection: selection)
+        XCTAssertEqual(after, before)
+    }
+
+    func testURLSurvivesCacheReloadMetadataEditsReschedulingAndRecurringCompletion() async throws {
+        for schema in [1, 2] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let (_, service, selection) = try await seed([], at: directory, schema: schema)
+            let link = "HTTPS://Example.com/Review%20Notes?q=One#Next"
+            let parent = try await service.addTask(
+                selection: selection, name: "Review", dueDate: CivilDate(rawValue: "2026-09-08"),
+                recurrence: "FREQ=DAILY", recurrenceFrom: .schedule, url: link
+            )
+            let edited = try await service.editTask(
+                selection: selection, id: parent.id, expectedTask: parent, name: "Renamed review",
+                state: parent.state, projectSlugs: [], tags: ["review"], dueDate: parent.dueDate,
+                recurrence: parent.recurrence, recurrenceFrom: parent.recurrenceFrom, body: "New notes"
+            )
+            let rescheduled = try await service.rescheduleTasks(
+                selection: selection, expectedTasks: [edited],
+                dueDate: .set(CivilDate(rawValue: "2026-09-09")), dueTime: .clear
+            )
+            let completed = try await service.completeTask(
+                selection: selection, expectedTask: XCTUnwrap(rescheduled.first),
+                completedOn: CivilDate(rawValue: "2026-09-09")
+            )
+            let reloaded = try await FileWorkspaceStore(rootURL: directory).load(selection: selection)
+            let saved = try XCTUnwrap(reloaded?.tasks.first)
+            XCTAssertEqual(saved.task.url, link)
+            XCTAssertEqual(saved.task.dueDate?.rawValue, "2026-09-10")
+            XCTAssertEqual(saved.task.lastCompletedDate?.rawValue, "2026-09-09")
+            XCTAssertEqual(saved.task.name, "Renamed review")
+            XCTAssertEqual(saved.task, completed)
+            XCTAssertEqual(reloaded?.configuration.schemaVersion, schema)
+            let encoded = try XCTUnwrap(reloaded?.pendingChanges.first?.content)
+            XCTAssertEqual(try ObsidianTaskCodec().parseTask(
+                id: completed.id, relativePath: completed.relativePath, text: encoded,
+                configuration: configuration(schema)
+            ).url, link)
+            var clear = TaskUpdate(task: completed)
+            clear.url = nil
+            let cleared = try await service.editTask(
+                selection: selection, id: completed.id, expectedTask: completed, update: clear
+            )
+            XCTAssertNil(cleared.url)
+            let afterClear = try await service.loadWorkspace(selection: selection)
+            XCTAssertFalse(try XCTUnwrap(afterClear.pendingChanges.first?.content).contains("\nurl:"))
+        }
+    }
+
+    func testLegacyWorkspaceURLExtraLoadsWithoutRewritingEvidenceAndCanonicalizesOnEdit() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (_, service, selection) = try await seed([], at: directory, schema: 1)
+        let link = "https://example.com/Legacy"
+        _ = try await service.addTask(selection: selection, name: "Legacy task", url: link)
+        let cacheURL = directory.appendingPathComponent(FileWorkspaceStore.selectionKey(for: selection) + ".json")
+        var envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: cacheURL)) as? [String: Any])
+        var workspace = try XCTUnwrap(envelope["workspace"] as? [String: Any])
+        var documents = try XCTUnwrap(workspace["tasks"] as? [[String: Any]])
+        var cachedTask = try XCTUnwrap(documents[0]["task"] as? [String: Any])
+        cachedTask.removeValue(forKey: "url")
+        var extras = try XCTUnwrap(cachedTask["extraProperties"] as? [[String: Any]])
+        let legacyURL = try JSONSerialization.jsonObject(with: JSONEncoder().encode(YAMLProperty(name: "url", value: .string(link))))
+        extras.append(try XCTUnwrap(legacyURL as? [String: Any]))
+        cachedTask["extraProperties"] = extras
+        documents[0]["task"] = cachedTask
+        workspace["tasks"] = documents
+        envelope["workspace"] = workspace
+        let legacyBytes = try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
+        try legacyBytes.write(to: cacheURL)
+        let loaded = try await service.loadWorkspace(selection: selection)
+        XCTAssertEqual(try Data(contentsOf: cacheURL), legacyBytes)
+        let task = try XCTUnwrap(loaded.tasks.first?.task)
+        XCTAssertEqual(task.url, link)
+        var update = TaskUpdate(task: task)
+        update.tags = ["updated"]
+        _ = try await service.editTask(selection: selection, id: task.id, expectedTask: task, update: update)
+        let canonical = try await service.loadWorkspace(selection: selection)
+        XCTAssertEqual(canonical.tasks.first?.task.url, link)
+        XCTAssertFalse(try XCTUnwrap(canonical.tasks.first?.task).extraProperties.contains { $0.name == "url" })
+        XCTAssertEqual(try XCTUnwrap(canonical.pendingChanges.first?.content).components(separatedBy: "\nurl:").count - 1, 1)
+        XCTAssertEqual(canonical.configuration.schemaVersion, 1)
+    }
+
     private func id(_ number: Int) throws -> TaskID {
         try TaskID(rawValue: String(format: "%026d", number))
     }

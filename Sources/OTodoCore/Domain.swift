@@ -1,5 +1,11 @@
 import Foundation
 
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
 public enum OTodoError: Error, Sendable, Equatable, Codable {
     case validation(field: String, message: String)
     case unsupportedSchema(found: Int, supported: Int)
@@ -300,6 +306,7 @@ public struct TodoTask: Sendable, Codable, Equatable {
     public var body: String
     public var extraProperties: [YAMLProperty]
     public var parentID: TaskID?
+    public var url: String?
 
     public init(
         id: TaskID,
@@ -315,7 +322,8 @@ public struct TodoTask: Sendable, Codable, Equatable {
         lastCompletedDate: CivilDate?,
         body: String,
         extraProperties: [YAMLProperty],
-        parentID: TaskID? = nil
+        parentID: TaskID? = nil,
+        url: String? = nil
     ) throws {
         try DomainValidation.validateRelativePath(relativePath, field: "relativePath")
         guard relativePath.hasSuffix(".md"),
@@ -348,6 +356,7 @@ public struct TodoTask: Sendable, Codable, Equatable {
             lastCompletedDate: lastCompletedDate
         )
         try DomainValidation.validateExtraProperties(extraProperties)
+        try DomainValidation.validateURL(url)
         guard parentID == nil || !extraProperties.contains(where: { $0.name == "parent" }) else {
             throw OTodoError.validation(field: "parent", message: "Typed parent and extra parent metadata cannot coexist")
         }
@@ -366,15 +375,35 @@ public struct TodoTask: Sendable, Codable, Equatable {
         self.body = body
         self.extraProperties = extraProperties
         self.parentID = parentID
+        self.url = url
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, relativePath, name, state, projectSlugs, tags, dueDate, dueTime, recurrence
-        case recurrenceFrom, lastCompletedDate, body, extraProperties, parentID
+        case recurrenceFrom, lastCompletedDate, body, extraProperties, parentID, url
     }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        var extras = try container.decode([YAMLProperty].self, forKey: .extraProperties)
+        var url = try container.decodeIfPresent(String.self, forKey: .url)
+        // Older caches stored this additive frontmatter field as plugin metadata.
+        if let index = extras.firstIndex(where: { $0.name == "url" }) {
+            guard !extras.dropFirst(index + 1).contains(where: { $0.name == "url" }) else {
+                throw OTodoError.validation(field: "url", message: "Duplicate URL metadata")
+            }
+            let legacy = extras.remove(at: index)
+            let legacyURL: String?
+            switch legacy.value {
+            case let .string(value): legacyURL = value
+            case .null: legacyURL = nil
+            default: throw OTodoError.validation(field: "url", message: "URL must be a string")
+            }
+            guard url == nil || legacyURL == nil || url == legacyURL else {
+                throw OTodoError.validation(field: "url", message: "Conflicting URL metadata")
+            }
+            url = url ?? legacyURL
+        }
         try self.init(
             id: container.decode(TaskID.self, forKey: .id),
             relativePath: container.decode(String.self, forKey: .relativePath),
@@ -388,8 +417,9 @@ public struct TodoTask: Sendable, Codable, Equatable {
             recurrenceFrom: container.decodeIfPresent(RecurrenceFrom.self, forKey: .recurrenceFrom),
             lastCompletedDate: container.decodeIfPresent(CivilDate.self, forKey: .lastCompletedDate),
             body: container.decode(String.self, forKey: .body),
-            extraProperties: container.decode([YAMLProperty].self, forKey: .extraProperties),
-            parentID: container.decodeIfPresent(TaskID.self, forKey: .parentID)
+            extraProperties: extras,
+            parentID: container.decodeIfPresent(TaskID.self, forKey: .parentID),
+            url: url
         )
     }
 }
@@ -812,11 +842,57 @@ public struct RemoteChange: Sendable, Codable, Equatable {
     }
 }
 
-enum DomainValidation {
+public enum DomainValidation {
     private static let coreProperties: Set<String> = [
         "id", "name", "state", "projects", "tags", "due_date", "due_time", "recurrence",
-        "recurrence_from", "last_completed_date",
+        "recurrence_from", "last_completed_date", "url",
     ]
+
+    public static func validateURL(_ value: String?) throws {
+        guard let value else { return }
+        let invalid = OTodoError.validation(field: "url", message: "Expected an absolute HTTP or HTTPS URL with a host")
+        guard !value.unicodeScalars.contains(where: {
+            CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0)
+        }), !value.contains(where: { "\\<>\"{}|^`".contains($0) }),
+        value.range(of: "%(?![0-9A-Fa-f]{2})", options: .regularExpression) == nil,
+        let separator = value.range(of: "://"),
+        ["http", "https"].contains(value[..<separator.lowerBound].lowercased()),
+        let components = URLComponents(string: value),
+        let host = components.host, !host.isEmpty,
+        components.url != nil else { throw invalid }
+        let authority = value[separator.upperBound...].prefix { !"/?#".contains($0) }
+        let authorityParts = authority.split(separator: "@", omittingEmptySubsequences: false)
+        guard authorityParts.count <= 2,
+              authorityParts.count == 1 || !authorityParts[0].contains(where: { "[]".contains($0) })
+        else { throw invalid }
+        let hostPort = authorityParts.last ?? ""
+        if hostPort.hasPrefix("[") {
+            guard let close = hostPort.firstIndex(of: "]") else { throw invalid }
+            let addressText = String(hostPort[hostPort.index(after: hostPort.startIndex)..<close])
+            var address = in6_addr()
+            guard addressText.withCString({ inet_pton(AF_INET6, $0, &address) }) == 1 else { throw invalid }
+            let suffix = hostPort[hostPort.index(after: close)...]
+            guard suffix.isEmpty || suffix.hasPrefix(":") else { throw invalid }
+        } else {
+            guard !hostPort.contains(where: { "[]".contains($0) }),
+                  let rawHost = hostPort.split(separator: ":", omittingEmptySubsequences: false).first,
+                  let decodedHost = String(rawHost).removingPercentEncoding,
+                  !decodedHost.isEmpty,
+                  decodedHost.unicodeScalars.allSatisfy({
+                      if $0.value > 127 {
+                          return !CharacterSet.whitespacesAndNewlines.contains($0)
+                              && !CharacterSet.controlCharacters.contains($0)
+                      }
+                      return CharacterSet.alphanumerics.contains($0) || "-._~!$&'()*+,;=%".unicodeScalars.contains($0)
+                  })
+            else { throw invalid }
+        }
+        if let colon = hostPort.lastIndex(of: ":"), !hostPort.hasSuffix("]") {
+            let rawPort = hostPort[hostPort.index(after: colon)...]
+            guard !rawPort.isEmpty, rawPort.utf8.allSatisfy({ (48...57).contains($0) }),
+                  let port = Int(rawPort), (0...65535).contains(port) else { throw invalid }
+        }
+    }
 
     static func validateRelativePath(_ path: String, field: String) throws {
         guard !path.isEmpty,

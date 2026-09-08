@@ -25,6 +25,7 @@ struct TaskListView: View {
     @State private var isProjectEditorPresented = false
     @State private var isChangelogPresented = false
     @State private var isStatsPresented = false
+    @State private var isReminderSettingsPresented = false
     @State private var isBulkEditorPresented = false
     @State private var bulkCreationDefaults: (projectSlugs: [String], tags: [String], dueDate: CivilDate?) = ([], [], nil)
     @State private var reschedulePresentation: ReschedulePresentation?
@@ -330,6 +331,13 @@ struct TaskListView: View {
         .sheet(isPresented: $isStatsPresented, onDismiss: presentPendingNotificationRequest) {
             StatsView(model: model)
         }
+        .sheet(isPresented: $isReminderSettingsPresented, onDismiss: presentPendingNotificationRequest) {
+            ReminderSettingsView(
+                notifications: notifications,
+                tasks: model.tasks,
+                states: model.configuration?.states ?? []
+            )
+        }
         .task(id: model.workspaceSelection.map(FileWorkspaceStore.selectionKey(for:))) {
             selectedFilterID = "today"
             isUpcoming = false
@@ -565,6 +573,7 @@ struct TaskListView: View {
         isChangelogPresented = false
         isStatsPresented = false
         isBulkEditorPresented = false
+        isReminderSettingsPresented = false
         reschedulePresentation = nil
         presentNewTodo()
     }
@@ -581,6 +590,7 @@ struct TaskListView: View {
               !isFilterLibraryPresented,
               !isChangelogPresented,
               !isStatsPresented,
+              !isReminderSettingsPresented,
               let taskID = notifications.consumePendingTaskRequest()
         else { return }
 
@@ -771,24 +781,8 @@ struct TaskListView: View {
 
     private var notificationControl: some View {
         Button {
-            Task { @MainActor in
-                switch notifications.status {
-                case .enabled:
-                    await notifications.disable()
-                case .denied:
-                    guard let settingsURL = URL(
-                        string: UIApplication.openSettingsURLString
-                    ) else { return }
-                    _ = await UIApplication.shared.open(settingsURL)
-                case .checking:
-                    break
-                case .notRequested, .disabled:
-                    await notifications.enable(
-                        tasks: model.tasks,
-                        states: model.configuration?.states ?? []
-                    )
-                }
-            }
+            dismissProjectSidebar()
+            isReminderSettingsPresented = true
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: notificationIcon)
@@ -831,10 +825,9 @@ struct TaskListView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(notifications.isUpdating || notifications.status == .checking)
         .accessibilityLabel("Due reminders")
         .accessibilityValue(notificationAccessibilityValue)
-        .accessibilityHint(notificationAccessibilityHint)
+        .accessibilityHint("Opens this device’s reminder timing and notification access settings")
         .accessibilityIdentifier("notification-settings")
     }
 
@@ -848,7 +841,7 @@ struct TaskListView: View {
         case .notRequested:
             return "Get an alert when a todo is due"
         case .enabled:
-            return "Alerts arrive at 9:00 AM"
+            return notifications.leadTime.displayName
         case .disabled:
             return "Due-date alerts are off"
         case .denied:
@@ -893,18 +886,6 @@ struct TaskListView: View {
         }
     }
 
-    private var notificationAccessibilityHint: String {
-        switch notifications.status {
-        case .enabled:
-            return "Turns off due-date notifications"
-        case .denied:
-            return "Opens iOS Settings"
-        case .checking:
-            return ""
-        case .notRequested, .disabled:
-            return "Requests permission and schedules due-date notifications"
-        }
-    }
 
     private var inboxButton: some View {
         let isSelected = selectedFilterID == "inbox"

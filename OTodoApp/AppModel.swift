@@ -599,7 +599,9 @@ final class AppModel {
                 recurrenceFrom: draft.recurrenceFrom,
                 body: draft.body,
                 parentID: draft.parentID,
-                attachments: draft.attachments
+                attachments: draft.attachments,
+                url: draft.url,
+                subtaskNames: draft.subtaskNames
             )
             saved = true
             guard sessionID == operationSession else { return }
@@ -693,10 +695,12 @@ final class AppModel {
                     recurrence: draft.recurrence,
                     recurrenceFrom: draft.recurrenceFrom,
                     body: draft.body,
-                    parentID: draft.parentID
+                    parentID: draft.parentID,
+                    url: draft.url
                 ),
                 attachments: draft.attachments,
-                removingAttachmentPaths: draft.removingAttachmentPaths
+                removingAttachmentPaths: draft.removingAttachmentPaths,
+                subtaskNames: draft.subtaskNames
             )
             saved = true
             guard sessionID == operationSession else { return }

@@ -18,6 +18,7 @@ struct OTodoApp: App {
             case let .success(model):
                 RootView(model: model, notifications: notifications)
                     .tint(OTodoTheme.accent)
+                    .fontDesign(.rounded)
     #if DEBUG
                     .preferredColorScheme(testColorScheme)
     #endif

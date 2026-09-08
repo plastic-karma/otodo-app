@@ -21,7 +21,7 @@ final class ShareViewController: UIViewController {
                 ))
             }
         )
-        let host = UIHostingController(rootView: ShareCaptureView(model: model))
+        let host = UIHostingController(rootView: ShareCaptureView(model: model).fontDesign(.rounded))
         addChild(host)
         host.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(host.view)

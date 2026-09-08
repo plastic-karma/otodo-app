@@ -115,6 +115,70 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(Data(serialized.utf8), Data(expected.utf8))
     }
 
+    func testURLCodecPreservesSpellingAndCanonicalPlacementInBothSchemas() throws {
+        for version in [1, 2] {
+            let config = try StrictStoreConfigCodec().parseConfiguration(
+                canonicalConfiguration.replacingOccurrences(of: "schema_version = 1", with: "schema_version = \(version)")
+            )
+            let link = "HTTPS://Example.com:443/Review%20Notes?q=One#Next"
+            let parent = version == 2 ? "parent: \"00000000000000000000000001\"\n" : ""
+            let source = "---\nname: Linked\nstate: open\nprojects: []\ntags: []\n\(parent)url: \"\(link)\"\ndue_date: 2026-09-08\n---\nNotes\n"
+            var task = try codec.parseTask(id: taskID, relativePath: taskPath, text: source, configuration: config)
+            task.name = "Renamed"
+            let encoded = try codec.serializeTask(task, configuration: config)
+            XCTAssertTrue(encoded.contains("\(parent)url: \"\(link)\"\ndue_date: 2026-09-08\n"))
+            XCTAssertEqual(try codec.parseTask(
+                id: taskID, relativePath: taskPath, text: encoded, configuration: config
+            ).url, link)
+            XCTAssertFalse(task.extraProperties.contains { $0.name == "url" })
+            task.url = nil
+            XCTAssertFalse(try codec.serializeTask(task, configuration: config).contains("\nurl:"))
+        }
+    }
+
+    func testMalformedURLsAreRejectedInsteadOfNormalizedIntoWebLinks() throws {
+        let invalid = [
+            "", "example.com", "//example.com", "https:example.com", "file:///tmp/task", "javascript:alert(1)",
+            "https://", "https:///path", "https://example.com/a b", "https://example.com/\nnext",
+            "https://example.com\\path", "https://example.com/%ZZ", "https://example.com/%",
+            "https://example.com:65536", "https://example.com:", "https://example.com:no",
+            "https://[not-ipv6]", "https://user@@example.com", "https://exam%20ple.com", "https://example.com/<x>",
+        ]
+        for link in invalid {
+            assertValidation(try DomainValidation.validateURL(link), field: "url")
+        }
+        for scalar in ["17", "true", "[]", "{}"] {
+            let source = "---\nname: Linked\nstate: open\nprojects: []\ntags: []\nurl: \(scalar)\n---\n"
+            assertValidation(try codec.parseTask(
+                id: taskID, relativePath: taskPath, text: source, configuration: configuration
+            ), field: "url")
+        }
+        for link in ["http://localhost", "https://[::1]:8443/path", "https://example.com/a%20b", "https://例え.jp/道"] {
+            try DomainValidation.validateURL(link)
+        }
+    }
+
+    func testOldCachedURLExtraMigratesOnceAndConflictingValuesRefuse() throws {
+        let source = "---\nname: Linked\nstate: open\nprojects: []\ntags: []\n---\n"
+        let task = try codec.parseTask(id: taskID, relativePath: taskPath, text: source, configuration: configuration)
+        let link = "https://example.com/Original"
+        var old = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(task)) as? [String: Any])
+        old.removeValue(forKey: "url")
+        old["extraProperties"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode([
+            YAMLProperty(name: "url", value: .string(link)),
+            YAMLProperty(name: "plugin", value: .string("preserved")),
+        ]))
+        let migrated = try JSONDecoder().decode(TodoTask.self, from: JSONSerialization.data(withJSONObject: old))
+        XCTAssertEqual(migrated.url, link)
+        XCTAssertEqual(migrated.extraProperties, [YAMLProperty(name: "plugin", value: .string("preserved"))])
+        let encoded = try JSONEncoder().encode(migrated)
+        XCTAssertEqual(try JSONDecoder().decode(TodoTask.self, from: encoded), migrated)
+        let markdown = try codec.serializeTask(migrated, configuration: configuration)
+        XCTAssertEqual(markdown.components(separatedBy: "\nurl:").count - 1, 1)
+        old["url"] = "https://example.com/Different"
+        XCTAssertThrowsError(try JSONDecoder().decode(TodoTask.self, from: JSONSerialization.data(withJSONObject: old)))
+    }
+
     func testCRLFFrontMatterPreservesBodyBytesExactlyAcrossMetadataEdit() throws {
         let body = "First line\r\n\r\nSecond line\nFinal line without newline"
         let source = [

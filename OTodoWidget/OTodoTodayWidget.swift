@@ -61,6 +61,7 @@ struct OTodoTodayWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: TodayWidgetProvider()) { entry in
             TodayWidgetView(entry: entry)
+                .fontDesign(.rounded)
         }
         .configurationDisplayName("Today")
         .description("Active todos due today or overdue.")

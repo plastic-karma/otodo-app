@@ -11,6 +11,7 @@ public struct TaskUpdate: Sendable, Equatable {
     public var recurrenceFrom: RecurrenceFrom?
     public var body: String
     public var parentID: TaskID?
+    public var url: String?
 
     public init(
         name: String,
@@ -22,7 +23,8 @@ public struct TaskUpdate: Sendable, Equatable {
         recurrence: String?,
         recurrenceFrom: RecurrenceFrom?,
         body: String,
-        parentID: TaskID? = nil
+        parentID: TaskID? = nil,
+        url: String? = nil
     ) {
         self.name = name
         self.state = state
@@ -34,6 +36,7 @@ public struct TaskUpdate: Sendable, Equatable {
         self.recurrenceFrom = recurrenceFrom
         self.body = body
         self.parentID = parentID
+        self.url = url
     }
 
     public init(task: TodoTask) {
@@ -47,7 +50,8 @@ public struct TaskUpdate: Sendable, Equatable {
             recurrence: task.recurrence,
             recurrenceFrom: task.recurrenceFrom,
             body: task.body,
-            parentID: task.parentID
+            parentID: task.parentID,
+            url: task.url
         )
     }
 }
@@ -263,7 +267,9 @@ public actor TaskWorkspaceService {
         lastCompletedDate: CivilDate? = nil,
         body: String = "",
         parentID: TaskID? = nil,
-        attachments: [AttachmentDraft] = []
+        attachments: [AttachmentDraft] = [],
+        url: String? = nil,
+        subtaskNames: [String] = []
     ) async throws -> TodoTask {
         let workspace = try await requireWorkspace(selection: selection)
         let selectedState = state ?? workspace.configuration.defaultState
@@ -293,7 +299,8 @@ public actor TaskWorkspaceService {
                     value: .string(workspace.configuration.todosBaseLink)
                 ),
             ],
-            parentID: parentID
+            parentID: parentID,
+            url: url
         )
         if workspace.configuration.states.first(where: { $0.id == selectedState })?.isTerminal == true {
             let snapshot = task
@@ -302,7 +309,7 @@ public actor TaskWorkspaceService {
                 completedOn: CivilDate(rawValue: TodayWidgetSnapshotBuilder.dateKey(
                     for: timestamp, timeZone: calendar.timeZone
                 )),
-                calendar: calendar, usesSubtasks: parentID != nil,
+                calendar: calendar, usesSubtasks: parentID != nil || !subtaskNames.isEmpty,
                 storePrefix: workspace.configuration.obsidianLinkPrefix, id: makeUUID()
             )
         }
@@ -330,6 +337,10 @@ public actor TaskWorkspaceService {
             at: timestamp
         )
         pendingChanges += try attachmentChanges(attachments, selection: selection, at: timestamp)
+        try appendSubtasks(
+            subtaskNames, parent: document.task, in: workspace, at: timestamp,
+            occupied: &occupied, tasks: &tasks, pendingChanges: &pendingChanges
+        )
         let updatedWorkspace = try Self.replacing(
             workspace,
             tasks: tasks,
@@ -433,7 +444,8 @@ public actor TaskWorkspaceService {
         expectedTask: TodoTask,
         update: TaskUpdate,
         attachments: [AttachmentDraft] = [],
-        removingAttachmentPaths: [String] = []
+        removingAttachmentPaths: [String] = [],
+        subtaskNames: [String] = []
     ) async throws -> TodoTask {
         let workspace = try await requireWorkspace(selection: selection)
         let taskIndex = try Self.editableTaskIndex(id: id, expectedTask: expectedTask, in: workspace)
@@ -443,7 +455,8 @@ public actor TaskWorkspaceService {
             taskIndex: taskIndex,
             in: workspace,
             attachments: attachments,
-            removingAttachmentPaths: removingAttachmentPaths
+            removingAttachmentPaths: removingAttachmentPaths,
+            subtaskNames: subtaskNames
         )
     }
 
@@ -521,7 +534,8 @@ public actor TaskWorkspaceService {
         in workspace: WorkspaceState,
         attachments: [AttachmentDraft] = [],
         removingAttachmentPaths: [String] = [],
-        occurrenceCompletedOn: CivilDate? = nil
+        occurrenceCompletedOn: CivilDate? = nil,
+        subtaskNames: [String] = []
     ) async throws -> TodoTask {
         try Self.validate(state: update.state, projects: update.projectSlugs, in: workspace)
         _ = try RecurrenceRule.validatePresence(
@@ -556,7 +570,8 @@ public actor TaskWorkspaceService {
             lastCompletedDate: lastCompletedDate,
             body: attachmentBody,
             extraProperties: original.task.extraProperties,
-            parentID: update.parentID
+            parentID: update.parentID,
+            url: update.url
         )
         let timestamp = now()
         let terminalStates = Set(workspace.configuration.states.filter(\.isTerminal).map(\.id))
@@ -568,7 +583,8 @@ public actor TaskWorkspaceService {
             try TaskCompletionHistory.append(
                 to: &editedTask, snapshot: original.task, completedAt: timestamp, completedOn: day,
                 calendar: calendar,
-                usesSubtasks: original.task.parentID != nil || workspace.tasks.contains { $0.task.parentID == original.task.id },
+                usesSubtasks: original.task.parentID != nil || !subtaskNames.isEmpty
+                    || workspace.tasks.contains { $0.task.parentID == original.task.id },
                 storePrefix: workspace.configuration.obsidianLinkPrefix, id: makeUUID()
             )
         }
@@ -589,6 +605,13 @@ public actor TaskWorkspaceService {
             at: timestamp
         )
         pendingChanges += try attachmentChanges(attachments, selection: workspace.selection, at: now())
+        if !subtaskNames.isEmpty {
+            var occupied = Self.occupiedTaskLocations(in: workspace)
+            try appendSubtasks(
+                subtaskNames, parent: document.task, in: workspace, at: timestamp,
+                occupied: &occupied, tasks: &tasks, pendingChanges: &pendingChanges
+            )
+        }
         let updatedWorkspace = try Self.replacing(
             workspace,
             tasks: tasks,
@@ -676,7 +699,8 @@ public actor TaskWorkspaceService {
                 lastCompletedDate: original.task.lastCompletedDate,
                 body: original.task.body,
                 extraProperties: original.task.extraProperties,
-                parentID: original.task.parentID
+                parentID: original.task.parentID,
+                url: original.task.url
             )
             let document = try canonicalDocument(
                 for: task,
@@ -720,7 +744,8 @@ public actor TaskWorkspaceService {
         body: String,
         parent: TaskParentChange = .preserve,
         attachments: [AttachmentDraft] = [],
-        removingAttachmentPaths: [String] = []
+        removingAttachmentPaths: [String] = [],
+        subtaskNames: [String] = []
     ) async throws -> TodoTask {
         let workspace = try await requireWorkspace(selection: selection)
         if parent != .preserve {
@@ -739,11 +764,13 @@ public actor TaskWorkspaceService {
             recurrence: recurrence,
             recurrenceFrom: recurrenceFrom,
             body: body,
-            parentID: parent.applying(to: expectedTask.parentID)
+            parentID: parent.applying(to: expectedTask.parentID),
+            url: expectedTask.url
         )
         return try await persistTaskUpdate(
             update, lastCompletedDate: update.recurrence == nil ? nil : expectedTask.lastCompletedDate,
-            taskIndex: taskIndex, in: workspace, attachments: attachments, removingAttachmentPaths: removingAttachmentPaths
+            taskIndex: taskIndex, in: workspace, attachments: attachments,
+            removingAttachmentPaths: removingAttachmentPaths, subtaskNames: subtaskNames
         )
     }
 
@@ -986,6 +1013,53 @@ public actor TaskWorkspaceService {
         }
         try Self.validateSelection(workspace, expected: selection)
         return workspace
+    }
+
+    private func appendSubtasks(
+        _ names: [String],
+        parent: TodoTask,
+        in workspace: WorkspaceState,
+        at timestamp: Date,
+        occupied: inout (ids: Set<TaskID>, paths: Set<String>),
+        tasks: inout [TaskDocument],
+        pendingChanges: inout [PendingChange]
+    ) throws {
+        guard !names.isEmpty else { return }
+        guard workspace.configuration.schemaVersion == 2 else {
+            throw OTodoError.unsupportedSchema(found: workspace.configuration.schemaVersion, supported: 2)
+        }
+        // Include the new/edited parent when checking its ancestry, before publishing any child.
+        let hierarchy = TaskHierarchy(tasks: tasks.map(\.task))
+        let ancestry = Set(hierarchy.ancestorIDs(of: parent.id) + [parent.id])
+        if let issue = hierarchy.issues.first(where: { ancestry.contains($0.taskID) }) {
+            throw OTodoError.validation(field: "parent", message: "\(issue.code): \(issue.message)")
+        }
+        tasks.reserveCapacity(tasks.count + names.count)
+        pendingChanges.reserveCapacity(pendingChanges.count + names.count)
+        for rawName in names {
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, !rawName.contains("\n"), !rawName.contains("\r") else {
+                throw OTodoError.validation(field: "name", message: "Subtask names must be nonempty and single-line")
+            }
+            let detected = try DueDatePhraseDetector.detect(in: name, from: timestamp, calendar: calendar)
+            let id = try generateUniqueID(in: workspace, at: timestamp, occupied: &occupied)
+            let relativePath = "\(workspace.configuration.tasksDirectory)/\(id.rawValue).md"
+            let child = try TodoTask(
+                id: id, relativePath: relativePath, name: detected?.nameWithoutPhrase ?? name,
+                state: workspace.configuration.defaultState, projectSlugs: [], tags: [],
+                dueDate: detected?.resolvedDueDate(selectedDate: nil), dueTime: detected?.dueTime,
+                recurrence: nil, recurrenceFrom: nil, lastCompletedDate: nil, body: "",
+                extraProperties: [YAMLProperty(name: "base", value: .string(workspace.configuration.todosBaseLink))],
+                parentID: parent.id
+            )
+            let document = try canonicalDocument(for: child, configuration: workspace.configuration, blobSHA: nil)
+            pendingChanges.append(try PendingChange(
+                id: makeUUID(),
+                path: Self.repositoryPath(selection: workspace.selection, storeRelativePath: relativePath),
+                baseBlobSHA: nil, content: document.content, createdAt: timestamp
+            ))
+            tasks.append(document)
+        }
     }
 
     private static func occupiedTaskLocations(

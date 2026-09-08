@@ -48,7 +48,7 @@ struct HighlightedTaskNameField: UIViewRepresentable {
             textField.setNeedsLayout()
         }
         let validHighlightRanges = validatedHighlightRanges
-        let font = UIFont.preferredFont(forTextStyle: .title2, compatibleWith: textField.traitCollection)
+        let font = context.coordinator.nameFont(for: textField.traitCollection)
         guard textField.attributedText?.string != text
                 || context.coordinator.appliedHighlightRanges != validHighlightRanges
                 || textField.font != font
@@ -136,9 +136,23 @@ struct HighlightedTaskNameField: UIViewRepresentable {
     final class Coordinator: NSObject, UITextFieldDelegate {
         var parent: HighlightedTaskNameField
         var appliedHighlightRanges: [NSRange] = []
+        private var preferredNameFont: UIFont?
+        private var roundedNameFont: UIFont?
 
         init(parent: HighlightedTaskNameField) {
             self.parent = parent
+        }
+
+        func nameFont(for traits: UITraitCollection) -> UIFont {
+            let preferred = UIFont.preferredFont(forTextStyle: .title2, compatibleWith: traits)
+            if preferredNameFont == preferred, let roundedNameFont {
+                return roundedNameFont
+            }
+            let descriptor = preferred.fontDescriptor.withDesign(.rounded) ?? preferred.fontDescriptor
+            let rounded = UIFont(descriptor: descriptor, size: preferred.pointSize)
+            preferredNameFont = preferred
+            roundedNameFont = rounded
+            return rounded
         }
 
         @objc func textDidChange(_ textField: UITextField) {

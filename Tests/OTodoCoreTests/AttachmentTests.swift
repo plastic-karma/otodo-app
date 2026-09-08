@@ -95,6 +95,34 @@ final class AttachmentTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(retained, Data([1]))
     }
 
+    func testEditorChildrenAndAttachmentShareOnePublicationBoundary() async throws {
+        let f = try await Fixture(version: 2)
+        defer { f.cleanup() }
+        let draft = try await f.bytes.stage(data: Data([1, 2, 3]), filename: "parent.pdf", selection: f.selection)
+        let baseline = try await f.service.loadWorkspace(selection: f.selection)
+        do {
+            _ = try await f.service.addTask(
+                selection: f.selection, name: "Parent", attachments: [draft],
+                subtaskNames: ["Valid child", ""]
+            )
+            XCTFail("An invalid child must withhold both parent and binary outbox entries")
+        } catch {}
+        let failed = try await f.service.loadWorkspace(selection: f.selection)
+        XCTAssertEqual(failed, baseline)
+        let parent = try await f.service.addTask(
+            selection: f.selection, name: "Parent", attachments: [draft], subtaskNames: ["Child"]
+        )
+        let saved = try await f.service.loadWorkspace(selection: f.selection)
+        XCTAssertEqual(saved.revision, baseline.revision + 1)
+        XCTAssertEqual(saved.pendingChanges.count, 3)
+        XCTAssertEqual(saved.tasks.count, 2)
+        XCTAssertEqual(AttachmentLinks.references(body: parent.body, taskPath: parent.relativePath).map(\.path), [draft.path])
+        let child = try XCTUnwrap(saved.tasks.first { $0.task.parentID == parent.id }?.task)
+        XCTAssertTrue(AttachmentLinks.references(body: child.body, taskPath: child.relativePath).isEmpty)
+        let retained = try await f.bytes.read(draft.localFile, selection: f.selection)
+        XCTAssertEqual(retained, Data([1, 2, 3]))
+    }
+
     func testBytesSurviveContainerRelocationAndFailedTaskSave() async throws {
         let f = try await Fixture()
         defer { f.cleanup() }
