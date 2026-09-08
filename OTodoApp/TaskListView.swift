@@ -30,6 +30,7 @@ struct TaskListView: View {
     @State private var reschedulePresentation: ReschedulePresentation?
     @State private var isUpcoming = false
     @State private var agendaSections: [TaskAgendaSection] = []
+    @State private var collapsedAgendaGroups: Set<TaskAgendaGroup> = [.noDate]
     @State private var dates = TaskDateContext()
     @State private var isSelecting = false
     @State private var selectedTaskIDs: Set<TaskID> = []
@@ -113,14 +114,16 @@ struct TaskListView: View {
                         } else if isUpcoming {
                             ForEach(agendaSections, id: \.group) { section in
                                 Section {
-                                    if section.tasks.isEmpty {
-                                        Text("No todos")
-                                            .font(.subheadline)
-                                            .foregroundStyle(.secondary)
-                                            .listRowBackground(Color.clear)
-                                    } else {
-                                        ForEach(section.tasks, id: \.id) { task in
-                                            taskRow(task)
+                                    if !collapsedAgendaGroups.contains(section.group) {
+                                        if section.tasks.isEmpty {
+                                            Text("No todos")
+                                                .font(.subheadline)
+                                                .foregroundStyle(.secondary)
+                                                .listRowBackground(Color.clear)
+                                        } else {
+                                            ForEach(section.tasks, id: \.id) { task in
+                                                taskRow(task)
+                                            }
                                         }
                                     }
                                 } header: {
@@ -330,6 +333,7 @@ struct TaskListView: View {
         .task(id: model.workspaceSelection.map(FileWorkspaceStore.selectionKey(for:))) {
             selectedFilterID = "today"
             isUpcoming = false
+            collapsedAgendaGroups = [.noDate]
             clearSelection()
             await filterLibrary.load(selection: model.workspaceSelection)
         }
@@ -1305,26 +1309,44 @@ struct TaskListView: View {
     }
 
     private func agendaHeader(_ section: TaskAgendaSection) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 8) {
-                Text(section.group.title)
-                    .font(.headline)
-                    .foregroundStyle(section.group == .overdue ? Color.red : Color.primary)
-                Text("\(section.tasks.count)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Color.secondary.opacity(0.08), in: Capsule())
-                Spacer(minLength: 0)
+        let isCollapsed = collapsedAgendaGroups.contains(section.group)
+        return Button {
+            withAnimation {
+                if !collapsedAgendaGroups.insert(section.group).inserted {
+                    collapsedAgendaGroups.remove(section.group)
+                }
             }
-            Text(agendaBoundary(for: section.group))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        } label: {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Text(section.group.title)
+                        .font(.headline)
+                        .foregroundStyle(section.group == .overdue ? Color.red : Color.primary)
+                    Text("\(section.tasks.count)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Color.secondary.opacity(0.08), in: Capsule())
+                    Spacer(minLength: 0)
+                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
+                Text(agendaBoundary(for: section.group))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .padding(.top, 8)
         .textCase(nil)
         .accessibilityElement(children: .combine)
+        .accessibilityValue(isCollapsed ? "Collapsed" : "Expanded")
+        .accessibilityHint(isCollapsed ? "Show todos in this section" : "Hide todos in this section")
         .accessibilityIdentifier("upcoming-section-\(section.group.rawValue)")
     }
 

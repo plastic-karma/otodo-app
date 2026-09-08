@@ -183,6 +183,8 @@ The six sections use the device's local Gregorian calendar:
 
 Sections never duplicate a task and exclude configured terminal states. They are based on dates, not time of day: elapsed times on today's tasks still appear under Today with an overdue marker. Optional times remain visible. Relative filters and sections refresh on local day changes, significant clock/time-zone changes, and returning to the app.
 
+Tap a section heading to fold or unfold its todos. **No date** starts folded; dated sections start open. Headings retain their counts and date ranges while folded, and your choices survive switching between Todos and Upcoming in the current workspace. Folding does not change filters or selections: **Select all** still includes folded sections.
+
 Tap **Select**, choose several rows (or **Select all** for the current scope), then **Reschedule**. The shared calendar and relative-date controls support a weekly review without opening each todo. Bulk edits initially keep every date and time; explicitly set or remove either field. A date-only edit keeps each todo's own time. Relative days/weeks/months/years change dates, while minutes/hours set both date and time. Removing dates also removes times; recurring todos still require dates.
 
 The entire batch is validated and saved atomically to the normal durable outbox, including offline. Names, states, parents, projects, tags, notes, recurrence metadata, and custom front matter are preserved. A stale/conflicted task or invalid schedule prevents the whole batch from saving. No external calendar or generated recurring occurrences are involved.

@@ -2170,17 +2170,26 @@ final class OTodoUITests: XCTestCase {
             ("next-seven-days", "Week review"), ("later", "Later review"), ("no-date", "Undated todo"),
         ] {
             let row = taskRow(named: name, state: "Pending", in: app)
+            let header = app.buttons["upcoming-section-\(group)"]
             for _ in 0..<8 {
-                if row.exists && row.isHittable { break }
+                if header.isHittable && (group == "no-date" || row.isHittable) { break }
                 taskList.swipeUp(velocity: .slow)
             }
-            guard require(row, in: app, description: "\(name) in Upcoming") else { return }
-            let header = app.descendants(matching: .any)
-                .matching(identifier: "upcoming-section-\(group)").firstMatch
             guard require(header, in: app, description: "the \(group) agenda section") else { return }
+            if group == "no-date" {
+                XCTAssertFalse(row.exists, "Undated work starts folded")
+                header.tap()
+            }
+            guard require(row, in: app, description: "\(name) in Upcoming") else { return }
             XCTAssertLessThan(header.frame.minY, row.frame.minY)
             XCTAssertEqual(app.buttons.matching(identifier: row.identifier).count, 1)
             XCTAssertFalse(taskRow(named: "Completed overdue todo", state: "Done", in: app).exists)
+            if group == "today" || group == "no-date" {
+                header.tap()
+                XCTAssertTrue(row.waitForNonExistence(timeout: 8), "Folding removes this section's rows")
+                header.tap()
+                XCTAssertTrue(row.waitForExistence(timeout: 8), "Unfolding restores this section's rows")
+            }
             if group == "tomorrow" || group == "no-date" {
                 let screenshot = XCTAttachment(screenshot: app.screenshot())
                 screenshot.name = "Upcoming agenda \(group) sections"
