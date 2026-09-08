@@ -127,7 +127,11 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         let add = app.buttons["task-editor-subtask-add"]
         app.revealTaskEditorElement(add)
         add.tap()
-        XCTAssertTrue(app.buttons["task-editor-save"].isEnabled)
+        let readyToSave = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"),
+            object: app.buttons["task-editor-save"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [readyToSave], timeout: 8), .completed)
     }
 
     @MainActor
