@@ -126,7 +126,7 @@ final class ReminderSettingsUITests: XCTestCase {
 
     private func choose(_ title: String, in app: XCUIApplication) {
         waitForUpdates(in: app)
-        let option = app.staticTexts[title].firstMatch
+        let option = app.buttons[title].firstMatch
         reveal(option, in: app)
         option.tap()
     }
