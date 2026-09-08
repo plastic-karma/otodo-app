@@ -45,10 +45,14 @@ final class PhoneWatchSync: NSObject, WCSessionDelegate {
                 reply.replace(with: payload)
             }
         } catch {
-            recordFailure("Restoring the Watch snapshot", detail: error.localizedDescription)
+            recordFailure("Restoring the Watch snapshot", error: error, terminal: true)
         }
         connectivity?.delegate = self
         connectivity?.activate()
+        recordReadiness("activation-requested")
+        if connectivity == nil {
+            WatchSmokeProgress.record("unsupported", values: ["terminalError": "WatchConnectivity unsupported"])
+        }
     }
 
     func synchronize(snapshot: TodayWidgetSnapshot, workspaceAvailable: Bool) {
@@ -71,7 +75,7 @@ final class PhoneWatchSync: NSObject, WCSessionDelegate {
                 // answer with an obsolete workspace, especially after sign-out.
                 reply.replace(with: nil)
             } catch {
-                recordFailure("Encoding the Watch snapshot", detail: error.localizedDescription)
+                recordFailure("Encoding the Watch snapshot", error: error, terminal: true)
                 return
             }
         }
@@ -85,14 +89,16 @@ final class PhoneWatchSync: NSObject, WCSessionDelegate {
             try WatchSnapshotStorage.save(data: payload)
             needsPersistence = false
             reply.replace(with: payload)
+            WatchSmokeProgress.record("snapshot-persisted", values: ["snapshot": "persisted", "ready": "true"])
             return true
         } catch {
-            recordFailure("Saving the Watch snapshot", detail: error.localizedDescription)
+            recordFailure("Saving the Watch snapshot", error: error, terminal: true)
             return false
         }
     }
 
     private func deliver(force: Bool = false) {
+        recordReadiness("delivery-readiness")
         guard persistIfNeeded(),
               let connectivity,
               connectivity.activationState == .activated,
@@ -139,9 +145,10 @@ final class PhoneWatchSync: NSObject, WCSessionDelegate {
                 ])
             }
             lastSubmittedAt = generatedAt
+            WatchSmokeProgress.record("snapshot-submitted", values: ["delivery": "submitted"])
             cleanTransferFiles(on: connectivity)
         } catch {
-            recordFailure("Sending the Watch snapshot", detail: error.localizedDescription)
+            recordFailure("Sending the Watch snapshot", error: error)
         }
     }
 
@@ -175,22 +182,23 @@ final class PhoneWatchSync: NSObject, WCSessionDelegate {
                 try FileManager.default.removeItem(at: file)
             }
         } catch {
-            recordFailure("Cleaning Watch transfer files", detail: error.localizedDescription)
+            recordFailure("Cleaning Watch transfer files", error: error)
         }
     }
 
-    private func activationCompleted(errorDescription: String?) {
-        if let errorDescription {
-            recordFailure("Activating Watch connectivity", detail: errorDescription)
+    private func activationCompleted(error: (any Error)?) {
+        recordReadiness("activation-completed")
+        if let error {
+            recordFailure("Activating Watch connectivity", error: error)
         }
         guard let connectivity, connectivity.activationState == .activated else { return }
         cleanTransferFiles(on: connectivity)
         deliver(force: true)
     }
 
-    private func fileTransferCompleted(fileURL: URL, generation: Double?, errorDescription: String?) {
-        if let errorDescription {
-            recordFailure("Transferring the Watch snapshot file", detail: errorDescription)
+    private func fileTransferCompleted(fileURL: URL, generation: Double?, error: (any Error)?) {
+        if let error {
+            recordFailure("Transferring the Watch snapshot file", error: error)
             if generation == lastSubmittedAt?.timeIntervalSinceReferenceDate {
                 lastSubmittedAt = nil
             }
@@ -202,13 +210,25 @@ final class PhoneWatchSync: NSObject, WCSessionDelegate {
                 try FileManager.default.removeItem(at: fileURL)
             }
         } catch {
-            recordFailure("Removing a completed Watch transfer file", detail: error.localizedDescription)
+            recordFailure("Removing a completed Watch transfer file", error: error)
         }
         if let connectivity { cleanTransferFiles(on: connectivity) }
     }
 
-    private func recordFailure(_ operation: String, detail: String) {
-        Self.logger.error("\(operation, privacy: .public): \(detail, privacy: .public)")
+    private func recordReadiness(_ event: String) {
+        guard WatchSmokeProgress.enabled else { return }
+        WatchSmokeProgress.record(event, values: [
+            "activation": String(connectivity?.activationState.rawValue ?? -1),
+            "paired": String(connectivity?.isPaired ?? false),
+            "installed": String(connectivity?.isWatchAppInstalled ?? false),
+            "reachable": String(connectivity?.isReachable ?? false),
+            "ready": String(reply.load() != nil),
+        ])
+    }
+
+    private func recordFailure(_ operation: String, error: any Error, terminal: Bool? = nil) {
+        Self.logger.error("\(operation, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        WatchSmokeProgress.failure(operation, error: error, terminal: terminal)
     }
 
     nonisolated func session(
@@ -216,9 +236,8 @@ final class PhoneWatchSync: NSObject, WCSessionDelegate {
         activationDidCompleteWith activationState: WCSessionActivationState,
         error: (any Error)?
     ) {
-        let errorDescription = error?.localizedDescription
         Task { @MainActor [weak self] in
-            self?.activationCompleted(errorDescription: errorDescription)
+            self?.activationCompleted(error: error)
         }
     }
 
@@ -249,14 +268,25 @@ final class PhoneWatchSync: NSObject, WCSessionDelegate {
         replyHandler: @escaping ([String: Any]) -> Void
     ) {
         guard message[WatchSnapshotStorage.requestKey] as? Bool == true else {
+            if WatchSmokeProgress.enabled {
+                Task { @MainActor in
+                    WatchSmokeProgress.record("invalid-request", values: ["terminalError": "Invalid snapshot request"])
+                }
+            }
             replyHandler([:])
             return
         }
         if let data = reply.load(), data.count <= Self.maximumContextBytes {
             replyHandler([WatchSnapshotStorage.contextKey: data])
+            if WatchSmokeProgress.enabled {
+                Task { @MainActor in
+                    WatchSmokeProgress.record("reply-sent", values: ["request": "received", "reply": "snapshot"])
+                }
+            }
         } else {
             replyHandler([:])
             Task { @MainActor [weak self] in
+                WatchSmokeProgress.record("reply-sent", values: ["request": "received", "reply": "deferred"])
                 self?.deliver(force: true)
             }
         }
@@ -269,12 +299,11 @@ final class PhoneWatchSync: NSObject, WCSessionDelegate {
     ) {
         let fileURL = fileTransfer.file.fileURL
         let generation = fileTransfer.file.metadata?[Self.generationKey] as? Double
-        let errorDescription = error?.localizedDescription
         Task { @MainActor [weak self] in
             self?.fileTransferCompleted(
                 fileURL: fileURL,
                 generation: generation,
-                errorDescription: errorDescription
+                error: error
             )
         }
     }
@@ -284,9 +313,9 @@ final class PhoneWatchSync: NSObject, WCSessionDelegate {
         didFinish userInfoTransfer: WCSessionUserInfoTransfer,
         error: (any Error)?
     ) {
-        guard let errorDescription = error?.localizedDescription else { return }
+        guard let error else { return }
         Task { @MainActor [weak self] in
-            self?.recordFailure("Transferring Watch complication data", detail: errorDescription)
+            self?.recordFailure("Transferring Watch complication data", error: error)
         }
     }
 }
