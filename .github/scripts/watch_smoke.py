@@ -2,7 +2,6 @@
 """Exercise real companion delivery and cached Watch launch on paired simulators."""
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
 import os
@@ -10,10 +9,9 @@ from pathlib import Path
 import plistlib
 import shutil
 import sys
-import threading
 import time
 
-from ci_runtime import CommandError, annotate, cancellation_scope, run_command
+from ci_runtime import CommandError, annotate, run_command
 
 
 PHONE_BUNDLE = "plastickarma.otodo"
@@ -95,68 +93,34 @@ def prepare(output):
     if os.environ.get("GITHUB_ENV"):
         with open(os.environ["GITHUB_ENV"], "a") as environment:
             environment.write(f"WATCH_PHONE_SIMULATOR_ID={phone}\nWATCH_SIMULATOR_ID={watch}\n")
-    progress(output, "paired", phone=phone, watch=watch, boots="deferred-to-build")
+    progress(output, "paired", phone=phone, watch=watch, boots="before-build")
 
 
 def build(output, derived_data):
     devices = json.loads((output / "devices.json").read_text())
-    boot_devices = [(role, devices[role]) for role in ("phone", "watch")]
+    # Fresh simulator migration must finish before competing with the compiler.
+    # bootstatus can exit zero with a terminal "Data Migration Failed" result.
+    for role in ("phone", "watch"):
+        boot = run("xcrun", "simctl", "bootstatus", devices[role], "-b",
+                   stage=f"boot-{role}", timeout=420, capture=True,
+                   log_path=output / f"boot-{role}.log")
+        if not any(line.strip() == "Finished" for line in boot.splitlines()):
+            raise RuntimeError(f"The {role} simulator did not finish booting successfully; inspect boot-{role}.log")
+        progress(output, f"{role}-booted")
     source_packages = derived_data / "SourcePackages"
     source_packages.mkdir(parents=True, exist_ok=True)
     run("xcodebuild", "-resolvePackageDependencies", "-project", os.environ.get("PROJECT", "OTodo.xcodeproj"),
         "-scheme", "OTodo", "-derivedDataPath", derived_data,
         "-clonedSourcePackagesDirPath", source_packages,
         stage="package-resolution", timeout=600, log_path=output / "packages.log")
-    cancelled = threading.Event()
-    failures = []
-    lock = threading.Lock()
-    started = time.monotonic()
-
-    def checked(*arguments, **options):
-        try:
-            return run(*arguments, cancel_event=cancelled, **options)
-        except BaseException as error:
-            with lock:
-                failures.append(error)
-            cancelled.set()
-            raise
-
-    progress(output, "build-and-boots-started")
-    # The build remains on the main thread so the shared runner's signal handler
-    # can cancel all active process groups. Every worker shares cancellation and
-    # is joined even when another worker, the build, or the caller fails.
-    with cancellation_scope(cancelled), ThreadPoolExecutor(max_workers=2, thread_name_prefix="watch-boot") as executor:
-        boots = []
-        try:
-            for role, device in boot_devices:
-                boots.append(executor.submit(checked, "xcrun", "simctl", "bootstatus", device, "-b",
-                                             stage=f"boot-{role}", timeout=420,
-                                             log_path=output / f"boot-{role}.log"))
-            checked("xcodebuild", "build", "-project", os.environ.get("PROJECT", "OTodo.xcodeproj"),
-                    "-scheme", "OTodo", "-destination", f"platform=iOS Simulator,id={devices['phone']}",
-                    "-showBuildTimingSummary",
-                    "-derivedDataPath", derived_data, "CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-",
-                    "-clonedSourcePackagesDirPath", source_packages, "-disableAutomaticPackageResolution",
-                    f"GITHUB_CLIENT_ID={os.environ.get('GH_OAUTH_CLIENT_ID', '')}",
-                    stage="full-app-build", timeout=900, log_path=output / "build.log")
-            for boot in boots:
-                boot.result()
-        except BaseException:
-            cancelled.set()
-            for boot in boots:
-                try:
-                    boot.result()
-                except BaseException:
-                    pass  # First observed failure is retained below, not replaced by cancellation.
-            if failures:
-                raise failures[0]
-            raise
-        finally:
-            elapsed = round(time.monotonic() - started, 3)
-            progress(output, "build-and-boots-finished", elapsedSeconds=elapsed,
-                     outcome="failed" if cancelled.is_set() else "passed")
-    print(f"Watch full build + bounded paired boots wall time: {elapsed:.3f}s; "
-          "individual command durations are in CI_RESULTS_DIR. Overlap benefit is unmeasured.", flush=True)
+    run("xcodebuild", "build", "-project", os.environ.get("PROJECT", "OTodo.xcodeproj"),
+        "-scheme", "OTodo", "-destination", f"platform=iOS Simulator,id={devices['phone']}",
+        "-showBuildTimingSummary",
+        "-derivedDataPath", derived_data, "CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-",
+        "-clonedSourcePackagesDirPath", source_packages, "-disableAutomaticPackageResolution",
+        f"GITHUB_CLIENT_ID={os.environ.get('GH_OAUTH_CLIENT_ID', '')}",
+        stage="full-app-build", timeout=900, log_path=output / "build.log")
+    progress(output, "build-finished")
 
 
 def group_directory(device, bundle, role):

@@ -333,7 +333,7 @@ jobs:
         run: python3 .github/scripts/ci_runtime.py run --stage watch-project --timeout 60 -- xcodegen generate --spec project.yml
       - name: Select and pair compatible preinstalled simulators
         run: python3 .github/scripts/watch_smoke.py prepare --output "$RUNNER_TEMP/watch-smoke"
-      - name: Build full companion graph while simulators boot
+      - name: Verify simulator boots before building full companion graph
         run: |
           python3 .github/scripts/watch_smoke.py build \
             --output "$RUNNER_TEMP/watch-smoke" --derived-data "$RUNNER_TEMP/WatchDerivedData"

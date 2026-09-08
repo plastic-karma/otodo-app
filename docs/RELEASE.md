@@ -146,6 +146,8 @@ The Watch companion job installs the embedded watchOS app and its complication o
 
 For simulators, Xcode can leave the ordinary codesign entitlement dictionary empty: effective simulator permissions are linked into each executable's `__TEXT,__entitlements` Mach-O section. CI verifies the code signature and those sections for every architecture, then runs the hosted/live App Group checks. Physical-device archives use their actual codesign entitlement dictionary. Neither path accepts only a source-plist declaration as proof.
 
+Watch CI completes the phone and Watch simulator boots before compilation. It requires `bootstatus` to report `Finished`: a zero exit status alone is insufficient because CoreSimulator can return zero after `Data Migration Failed`. A failed migration stops the job before app installation or connectivity checks; inspect the retained `boot-phone.log` and `boot-watch.log` before retrying on a fresh runner.
+
 ## Run manually: artifact only
 
 In GitHub:
