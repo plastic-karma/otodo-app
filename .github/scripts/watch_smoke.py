@@ -12,6 +12,7 @@ import sys
 import time
 
 from ci_runtime import CommandError, annotate, run_command
+from ios_ci import prepare as prepare_ios
 
 
 PHONE_BUNDLE = "plastickarma.otodo"
@@ -84,7 +85,10 @@ def prepare(output):
                            f"(minimum {'.'.join(map(str, minimum_phone_version))})")
     progress(output, "runtimes-selected", phone=phone_runtime["name"], watch=watch_runtime["name"],
              phoneVersion=phone_runtime["version"], watchVersion=watch_runtime["version"])
-    phone = create_device(state, phone_runtime, "iPhone", "OTodo companion smoke iPhone")
+    phone_simulator = prepare_ios(output)
+    if phone_simulator["runtime"] != phone_runtime["identifier"]:
+        raise RuntimeError(f"A preinstalled iPhone on {phone_runtime['name']} is required for companion verification")
+    phone = phone_simulator["id"]
     # Retain partial preparation evidence even if Watch creation/pairing fails.
     save_json(output / "devices.json", {"phone": phone})
     watch = create_device(state, watch_runtime, "Apple Watch", "OTodo companion smoke Watch")
