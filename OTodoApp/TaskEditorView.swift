@@ -541,7 +541,6 @@ struct TaskEditorView: View {
                         .accessibilityLabel("Remove \(draft.subtaskNames[index])")
                         .accessibilityIdentifier("task-editor-remove-subtask-\(index)")
                     }
-                    .accessibilityIdentifier("task-editor-queued-subtask-\(index)")
                 }
                 TaskEditorSubtaskInput(
                     onFocus: {
