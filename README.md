@@ -196,6 +196,13 @@ automatically.
 
 Choose **OTodo** in the iOS Share sheet to capture text, URLs, files, or images. Review the proposed title and Markdown context, then **Save**. Safari capture preserves the webpage title, link, and selected text. In Shortcuts, use OTodo's **Add Todo** action with supplied **Todo** text and an optional **Source URL**. Siri's “Add a todo in OTodo” phrase prompts for the text rather than opening an empty editor.
 
+The Share editor prefills **Link** with the first supported HTTP/HTTPS source URL,
+or the first web link in shared text when no source URL was supplied. Edit or clear
+it before saving. The link is saved in the todo's normal Link field, including
+offline and after relaunch; the original Markdown context stays intact. Email
+addresses and non-web URLs remain context rather than task links, and shared local
+files remain attachments.
+
 System captures start without a parent, project, or deadline. After connecting a workspace, they save directly to the normal local workspace and outbox, including offline; OTodo reloads external captures and synchronizes through its normal path when activated. No separate capture database or direct GitHub writes are used.
 
 Open OTodo once after upgrading an existing installation. The app atomically moves its complete private workspace directory, including pending changes, saved filters, and repository selection, into the shared App Group before opening stores. Migration errors are shown instead of silently starting an empty workspace. App and extension saves coordinate revision checks with a cross-process lock.
