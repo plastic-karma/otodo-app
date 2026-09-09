@@ -160,6 +160,9 @@ The three exports are:
   viewport and scroll position are restored afterward. Individual images live in
   `artboards/` to avoid colliding with `overview.png`. Diagnostics report overflow,
   resource and runtime problems; they do not replace looking at pixels.
+  Overviews are proportionally downscaled when needed to stay within 8192 image
+  pixels per side; `diagnostics.overviewScale` records the scale. Individual
+  artboards keep their full resolution.
 
 Use `read` on the returned `overviewPath` and **each** returned artboard `path`
 to see actual PNG pixels. Do not stop at paths, DOM text, or a successful

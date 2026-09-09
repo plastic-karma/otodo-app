@@ -59,6 +59,7 @@ export async function capturePreview(tab, { outputDir } = {}) {
       artboards: [],
     };
     const ids = new Set();
+    let bodyStyle;
     try {
       for (const board of frames) {
         if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(board.id ?? '') || ids.has(board.id)) {
@@ -113,24 +114,53 @@ export async function capturePreview(tab, { outputDir } = {}) {
         artboards.push({ ...board, path });
         diagnostics.artboards.push({ id: board.id, ...state });
       }
-      // Full-page screenshots alone do not paint offscreen opaque-origin frames.
+      // Keep every frame onscreen, but bound overview pixels independently of artboards.
       const viewport = page.viewport();
-      const overviewHeight = await page.evaluate(() => document.documentElement.scrollHeight);
-      if (overviewHeight > viewport.height) {
-        await page.setViewport({ ...viewport, height: overviewHeight });
+      const size = await page.evaluate(() => ({
+        width: document.documentElement.scrollWidth,
+        height: document.documentElement.scrollHeight,
+        deviceScaleFactor: devicePixelRatio,
+      }));
+      const maxDimension = Math.floor(8192 / size.deviceScaleFactor);
+      const scale = Math.min(1, maxDimension / Math.max(size.width, size.height));
+      const clip = {
+        x: 0, y: 0,
+        width: Math.min(maxDimension, Math.ceil(size.width * scale)),
+        height: Math.min(maxDimension, Math.ceil(size.height * scale)),
+      };
+      bodyStyle = await page.evaluate(scale => {
+        const body = document.body;
+        const style = body.getAttribute('style');
+        body.style.width = `${body.getBoundingClientRect().width}px`;
+        body.style.transformOrigin = 'top left';
+        body.style.transform = `scale(${scale})`;
+        return style;
+      }, scale);
+      const width = Math.max(viewport.width, clip.width);
+      const height = Math.max(viewport.height, clip.height);
+      if (width !== viewport.width || height !== viewport.height) {
+        await page.setViewport({ ...viewport, width, height });
       }
       await page.evaluate(() => scrollTo({ left: 0, top: 0, behavior: 'instant' }));
       await Promise.all(handles.map(async handle => {
         const frame = await handle.contentFrame();
+        if (!frame) throw new Error('Artboard has no browsing context during overview capture');
         await frame.mainRealm().evaluate(() => new Promise(done => {
           requestAnimationFrame(() => requestAnimationFrame(done));
         }));
       }));
-      await page.screenshot({ path: paths.overview, fullPage: true });
+      await page.screenshot({ path: paths.overview, clip, captureBeyondViewport: false });
+      diagnostics.overviewScale = scale;
       diagnostics.captureMs = Math.round(performance.now() - started);
       return { overviewPath: paths.overview, artboards, diagnostics };
     } finally {
       await Promise.all(handles.map(handle => handle.dispose()));
+      if (bodyStyle !== undefined) {
+        await page.evaluate(style => {
+          if (style === null) document.body.removeAttribute('style');
+          else document.body.setAttribute('style', style);
+        }, bodyStyle);
+      }
       const viewport = page.viewport();
       if (viewport.width !== originalViewport.width || viewport.height !== originalViewport.height) {
         await page.setViewport(originalViewport);
