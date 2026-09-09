@@ -558,7 +558,7 @@ struct TaskEditorView: View {
                     onAdd: { draft.subtaskNames.append($0) }
                 )
                 .id(nameFocusRequest)
-                Text("Tap Add to queue each child. Save creates the parent and queued subtasks together. Children start in the default state with the parent's projects, without inheriting tags, dates, or links.")
+                Text("Tap Add to queue each child. Save creates the parent and queued subtasks together with the parent's projects, without inheriting tags, dates, or links. Completing the parent also completes its active subtasks.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {

@@ -302,13 +302,16 @@ public actor TaskWorkspaceService {
             parentID: parentID,
             url: url
         )
+        var completionDay: CivilDate?
         if workspace.configuration.states.first(where: { $0.id == selectedState })?.isTerminal == true {
             let snapshot = task
+            let day = try CivilDate(rawValue: TodayWidgetSnapshotBuilder.dateKey(
+                for: timestamp, timeZone: calendar.timeZone
+            ))
+            completionDay = day
             try TaskCompletionHistory.append(
                 to: &task, snapshot: snapshot, completedAt: timestamp,
-                completedOn: CivilDate(rawValue: TodayWidgetSnapshotBuilder.dateKey(
-                    for: timestamp, timeZone: calendar.timeZone
-                )),
+                completedOn: day,
                 calendar: calendar, usesSubtasks: parentID != nil || !subtaskNames.isEmpty,
                 storePrefix: workspace.configuration.obsidianLinkPrefix, id: makeUUID()
             )
@@ -341,6 +344,12 @@ public actor TaskWorkspaceService {
             subtaskNames, parent: document.task, in: workspace, at: timestamp,
             occupied: &occupied, tasks: &tasks, pendingChanges: &pendingChanges
         )
+        if let completionDay {
+            try completeDescendants(
+                of: task, occurrences: false, completedOn: completionDay, at: timestamp,
+                in: workspace, tasks: &tasks, pendingChanges: &pendingChanges
+            )
+        }
         let updatedWorkspace = try Self.replacing(
             workspace,
             tasks: tasks,
@@ -460,7 +469,7 @@ public actor TaskWorkspaceService {
         )
     }
 
-    /// Completes an occurrence in place, or moves a one-off task to its terminal state.
+    /// Completes this task and all active descendants in one durable mutation.
     public func completeTask(
         selection: RepositorySelection,
         expectedTask: TodoTask,
@@ -470,41 +479,88 @@ public actor TaskWorkspaceService {
         let taskIndex = try Self.editableTaskIndex(
             id: expectedTask.id, expectedTask: expectedTask, in: workspace
         )
-        guard let state = workspace.configuration.states.first(where: { $0.id == expectedTask.state }) else {
+        var completed = expectedTask
+        try Self.applyCompletion(to: &completed, configuration: workspace.configuration, completedOn: completedOn)
+        return try await persistTaskUpdate(
+            TaskUpdate(task: completed), lastCompletedDate: completed.lastCompletedDate,
+            taskIndex: taskIndex, in: workspace,
+            occurrenceCompletedOn: completedOn
+        )
+    }
+
+    private static func applyCompletion(
+        to task: inout TodoTask, configuration: StoreConfiguration, completedOn: CivilDate
+    ) throws {
+        guard let state = configuration.states.first(where: { $0.id == task.state }) else {
             throw OTodoError.validation(field: "state", message: "State is not configured")
         }
         guard !state.isTerminal else {
             throw OTodoError.validation(field: "state", message: "Completion requires a nonterminal task")
         }
-        guard let done = workspace.configuration.states.first(where: { $0.id == "done" && $0.isTerminal })
-            ?? workspace.configuration.states.first(where: \.isTerminal)
+        guard let done = configuration.states.first(where: { $0.id == "done" && $0.isTerminal })
+            ?? configuration.states.first(where: \.isTerminal)
         else {
             throw OTodoError.validation(field: "state", message: "Completion requires a configured terminal state")
         }
-        var update = TaskUpdate(task: expectedTask)
-        var lastCompletedDate = expectedTask.lastCompletedDate
         if let rule = try RecurrenceRule.validatePresence(
-            recurrence: expectedTask.recurrence,
-            recurrenceFrom: expectedTask.recurrenceFrom,
-            dueDate: expectedTask.dueDate,
-            lastCompletedDate: lastCompletedDate
-        ), let due = expectedTask.dueDate, let mode = expectedTask.recurrenceFrom {
-            if let lastCompletedDate, completedOn < lastCompletedDate {
+            recurrence: task.recurrence, recurrenceFrom: task.recurrenceFrom,
+            dueDate: task.dueDate, lastCompletedDate: task.lastCompletedDate
+        ), let due = task.dueDate, let mode = task.recurrenceFrom {
+            if let lastCompletedDate = task.lastCompletedDate, completedOn < lastCompletedDate {
                 throw OTodoError.validation(
                     field: "last_completed_date",
                     message: "Completion date cannot be earlier than last_completed_date"
                 )
             }
-            update.dueDate = try rule.nextDue(currentDue: due, completedOn: completedOn, mode: mode)
-            update.state = workspace.configuration.defaultState
-            lastCompletedDate = completedOn
+            task.dueDate = try rule.nextDue(currentDue: due, completedOn: completedOn, mode: mode)
+            task.state = configuration.defaultState
+            task.lastCompletedDate = completedOn
         } else {
-            update.state = done.id
+            task.state = done.id
         }
-        return try await persistTaskUpdate(
-            update, lastCompletedDate: lastCompletedDate, taskIndex: taskIndex, in: workspace,
-            occurrenceCompletedOn: completedOn
-        )
+    }
+
+    private func completeDescendants(
+        of parent: TodoTask, occurrences: Bool, completedOn: CivilDate, at timestamp: Date,
+        in workspace: WorkspaceState, tasks: inout [TaskDocument],
+        pendingChanges: inout [PendingChange]
+    ) throws {
+        guard workspace.configuration.schemaVersion == 2,
+              tasks.contains(where: { $0.task.parentID == parent.id }) else { return }
+        let hierarchy = TaskHierarchy(tasks: tasks.map(\.task))
+        let descendants = hierarchy.descendantIDs(of: parent.id)
+        if let issue = hierarchy.issues.first(where: { $0.taskID == parent.id || descendants.contains($0.taskID) }) {
+            throw OTodoError.validation(field: "parent", message: "\(issue.code): \(issue.message)")
+        }
+        let terminalStates = Set(workspace.configuration.states.filter(\.isTerminal).map(\.id))
+        let conflictedPaths = Set(workspace.conflicts.map(\.path))
+        for index in tasks.indices where descendants.contains(tasks[index].task.id) {
+            let original = tasks[index]
+            guard !terminalStates.contains(original.task.state) else { continue }
+            let path = Self.repositoryPath(selection: workspace.selection, storeRelativePath: original.task.relativePath)
+            guard !conflictedPaths.contains(path) else {
+                throw OTodoError.conflict(message: "Resolve the conflict at \(path) before completing its parent")
+            }
+            var completed = original.task
+            if occurrences {
+                try Self.applyCompletion(to: &completed, configuration: workspace.configuration, completedOn: completedOn)
+            } else {
+                completed.state = parent.state
+            }
+            try TaskCompletionHistory.append(
+                to: &completed, snapshot: original.task, completedAt: timestamp, completedOn: completedOn,
+                calendar: calendar, usesSubtasks: true,
+                storePrefix: workspace.configuration.obsidianLinkPrefix, id: makeUUID()
+            )
+            let document = try canonicalDocument(
+                for: completed, configuration: workspace.configuration, blobSHA: original.blobSHA
+            )
+            tasks[index] = document
+            pendingChanges = try upsertingPendingChange(
+                path: path, content: document.content, baseBlobSHA: original.blobSHA,
+                in: pendingChanges, at: timestamp
+            )
+        }
     }
 
     private static func editableTaskIndex(
@@ -575,11 +631,13 @@ public actor TaskWorkspaceService {
         )
         let timestamp = now()
         let terminalStates = Set(workspace.configuration.states.filter(\.isTerminal).map(\.id))
+        var completionDay: CivilDate?
         if occurrenceCompletedOn != nil
             || (!terminalStates.contains(original.task.state) && terminalStates.contains(editedTask.state)) {
             let day = try occurrenceCompletedOn ?? CivilDate(
                 rawValue: TodayWidgetSnapshotBuilder.dateKey(for: timestamp, timeZone: calendar.timeZone)
             )
+            completionDay = day
             try TaskCompletionHistory.append(
                 to: &editedTask, snapshot: original.task, completedAt: timestamp, completedOn: day,
                 calendar: calendar,
@@ -610,6 +668,13 @@ public actor TaskWorkspaceService {
             try appendSubtasks(
                 subtaskNames, parent: document.task, in: workspace, at: timestamp,
                 occupied: &occupied, tasks: &tasks, pendingChanges: &pendingChanges
+            )
+        }
+        if let completionDay {
+            try completeDescendants(
+                of: editedTask, occurrences: occurrenceCompletedOn != nil,
+                completedOn: completionDay, at: timestamp,
+                in: workspace, tasks: &tasks, pendingChanges: &pendingChanges
             )
         }
         let updatedWorkspace = try Self.replacing(

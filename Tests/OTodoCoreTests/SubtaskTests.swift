@@ -113,6 +113,102 @@ final class SubtaskTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(disk, saved)
     }
 
+    func testParentCompletionPersistsEveryDescendantWithoutChangingOtherBranches() async throws {
+        let parent = try task(id(1))
+        let child = try task(id(2), parent: parent.id)
+        let finished = try task(id(3), parent: parent.id, state: "done")
+        let grandchild = try task(id(4), parent: finished.id)
+        let unrelated = try task(id(5))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (_, service, selection) = try await seed([grandchild, unrelated, child, finished, parent], at: directory)
+        let day = try CivilDate(rawValue: "2026-09-09")
+        _ = try await service.completeTask(selection: selection, expectedTask: parent, completedOn: day)
+        let reloaded = try await FileWorkspaceStore(rootURL: directory).load(selection: selection)
+        let saved = try XCTUnwrap(reloaded)
+        for original in [parent, child, grandchild] {
+            let completed = try XCTUnwrap(saved.tasks.first { $0.task.id == original.id }?.task)
+            XCTAssertEqual(completed.state, "done")
+            XCTAssertEqual(completed.body, original.body)
+            XCTAssertEqual(completed.parentID, original.parentID)
+            XCTAssertEqual(TaskCompletionHistory.read(completed).events.map(\.completedOn), [day])
+        }
+        XCTAssertEqual(saved.tasks.first { $0.task.id == finished.id }?.task, finished)
+        XCTAssertEqual(saved.tasks.first { $0.task.id == unrelated.id }?.task, unrelated)
+        XCTAssertEqual(Set(saved.pendingChanges.map(\.path)), Set([parent, child, grandchild].map(\.relativePath)))
+        XCTAssertEqual(saved.revision, 1)
+    }
+
+    func testRecurringParentCompletionAdvancesChildOccurrencesAndFinishSeriesClosesThem() async throws {
+        var parent = try task(id(1))
+        parent.dueDate = try CivilDate(rawValue: "2026-09-09")
+        parent.recurrence = "FREQ=DAILY"
+        parent.recurrenceFrom = .schedule
+        var child = try task(id(2), parent: parent.id)
+        child.dueDate = parent.dueDate
+        child.dueTime = try CivilTime(rawValue: "16:30")
+        child.recurrence = "FREQ=WEEKLY"
+        child.recurrenceFrom = .completion
+        let oneOff = try task(id(3), parent: child.id)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (_, service, selection) = try await seed([parent, child, oneOff], at: directory)
+        let day = try CivilDate(rawValue: "2026-09-09")
+        let completed = try await service.completeTask(selection: selection, expectedTask: parent, completedOn: day)
+        let advanced = try await service.loadWorkspace(selection: selection)
+        let recurringChild = try XCTUnwrap(advanced.tasks.first { $0.task.id == child.id }?.task)
+        XCTAssertEqual(recurringChild.state, "open")
+        XCTAssertEqual(recurringChild.dueDate?.rawValue, "2026-09-16")
+        XCTAssertEqual(recurringChild.dueTime, child.dueTime)
+        XCTAssertEqual(recurringChild.lastCompletedDate, day)
+        XCTAssertEqual(advanced.tasks.first { $0.task.id == oneOff.id }?.task.state, "done")
+        var update = TaskUpdate(task: completed)
+        update.state = "done"
+        let finished = try await service.editTask(
+            selection: selection, id: parent.id, expectedTask: completed, update: update,
+            subtaskNames: ["Queued before finishing"]
+        )
+        let closed = try await service.loadWorkspace(selection: selection)
+        XCTAssertTrue(closed.tasks.allSatisfy { $0.task.state == "done" })
+        XCTAssertEqual(closed.tasks.first { $0.task.id == child.id }?.task.dueDate, recurringChild.dueDate)
+        XCTAssertEqual(TaskCompletionHistory.read(try XCTUnwrap(closed.tasks.first { $0.task.id == child.id }?.task)).events.count, 2)
+        update = TaskUpdate(task: finished)
+        update.state = "open"
+        _ = try await service.editTask(selection: selection, id: parent.id, expectedTask: finished, update: update)
+        let reopened = try await service.loadWorkspace(selection: selection)
+        XCTAssertEqual(reopened.tasks.filter { $0.task.id != parent.id }, closed.tasks.filter { $0.task.id != parent.id })
+    }
+
+    func testConflictedDescendantRejectsTheWholeParentCompletion() async throws {
+        let parent = try task(id(1))
+        let child = try task(id(2), parent: parent.id)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (store, service, selection) = try await seed([parent, child], at: directory)
+        let original = try await service.loadWorkspace(selection: selection)
+        let childDocument = try XCTUnwrap(original.tasks.first { $0.task.id == child.id })
+        let conflict = try SyncConflict(
+            path: child.relativePath, baseBlobSHA: childDocument.blobSHA, remoteBlobSHA: "remote",
+            localContent: childDocument.content, remoteContent: childDocument.content
+        )
+        let conflicted = try WorkspaceState(
+            selection: selection, configuration: original.configuration, tasks: original.tasks,
+            baseHeadCommitSHA: original.baseHeadCommitSHA, baseRootTreeSHA: original.baseRootTreeSHA,
+            pendingChanges: [], conflicts: [conflict], revision: original.revision + 1
+        )
+        try await store.save(conflicted, expectedRevision: original.revision)
+        do {
+            _ = try await service.completeTask(
+                selection: selection, expectedTask: parent, completedOn: CivilDate(rawValue: "2026-09-09")
+            )
+            XCTFail("A conflicted child must prevent partial parent completion")
+        } catch let OTodoError.conflict(message) {
+            XCTAssertTrue(message.contains(child.relativePath))
+        }
+        let saved = try await store.load(selection: selection)
+        XCTAssertEqual(saved, conflicted)
+    }
+
     func testRecurrenceStateExplicitEditAndBatchReschedulePreserveParent() async throws {
         let parent = try task(id(1), state: "done")
         var child = try task(id(2), parent: parent.id)
@@ -349,7 +445,7 @@ final class SubtaskTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(Set(children.map(\.name)), ["First child", "Second child"])
         XCTAssertEqual(TaskCompletionHistory.read(parent).events.first?.usesSubtasks, true)
         for child in children {
-            XCTAssertEqual(child.state, "open")
+            XCTAssertEqual(child.state, "done")
             XCTAssertTrue(child.tags.isEmpty)
             XCTAssertTrue(child.projectSlugs.isEmpty)
             XCTAssertNil(child.dueDate)
@@ -357,7 +453,10 @@ final class SubtaskTests: XCTestCase, @unchecked Sendable {
             XCTAssertNil(child.recurrence)
             XCTAssertNil(child.lastCompletedDate)
             XCTAssertTrue(child.body.isEmpty)
-            XCTAssertTrue(TaskCompletionHistory.read(child).events.isEmpty)
+            XCTAssertEqual(
+                TaskCompletionHistory.read(child).events.map(\.completedOn),
+                TaskCompletionHistory.read(parent).events.map(\.completedOn)
+            )
         }
         var update = TaskUpdate(task: parent)
         update.name = "Edited parent"

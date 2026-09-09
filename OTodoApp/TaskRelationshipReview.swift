@@ -10,7 +10,7 @@ struct TaskRelationshipReview: View {
         NavigationStack {
             List {
                 Section {
-                    Text("Relationships are checked across the whole workspace, not just your current filter. Edit a child's Parent to reparent it or choose No Parent to detach it. Task states and schedules are independent.")
+                    Text("Relationships are checked across the whole workspace, not just your current filter. Edit a child's Parent to reparent it or choose No Parent to detach it. Completing a parent completes its active descendants; schedules and reopening remain task-specific.")
                 }
                 Section("Workspace relationship issues") {
                     if model.hierarchy.issues.isEmpty {

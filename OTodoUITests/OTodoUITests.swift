@@ -2841,12 +2841,21 @@ final class OTodoUITests: XCTestCase {
         app.buttons["task-toggle-completion-\(parentID)"].tap()
         guard require(
             taskRow(named: "Hierarchy parent", state: "Done", in: app),
-            in: app, description: "the parent completed independently"
+            in: app, description: "the completed parent"
         ) else { return }
         guard selectFilter("Active", in: app) else { return }
-        guard require(child, in: app, description: "completing a parent leaves its child active") else { return }
-        XCTAssertTrue(child.label.contains("State: Pending"))
-        XCTAssertTrue(child.label.contains("outside this filter"))
+        XCTAssertTrue(child.waitForNonExistence(timeout: 8), "Parent completion also removes its child from Active")
+        app.terminate()
+        app.launchArguments.removeAll { $0 == "-ui-testing-reset-workspace" }
+        app.launch()
+        guard selectFilter("All", in: app) else { return }
+        guard require(child, in: app, description: "the completed child after offline relaunch") else { return }
+        XCTAssertTrue(child.label.contains("State: Done"))
+        XCTAssertTrue(child.label.contains("Parent: Hierarchy parent"))
+        let completedTree = XCTAttachment(screenshot: app.screenshot())
+        completedTree.name = "Parent and child completion survives offline relaunch"
+        completedTree.lifetime = .keepAlways
+        add(completedTree)
     }
 
     @MainActor

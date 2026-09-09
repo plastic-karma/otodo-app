@@ -143,11 +143,21 @@ and choosing a parent in a new draft prefill the same projects instead of the cu
 filter's projects. Previously saved children keep their own projects when a parent
 is edited or they are reparented. Queued children start in the configured default
 state without tags, a schedule, or a link unless their own name explicitly supplies
-a date/time. Each task keeps its own workflow,
-schedule, recurrence, and Today/Watch/widget eligibility; reminders use that
-task's schedule and the device's reminder settings. Completing or finishing a parent's series leaves its children
-unchanged. Deleting any task with direct children is refused, including terminal
-children; explicitly detach, reparent, or delete those children first.
+a date/time. Each task keeps its own schedule, recurrence, and Today/Watch/widget
+eligibility; reminders use that task's schedule and the device's reminder settings.
+
+Completing a parent also completes every active descendant, including subtasks
+outside the current filter and below already-terminal children. Recurring tasks
+complete their current occurrence and advance their own schedule. Choosing a
+terminal State or **Finish series** instead closes the whole active subtree without
+advancing its schedules. Children queued in that same save are included, including
+when creating a parent directly in a terminal state. Already-terminal descendants,
+unrelated tasks, and their history remain unchanged. Every changed task records its
+own completion; a descendant conflict, invalid recurrence/history, or failed save
+rejects the entire local transaction. Reopening a parent does not reopen children,
+and adding a child to an already-terminal parent does not complete it automatically.
+Deleting any task with direct children is refused, including terminal children;
+explicitly detach, reparent, or delete those children first.
 
 All, Active, and custom task lists indent matching relatives without inserting
 filtered-out ancestors. Ancestry labels retain context outside the filter.
