@@ -2091,20 +2091,25 @@ final class OTodoUITests: XCTestCase {
                 .containing(.staticText, identifier: "More").firstMatch
             guard require(more, in: safari, description: "the Share sheet's additional apps") else { return }
             more.tap()
-        }
-        guard require(otodo, in: safari, description: "OTodo in the system Share sheet") else { return }
-        // The remote Share service can report cells in its own local coordinate
-        // space. Anchor that point to Safari's actual popover, not the webpage.
-        let remoteShare = safari.otherElements["ShareSheet.RemoteContainerView"]
-        let activityContent = safari.collectionViews["activityCollectionView"]
-        if remoteShare.exists, activityContent.exists,
-           remoteShare.frame.origin != activityContent.frame.origin {
-            remoteShare.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
-                dx: otodo.frame.midX - activityContent.frame.minX,
-                dy: otodo.frame.midY - activityContent.frame.minY
-            )).tap()
+            let listedApp = safari.otherElements["ShareSheet.EditAppsView"].tables.cells
+                .containing(.staticText, identifier: "OTodo").firstMatch
+            guard require(listedApp, in: safari, description: "OTodo in the additional-apps list") else { return }
+            listedApp.tap()
         } else {
-            otodo.tap()
+            // The primary Share popover reports cells in its remote coordinate
+            // space. The additional-apps sheet above uses normal screen coordinates.
+            let remoteShare = safari.otherElements["ActivityListView"]
+                .otherElements["ShareSheet.RemoteContainerView"]
+            let activityContent = safari.collectionViews["activityCollectionView"]
+            if remoteShare.exists, activityContent.exists,
+               remoteShare.frame.origin != activityContent.frame.origin {
+                remoteShare.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                    dx: otodo.frame.midX - activityContent.frame.minX,
+                    dy: otodo.frame.midY - activityContent.frame.minY
+                )).tap()
+            } else {
+                otodo.tap()
+            }
         }
 
         let captureName = safari.textFields["share-capture-name"]
