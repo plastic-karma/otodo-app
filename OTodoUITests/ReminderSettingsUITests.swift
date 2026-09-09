@@ -3,6 +3,14 @@ import XCTest
 @MainActor
 final class ReminderSettingsUITests: XCTestCase {
     func testExactTimeReminderOpensTaskWhileAppIsForegrounded() {
+        assertNativeReminderOpensTask(background: false)
+    }
+
+    func testNativeReminderOpensTaskFromBackground() {
+        assertNativeReminderOpensTask(background: true)
+    }
+
+    private func assertNativeReminderOpensTask(background: Bool) {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace"]
@@ -34,7 +42,7 @@ final class ReminderSettingsUITests: XCTestCase {
         app.buttons["task-add"].tap()
         let name = app.textFields["task-editor-name"]
         XCTAssertTrue(name.waitForExistence(timeout: 8))
-        let title = "Foreground timed reminder"
+        let title = background ? "Background timed reminder" : "Foreground timed reminder"
         name.tap()
         // Relative times round up to the next whole minute: allow up to two
         // minutes here, rather than scheduling beyond the banner wait window.
@@ -42,6 +50,10 @@ final class ReminderSettingsUITests: XCTestCase {
         app.buttons["task-editor-save"].tap()
         XCTAssertTrue(name.waitForNonExistence(timeout: 8))
         XCTAssertEqual(app.state, .runningForeground)
+        if background {
+            XCUIDevice.shared.press(.home)
+            XCTAssertTrue(app.wait(for: .runningBackground, timeout: 8))
+        }
 
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let notifications = springboard.staticTexts.matching(NSPredicate(format: "label == %@", title))
@@ -52,16 +64,17 @@ final class ReminderSettingsUITests: XCTestCase {
             object: nil
         )
         XCTAssertEqual(XCTWaiter.wait(for: [visibleBanner], timeout: 150), .completed,
-                       "A real scheduled due-time notification must present over the foreground app")
-        XCTAssertEqual(app.state, .runningForeground)
+                       "A real scheduled due-time notification must present")
+        XCTAssertEqual(app.state, background ? .runningBackground : .runningForeground)
         let screenshot = XCTAttachment(screenshot: springboard.screenshot())
-        screenshot.name = "Native due-time reminder banner over foreground OTodo"
+        screenshot.name = "Native reminder banner — \(background ? "background" : "foreground")"
         screenshot.lifetime = .keepAlways
         add(screenshot)
 
         let banner = notifications.allElementsBoundByIndex.first(where: \.isHittable)
         XCTAssertNotNil(banner)
         banner?.tap()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
         XCTAssertTrue(name.waitForExistence(timeout: 10),
                       "Tapping the native reminder must open the editor without terminating OTodo")
         XCTAssertEqual(name.value as? String, title)
