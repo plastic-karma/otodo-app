@@ -69,12 +69,16 @@ final class TaskNotificationManager: NSObject, UNUserNotificationCenterDelegate 
 
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse
-    ) async {
-        // UNNotificationResponse stays on its delivery executor. Only this Sendable
-        // snapshot crosses to the main actor; returning completes the OS callback.
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping @Sendable () -> Void
+    ) {
         let snapshot = TaskNotificationResponse(response)
-        await handle(snapshot)
+        Task { @MainActor in
+            handle(snapshot)
+            // UIKit restores its scene snapshot when this completes. The async
+            // delegate bridge calls it off-main and crashes on background taps.
+            completionHandler()
+        }
     }
 
     func handle(_ response: TaskNotificationResponse) {
