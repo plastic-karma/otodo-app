@@ -40,6 +40,7 @@ final class ShareViewController: UIViewController {
 private final class ShareCaptureModel {
     var name = ""
     var body = ""
+    var url = ""
     private(set) var attachments: [AttachmentDraft] = []
     private var attachmentContext: SharedTaskCapture.AttachmentContext?
     private(set) var isCancelled = false
@@ -95,6 +96,7 @@ private final class ShareCaptureModel {
             try Task.checkCancellation()
             name = capture.name
             body = capture.body
+            url = capture.url ?? ""
             hasCapture = true
         } catch is CancellationError {
             await cleanup()
@@ -138,7 +140,7 @@ private final class ShareCaptureModel {
         isSaving = true
         errorMessage = nil
         do {
-            _ = try await SharedTaskCapture.save(name: name, body: body, attachments: attachments,
+            _ = try await SharedTaskCapture.save(name: name, body: body, url: url, attachments: attachments,
                                                  expectedSelection: attachmentContext?.selection)
             attachments = []
             onSave()
@@ -178,6 +180,14 @@ private struct ShareCaptureView: View {
                     Section("Todo") {
                         TextField("Todo name", text: $model.name)
                             .accessibilityIdentifier("share-capture-name")
+                    }
+                    Section("Link") {
+                        TextField("https://example.com", text: $model.url)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.URL)
+                            .accessibilityLabel("Todo link")
+                            .accessibilityIdentifier("share-capture-url")
                     }
                     if !model.attachments.isEmpty {
                         Section("Attachments") {

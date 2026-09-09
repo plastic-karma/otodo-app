@@ -40,6 +40,7 @@ final class AttachmentCaptureTests: XCTestCase {
         defer { capture.cleanTemporaryFiles() }
         XCTAssertEqual(capture.files.count, 1)
         XCTAssertFalse(capture.body.contains("file://"))
+        XCTAssertNil(capture.url)
         XCTAssertEqual(try Data(contentsOf: XCTUnwrap(capture.files.first)), Data("Keep these bytes\r\n".utf8))
     }
 

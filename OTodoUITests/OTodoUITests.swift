@@ -2110,6 +2110,9 @@ final class OTodoUITests: XCTestCase {
         let captureName = safari.textFields["share-capture-name"]
         guard require(captureName, in: safari, description: "the OTodo Share capture editor", timeout: 15) else { return }
         XCTAssertEqual(captureName.value as? String, "Example Domain")
+        let captureLink = safari.textFields["share-capture-url"]
+        guard require(captureLink, in: safari, description: "the detected source link") else { return }
+        XCTAssertEqual(captureLink.value as? String, sourceURL)
         let context = safari.textViews["share-capture-context"]
         guard require(context, in: safari, description: "the source Markdown context") else { return }
         XCTAssertTrue((context.value as? String)?.contains(sourceURL) == true)
@@ -2140,6 +2143,13 @@ final class OTodoUITests: XCTestCase {
         guard require(notes, in: app, description: "the saved Markdown notes") else { return }
         XCTAssertTrue((notes.value as? String)?.contains(sourceURL) == true)
         XCTAssertTrue((notes.value as? String)?.contains("Example Domain") == true)
+        let savedLink = app.textFields["task-editor-url"]
+        app.revealTaskEditorElement(savedLink)
+        XCTAssertEqual(savedLink.value as? String, sourceURL)
+        let savedScreenshot = XCTAttachment(screenshot: app.screenshot())
+        savedScreenshot.name = "Shared webpage populates the Link field after offline relaunch"
+        savedScreenshot.lifetime = .keepAlways
+        add(savedScreenshot)
     }
 
     @MainActor

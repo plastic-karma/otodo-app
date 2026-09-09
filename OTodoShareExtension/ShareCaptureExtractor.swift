@@ -8,6 +8,7 @@ enum ShareCaptureExtractor {
     struct Capture {
         let name: String
         let body: String
+        let url: String?
         let files: [URL]
 
         func cleanTemporaryFiles() {
@@ -18,6 +19,7 @@ enum ShareCaptureExtractor {
     static func extract(_ items: [NSExtensionItem]) async throws -> Capture {
         var captures: [TaskCapture] = []
         var files: [URL] = []
+        var sourceURL: String?
         var succeeded = false
         defer {
             if !succeeded {
@@ -68,6 +70,9 @@ enum ShareCaptureExtractor {
                 }
             }
 
+            if sourceURL == nil {
+                sourceURL = urls.lazy.map(\.absoluteString).first(where: isSupportedLink)
+            }
             guard title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
                 || !texts.isEmpty || !urls.isEmpty else { continue }
             captures.append(try TaskCapture(
@@ -84,9 +89,34 @@ enum ShareCaptureExtractor {
             throw CaptureError("No readable content was shared. Share text, links, files, or images with OTodo.")
         }
         try Task.checkCancellation()
+        let body = captures.map(\.body).joined(separator: "\n\n---\n\n")
+        let link = try sourceURL ?? detectedLink(in: body)
         succeeded = true
-        return Capture(name: captures.first?.name ?? files[0].lastPathComponent,
-                       body: captures.map(\.body).joined(separator: "\n\n---\n\n"), files: files)
+        return Capture(
+            name: captures.first?.name ?? files[0].lastPathComponent,
+            body: body, url: link, files: files
+        )
+    }
+
+    private static func detectedLink(in text: String) throws -> String? {
+        guard !text.isEmpty else { return nil }
+        let detector = try NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+        var link: String?
+        detector.enumerateMatches(in: text, range: NSRange(text.startIndex..., in: text)) { match, _, stop in
+            guard let value = match?.url?.absoluteString, isSupportedLink(value) else { return }
+            link = value
+            stop.pointee = true
+        }
+        return link
+    }
+
+    nonisolated private static func isSupportedLink(_ value: String) -> Bool {
+        do {
+            try DomainValidation.validateURL(value)
+            return true
+        } catch {
+            return false
+        }
     }
 
     private static func loadFile(_ provider: NSItemProvider, identifier: String) async throws -> URL {

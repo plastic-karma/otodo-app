@@ -20,7 +20,7 @@ enum SharedTaskCapture {
                                  persistence: FileWorkspaceStore(rootURL: root))
     }
 
-    static func save(name: String, body: String, attachments: [AttachmentDraft] = [],
+    static func save(name: String, body: String, url: String? = nil, attachments: [AttachmentDraft] = [],
                      expectedSelection: RepositorySelection? = nil) async throws -> TodoTask {
         let context = try await attachmentContext()
         if let expectedSelection, expectedSelection != context.selection {
@@ -28,9 +28,10 @@ enum SharedTaskCapture {
         }
         let service = TaskWorkspaceService(persistence: context.persistence, taskCodec: ObsidianTaskCodec(),
                                            attachmentStore: context.store)
+        let link = url?.trimmingCharacters(in: .whitespacesAndNewlines)
         return try await service.addTask(
             selection: context.selection, name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-            body: body, attachments: attachments
+            body: body, attachments: attachments, url: link?.isEmpty == false ? link : nil
         )
     }
 }

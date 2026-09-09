@@ -6,6 +6,38 @@ import XCTest
 
 @MainActor
 final class CaptureIntentTests: XCTestCase {
+    func testSharedTextFindsFirstWebLinkWithoutProsePunctuation() async throws {
+        let text = "Read https://example.com/guide?q=one%20two#notes, then https://example.org/later."
+        let item = NSExtensionItem()
+        item.attributedContentText = NSAttributedString(string: text)
+        let capture = try await ShareCaptureExtractor.extract([item])
+        XCTAssertEqual(capture.url, "https://example.com/guide?q=one%20two#notes")
+        XCTAssertEqual(capture.body, text)
+    }
+
+    func testExplicitSourceLinkWinsAcrossItemsWithoutDiscardingText() async throws {
+        let text = NSExtensionItem()
+        text.attributedContentText = NSAttributedString(string: "Quoted https://example.com/other")
+        let source = NSExtensionItem()
+        let url = try XCTUnwrap(URL(string: "https://example.com/source?q=one#section"))
+        source.attachments = [NSItemProvider(item: url as NSURL, typeIdentifier: "public.url")]
+        let capture = try await ShareCaptureExtractor.extract([text, source])
+        XCTAssertEqual(capture.url, url.absoluteString)
+        XCTAssertTrue(capture.body.contains("Quoted https://example.com/other"))
+        XCTAssertTrue(capture.body.contains(url.absoluteString))
+    }
+
+    func testNonWebLinksRemainContextWithoutBecomingTaskLinks() async throws {
+        let item = NSExtensionItem()
+        item.attributedContentText = NSAttributedString(string: "Contact me@example.com")
+        let url = try XCTUnwrap(URL(string: "obsidian://open?vault=Notes&file=Review"))
+        item.attachments = [NSItemProvider(item: url as NSURL, typeIdentifier: "public.url")]
+        let capture = try await ShareCaptureExtractor.extract([item])
+        XCTAssertNil(capture.url)
+        XCTAssertTrue(capture.body.contains(url.absoluteString))
+        XCTAssertTrue(capture.body.contains("me@example.com"))
+    }
+
     func testParameterizedIntentPersistsProjectlessUndatedMarkdownInNormalOutbox() async throws {
         let directory = try SharedWorkspaceStorage.prepareForApplication(isUITesting: true)
         let selectionStore = RepositorySelectionStore(directoryURL: directory)
@@ -89,10 +121,11 @@ final class CaptureIntentTests: XCTestCase {
             NSItemProvider(item: "Another selected passage" as NSString, typeIdentifier: "public.plain-text"),
         ]
         let capture = try await ShareCaptureExtractor.extract([source, anotherSource])
-        let sharedTask = try await SharedTaskCapture.save(name: capture.name, body: capture.body)
+        let sharedTask = try await SharedTaskCapture.save(name: capture.name, body: capture.body, url: capture.url)
         let afterSharing = try await service.loadWorkspace(selection: selection)
         let sharedDocument = try XCTUnwrap(afterSharing.tasks.first(where: { $0.task.id == sharedTask.id }))
         XCTAssertEqual(sharedDocument.task.name, "Safari source today at 3 pm")
+        XCTAssertEqual(sharedDocument.task.url, firstURL.absoluteString)
         for context in [text, "Shared source", "Selected source context", firstURL.absoluteString, secondURL.absoluteString, pageURL, "Selected in Safari", "Another selected passage"] {
             XCTAssertTrue(sharedDocument.task.body.contains(context), "Shared context must not be dropped")
         }
