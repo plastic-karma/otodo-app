@@ -146,10 +146,11 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         revealLeadingActions(for: child, in: app)
         app.buttons["task-add-subtask-\(childID)"].tap()
         XCTAssertTrue(app.navigationBars["New Todo"].waitForExistence(timeout: 8))
-        let nestedName = app.textFields["task-editor-name"]
+        let nestedEditor = app.collectionViews.matching(identifier: "task-editor").element(boundBy: 1)
+        let nestedName = nestedEditor.textFields["task-editor-name"]
         nestedName.tap()
         nestedName.typeText("Swipe grandchild\n")
-        app.buttons["task-editor-save"].tap()
+        app.navigationBars["New Todo"].buttons["task-editor-save"].tap()
         XCTAssertTrue(app.navigationBars["New Todo"].waitForNonExistence(timeout: 8))
 
         revealLeadingActions(for: child, in: app)
@@ -174,7 +175,7 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         revealTrailingActions(for: grandchild, in: app)
         app.buttons["task-delete-\(grandchildID)"].tap()
         XCTAssertTrue(grandchild.waitForNonExistence(timeout: 8))
-        app.buttons["Cancel"].tap()
+        app.navigationBars.matching(identifier: "Edit Todo").element(boundBy: 1).buttons["Cancel"].tap()
         revealTrailingActions(for: child, in: app)
         app.buttons["task-delete-\(childID)"].tap()
         XCTAssertTrue(child.waitForNonExistence(timeout: 8))

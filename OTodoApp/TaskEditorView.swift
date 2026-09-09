@@ -330,7 +330,6 @@ struct TaskEditorView: View {
                 }
             }
         }
-        .accessibilityHidden(childEditorPresentation != nil || childReschedulePresentation != nil)
         .onAppear { isEditorPresented = true }
         .onChange(of: draft.parentID) { _, parentID in
             guard draft.preservedTask == nil,

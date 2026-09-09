@@ -8,14 +8,18 @@ extension XCUIApplication {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let editor = descendants(matching: .any).matching(identifier: "task-editor").firstMatch
-        XCTAssertTrue(editor.waitForExistence(timeout: 8), file: file, line: line)
-        let navigation = navigationBars.matching(NSPredicate(
+        func frontmost(_ query: XCUIElementQuery) -> XCUIElement {
+            query.element(boundBy: max(0, query.count - 1))
+        }
+        let editors = descendants(matching: .any).matching(identifier: "task-editor")
+        XCTAssertTrue(editors.firstMatch.waitForExistence(timeout: 8), file: file, line: line)
+        let editor = frontmost(editors)
+        let navigation = frontmost(navigationBars.matching(NSPredicate(
             format: "identifier IN %@", ["New Todo", "Edit Todo"]
-        )).firstMatch
-        let footer = buttons["task-editor-save-another"]
+        )))
+        let footer = frontmost(buttons.matching(identifier: "task-editor-save-another"))
         let keyboard = keyboards.firstMatch
-        let done = buttons["task-editor-keyboard-done"]
+        let done = frontmost(buttons.matching(identifier: "task-editor-keyboard-done"))
 
         func viewport() -> CGRect {
             let top = max(editor.frame.minY, navigation.frame.maxY) + 8
