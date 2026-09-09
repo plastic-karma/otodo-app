@@ -431,6 +431,33 @@ Simulator builds use ad-hoc signing so App Group entitlements are available to t
 
 To run or test, open `OTodo.xcodeproj`, select scheme `OTodo` and any installed iOS 17-or-newer iPhone simulator, then Run/Test. Regenerate the project after changing `project.yml`; do not hand-edit generated project settings.
 
+### Fast source-to-image previews with OMP
+
+The repo-local [`design` skill](.agents/skills/design/SKILL.md) reconstructs
+complete screens from SwiftUI source as editable HTML/CSS/JS artboards. Astra
+authors the screen; Chromium renders the images. No React/npm project is needed.
+
+Start OMP from this checkout, then invoke the skill with the desired scope:
+
+```sh
+omp --model openai-codex/gpt-6-astra
+```
+
+```text
+/skill:design Reconstruct the Today screen from source in light and dark at 402×874.
+Preserve the existing design, verify filter switching and completion, and show PNGs.
+```
+
+Follow up in the same session with a focused change such as “increase row padding
+by 4px above and below; keep everything else unchanged.” The skill keeps editable
+`inputs.json` and HTML, individual PNGs, a comparison canvas, and capture diagnostics.
+It requires OMP's JavaScript Eval/browser support, an image-capable model route,
+and an installed Chromium browser or dedicated CDP endpoint. Generated artifacts
+default to `/tmp/otodo-design-<screen>`, outside app source.
+
+These are browser approximations, not native SwiftUI renders. Use the simulator
+survey below for native fonts, SF Symbols, platform behavior and accessibility.
+
 ### Visual design survey
 
 The UI suite includes light/dark captures of the workspace, sidebar, filter library, project creation, and todo/bulk capture, plus the largest accessibility text size. To run only this visual survey on a branch:
