@@ -553,7 +553,7 @@ struct TaskListView: View {
         guard let configuration = model.configuration else { return }
         var draft = TaskEditorDraft(configuration: configuration)
         let defaults = creationDefaults
-        draft.projectSlugs = defaults.projectSlugs
+        draft.projectSlugs = task.projectSlugs
         draft.tags = defaults.tags
         draft.parentID = task.id
         draft.dueDate = defaults.dueDate

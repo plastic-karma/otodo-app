@@ -137,9 +137,13 @@ Candidates show their full IDs; the current task and its descendants are exclude
 
 Both **New Todo** and **Edit Todo** also have a **Subtasks** section. Enter a child name and tap **Add Subtask** to queue it; remove queued children before saving if needed. Existing direct children are shown in the parent editor. **Save** publishes the parent and every queued child atomically to the durable offline workspace and outbox. A bad child name, stale parent, conflict, or failed save publishes none of the batch. Unqueued text must be added or cleared before saving. Explicit date phrases in child names use the existing name parser.
 
-Subtasks inherit no metadata from their parent. New queued children start in the
-configured default state without projects, tags, a schedule, or a link unless
-their own name explicitly supplies a date/time. Each task keeps its own workflow,
+New subtasks start with their parent's projects. Queued children use the projects
+being saved in the parent editor, including changes made before Save; **Add Subtask**
+and choosing a parent in a new draft prefill the same projects instead of the current
+filter's projects. Previously saved children keep their own projects when a parent
+is edited or they are reparented. Queued children start in the configured default
+state without tags, a schedule, or a link unless their own name explicitly supplies
+a date/time. Each task keeps its own workflow,
 schedule, recurrence, and Today/Watch/widget eligibility; reminders use that
 task's schedule and the device's reminder settings. Completing or finishing a parent's series leaves its children
 unchanged. Deleting any task with direct children is refused, including terminal
@@ -152,8 +156,8 @@ so a matching child remains visible even when its parent is not.
 
 **Save & Create Another** keeps the chosen parent for sibling creation. A fresh
 global **+** or Home Screen **New Todo** request starts a root draft; Share,
-Shortcuts/App Intent, and Bulk Add remain root-only. Existing filter-derived
-project/tag defaults still apply.
+Shortcuts/App Intent, and Bulk Add remain root-only. Filter-derived project/tag
+defaults still apply to root creation; a new child's parent supplies its initial projects.
 
 The pinned **Relationships** review shows missing parents, cycles, and durable
 relationship blocks across the whole workspace, independently of the active

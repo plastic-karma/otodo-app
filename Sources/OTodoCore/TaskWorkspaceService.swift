@@ -1046,7 +1046,7 @@ public actor TaskWorkspaceService {
             let relativePath = "\(workspace.configuration.tasksDirectory)/\(id.rawValue).md"
             let child = try TodoTask(
                 id: id, relativePath: relativePath, name: detected?.nameWithoutPhrase ?? name,
-                state: workspace.configuration.defaultState, projectSlugs: [], tags: [],
+                state: workspace.configuration.defaultState, projectSlugs: parent.projectSlugs, tags: [],
                 dueDate: detected?.resolvedDueDate(selectedDate: nil), dueTime: detected?.dueTime,
                 recurrence: nil, recurrenceFrom: nil, lastCompletedDate: nil, body: "",
                 extraProperties: [YAMLProperty(name: "base", value: .string(workspace.configuration.todosBaseLink))],

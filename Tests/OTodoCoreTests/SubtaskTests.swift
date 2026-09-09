@@ -375,6 +375,46 @@ final class SubtaskTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testQueuedChildrenRemainVisibleInParentProjectsAcrossCreateEditAndReload() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (_, service, selection) = try await seed([], at: directory)
+        try await service.addProject(selection: selection, slug: "work", title: "Work")
+        try await service.addProject(selection: selection, slug: "home", title: "Home")
+        let parent = try await service.addTask(
+            selection: selection, name: "Parent", projectSlugs: ["work", "home"],
+            subtaskNames: ["First child", "Second child"]
+        )
+        let restored = TaskWorkspaceService(
+            persistence: FileWorkspaceStore(rootURL: directory), taskCodec: ObsidianTaskCodec()
+        )
+        let created = try await restored.listTasks(selection: selection)
+        for project in ["work", "home"] {
+            XCTAssertEqual(
+                Set(created.filter { $0.projectSlugs.contains(project) }.map(\.name)),
+                ["Parent", "First child", "Second child"]
+            )
+        }
+
+        // A child queued in an existing editor uses the parent's newly saved
+        // projects, not its old snapshot. Previously saved children are independent.
+        var update = TaskUpdate(task: parent)
+        update.projectSlugs = ["home"]
+        _ = try await service.editTask(
+            selection: selection, id: parent.id, expectedTask: parent, update: update,
+            subtaskNames: ["Third child"]
+        )
+        let edited = try await restored.listTasks(selection: selection)
+        XCTAssertEqual(
+            Set(edited.filter { $0.projectSlugs.contains("home") }.map(\.name)),
+            ["Parent", "First child", "Second child", "Third child"]
+        )
+        XCTAssertEqual(
+            Set(edited.filter { $0.projectSlugs.contains("work") }.map(\.name)),
+            ["First child", "Second child"]
+        )
+    }
+
     func testEditorBatchRejectsInvalidChildStaleParentAndLegacySchemaWithoutPublication() async throws {
         for schema in [1, 2] {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

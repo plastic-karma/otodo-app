@@ -14,6 +14,12 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         XCTAssertTrue(name.waitForExistence(timeout: 8))
         name.tap()
         name.typeText("Linked parent\n")
+        let details = app.buttons["task-editor-details"]
+        app.revealTaskEditorElement(details)
+        details.tap()
+        let work = app.buttons["work project"]
+        app.revealTaskEditorElement(work)
+        work.tap()
 
         let url = app.textFields["task-editor-url"]
         app.revealTaskEditorElement(url)
@@ -61,6 +67,11 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         app.revealTaskEditorElement(firstChild)
         XCTAssertTrue(firstChild.exists, "The saved child must be a direct child of this parent")
         XCTAssertFalse(existingChild("Discarded child", in: app).exists)
+        app.revealTaskEditorElement(details)
+        details.tap()
+        app.revealTaskEditorElement(work)
+        work.tap()
+        app.buttons["home project"].tap()
         queueChild("Second child", in: app)
         app.revealTaskEditorElement(url)
         app.buttons["task-editor-clear-url"].tap()
@@ -78,6 +89,20 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         XCTAssertTrue(existingChild("Second child", in: app).exists,
                       "Editing a parent must append its queued children without replacing existing children")
         attachScreenshot(in: app, name: "Offline parent retains both saved direct children")
+        app.buttons["Cancel"].tap()
+        for (child, selected, unselected) in [
+            ("First child", "work project", "home project"),
+            ("Second child", "home project", "work project"),
+        ] {
+            openTask(child, in: app)
+            app.revealTaskEditorElement(details)
+            details.tap()
+            app.revealTaskEditorElement(app.buttons[selected])
+            XCTAssertEqual(app.buttons[selected].value as? String, "Selected")
+            XCTAssertEqual(app.buttons[unselected].value as? String, "Not selected")
+            attachScreenshot(in: app, name: "\(child) keeps the projects from its parent's save")
+            app.buttons["Cancel"].tap()
+        }
     }
 
     @MainActor

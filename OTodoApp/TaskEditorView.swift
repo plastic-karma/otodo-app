@@ -329,6 +329,13 @@ struct TaskEditorView: View {
             }
         }
         .onAppear { isEditorPresented = true }
+        .onChange(of: draft.parentID) { _, parentID in
+            guard draft.preservedTask == nil,
+                  let parentID,
+                  let parent = hierarchy.task(for: parentID)
+            else { return }
+            projectsText = parent.projectSlugs.joined(separator: ", ")
+        }
         .onDisappear {
             isEditorPresented = false
             if let attachmentModel, let attachmentSelection {
@@ -551,7 +558,7 @@ struct TaskEditorView: View {
                     onAdd: { draft.subtaskNames.append($0) }
                 )
                 .id(nameFocusRequest)
-                Text("Tap Add to queue each child. Save creates the parent and queued subtasks together. Children start in the default state without inheriting projects, tags, dates, or links.")
+                Text("Tap Add to queue each child. Save creates the parent and queued subtasks together. Children start in the default state with the parent's projects, without inheriting tags, dates, or links.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {

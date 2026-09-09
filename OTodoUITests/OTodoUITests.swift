@@ -2582,6 +2582,8 @@ final class OTodoUITests: XCTestCase {
             ) else { return }
             XCTAssertTrue(row.label.contains("Parent: Hierarchy parent"))
             XCTAssertTrue(row.label.contains("Hierarchy level 1"))
+            XCTAssertTrue(row.label.contains("Projects: work"),
+                          "New siblings inherit their parent's projects even in the unscoped All view")
         }
         let hierarchyScreenshot = XCTAttachment(screenshot: app.screenshot())
         hierarchyScreenshot.name = "Subtask hierarchy — repeated siblings under their parent"
@@ -2615,6 +2617,8 @@ final class OTodoUITests: XCTestCase {
         ) else { return }
         XCTAssertTrue(reparented.label.contains("Parent: Terminal parent"))
         XCTAssertTrue(reparented.label.contains("outside this filter"))
+        XCTAssertTrue(reparented.label.contains("Projects: work"),
+                      "Reparenting an existing child must preserve its independently saved projects")
         reparented.tap()
         revealEditorControl("task-editor-parent", panel: "details", in: app)
         app.buttons["task-editor-parent"].tap()
@@ -2653,6 +2657,24 @@ final class OTodoUITests: XCTestCase {
             description: "global creation never inherits stale parent context"
         ) else { return }
         XCTAssertFalse(root.label.contains("Parent:"))
+
+        app.buttons["task-add"].tap()
+        guard require(name, in: app, description: "a new draft for parent selection") else { return }
+        name.tap()
+        name.typeText("Picker child\n")
+        revealEditorControl("task-editor-parent", panel: "details", in: app)
+        app.buttons["task-editor-parent"].tap()
+        let candidate = app.buttons["parent-candidate-\(parentID)"]
+        guard require(candidate, in: app, description: "the selected parent for a new child") else { return }
+        candidate.tap()
+        app.buttons["task-editor-save"].tap()
+        guard requireEditorDismissed(editor, after: "saving a child from the parent picker", in: app) else { return }
+        guard let pickerChild = requireTaskRow(
+            named: "Picker child", state: "Pending", in: app, taskList: list,
+            description: "the parent picker's child with inherited project membership"
+        ) else { return }
+        XCTAssertTrue(pickerChild.label.contains("Projects: work"))
+        XCTAssertTrue(pickerChild.label.contains("Parent: Hierarchy parent"))
     }
 
     @MainActor
