@@ -579,6 +579,7 @@ struct TaskEditorView: View {
             if let message = attachmentModel?.errorMessage {
                 Label(message, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.red)
+                    .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("subtask-action-error")
             }
             if configuration.schemaVersion >= 2 {

@@ -137,6 +137,12 @@ Candidates show their full IDs; the current task and its descendants are exclude
 
 Both **New Todo** and **Edit Todo** also have a **Subtasks** section. Enter a child name and tap **Add Subtask** to queue it; remove queued children before saving if needed. Existing direct children are shown in the parent editor. **Save** publishes the parent and every queued child atomically to the durable offline workspace and outbox. A bad child name, stale parent, conflict, or failed save publishes none of the batch. Unqueued text must be added or cleared before saving. Explicit date phrases in child names use the existing name parser.
 
+Saved children use the same actions as the main list: swipe right for **Done**,
+**Add Subtask**, and **Reschedule**, or left for **Delete**. Touch and hold for the
+same menu, or tap a child to edit it. These actions save immediately without
+replacing unsaved changes in the parent editor. Deletion still requires removing
+or reparenting the child's own children first.
+
 New subtasks start with their parent's projects. Queued children use the projects
 being saved in the parent editor, including changes made before Save; **Add Subtask**
 and choosing a parent in a new draft prefill the same projects instead of the current
