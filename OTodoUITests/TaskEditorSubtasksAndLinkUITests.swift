@@ -14,12 +14,6 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         XCTAssertTrue(name.waitForExistence(timeout: 8))
         name.tap()
         name.typeText("Linked parent\n")
-        let details = app.buttons["task-editor-details"]
-        app.revealTaskEditorElement(details)
-        details.tap()
-        let work = app.buttons["work project"]
-        app.revealTaskEditorElement(work)
-        work.tap()
 
         let url = app.textFields["task-editor-url"]
         app.revealTaskEditorElement(url)
@@ -67,11 +61,6 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         app.revealTaskEditorElement(firstChild)
         XCTAssertTrue(firstChild.exists, "The saved child must be a direct child of this parent")
         XCTAssertFalse(existingChild("Discarded child", in: app).exists)
-        app.revealTaskEditorElement(details)
-        details.tap()
-        app.revealTaskEditorElement(work)
-        work.tap()
-        app.buttons["home project"].tap()
         queueChild("Second child", in: app)
         app.revealTaskEditorElement(url)
         app.buttons["task-editor-clear-url"].tap()
@@ -89,10 +78,35 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         XCTAssertTrue(existingChild("Second child", in: app).exists,
                       "Editing a parent must append its queued children without replacing existing children")
         attachScreenshot(in: app, name: "Offline parent retains both saved direct children")
-        app.buttons["Cancel"].tap()
+    }
+
+    @MainActor
+    func testQueuedChildrenKeepProjectsFromEachParentSave() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-subtasks", "-ui-testing-reset-workspace"]
+        app.launch()
+        openActive(in: app)
+        openTask("Hierarchy parent", in: app)
+        queueChild("Before project change", in: app)
+        save(in: app)
+
+        openTask("Hierarchy parent", in: app)
+        let details = app.buttons["task-editor-details"]
+        app.revealTaskEditorElement(details)
+        details.tap()
+        let work = app.buttons["work project"]
+        app.revealTaskEditorElement(work)
+        XCTAssertEqual(work.value as? String, "Selected")
+        work.tap()
+        app.buttons["home project"].tap()
+        queueChild("After project change", in: app)
+        save(in: app)
+
+        relaunch(app)
         for (child, selected, unselected) in [
-            ("First child", "work project", "home project"),
-            ("Second child", "home project", "work project"),
+            ("Before project change", "work project", "home project"),
+            ("After project change", "home project", "work project"),
         ] {
             openTask(child, in: app)
             app.revealTaskEditorElement(details)
