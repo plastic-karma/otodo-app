@@ -189,11 +189,23 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
             "task-row-", "\(title). State: Pending"
         )).firstMatch
         let list = app.descendants(matching: .any).matching(identifier: "task-list").firstMatch
+        let navigationBar = app.navigationBars.firstMatch
+        let syncStatus = app.descendants(matching: .any).matching(identifier: "sync-status").firstMatch
+        func isUnobscured() -> Bool {
+            guard row.exists && row.isHittable else { return false }
+            return row.frame.minY >= navigationBar.frame.maxY
+                && row.frame.maxY <= syncStatus.frame.minY
+        }
         for _ in 0..<8 {
-            if row.exists && row.isHittable { break }
+            if isUnobscured() { break }
             list.swipeUp()
         }
+        for _ in 0..<8 {
+            if isUnobscured() { break }
+            list.swipeDown()
+        }
         XCTAssertTrue(row.waitForExistence(timeout: 8))
+        XCTAssertTrue(isUnobscured(), "Task row must be clear of navigation and the sync footer")
         row.tap()
         XCTAssertTrue(app.textFields["task-editor-name"].waitForExistence(timeout: 8))
     }

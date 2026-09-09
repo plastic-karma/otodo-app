@@ -115,6 +115,10 @@ final class TodayCreationUITests: XCTestCase {
     private func create(_ name: String, in app: XCUIApplication) {
         let add = app.buttons["task-add"]
         XCTAssertTrue(add.waitForExistence(timeout: 8))
+        let enabled = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isEnabled == true"), object: add
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 8), .completed)
         add.tap()
         let title = app.textFields["task-editor-name"]
         XCTAssertTrue(title.waitForExistence(timeout: 8))
