@@ -106,6 +106,109 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
     }
 
     @MainActor
+    func testSubtaskSwipesPreserveParentDraftAndPersistChildActions() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-subtasks", "-ui-testing-reset-workspace"]
+        app.launch()
+        openActive(in: app)
+        openTask("Hierarchy parent", in: app)
+        let name = app.textFields["task-editor-name"]
+        name.tap()
+        name.typeText(" amended\n")
+        let unsavedName = try XCTUnwrap(name.value as? String)
+        XCTAssertNotEqual(unsavedName, "Hierarchy parent")
+        let childID = "01ARZ3NDEKTSV4RRFFQ69G5FAW"
+        let child = existingChild("Hierarchy child", in: app)
+
+        revealLeadingActions(for: child, in: app)
+        XCTAssertTrue(app.buttons["task-complete-\(childID)"].exists)
+        XCTAssertTrue(app.buttons["task-add-subtask-\(childID)"].exists)
+        let reschedule = app.buttons["task-reschedule-\(childID)"]
+        XCTAssertTrue(reschedule.exists)
+        attachScreenshot(in: app, name: "Saved subtask exposes the same leading actions as the main list")
+        reschedule.tap()
+        let relative = app.textFields["task-reschedule-relative-due-date"]
+        XCTAssertTrue(relative.waitForExistence(timeout: 8))
+        relative.tap()
+        relative.typeText("in 2 days")
+        app.buttons["task-reschedule-relative-due-apply"].tap()
+        app.buttons["task-reschedule-save"].tap()
+        XCTAssertTrue(relative.waitForNonExistence(timeout: 8))
+        app.revealTaskEditorElement(child)
+        let due = Calendar.autoupdatingCurrent.date(byAdding: .day, value: 2, to: .now)!
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        let parts = calendar.dateComponents([.year, .month, .day], from: due)
+        let dueKey = String(format: "%04d-%02d-%02d", parts.year!, parts.month!, parts.day!)
+        XCTAssertTrue(child.label.contains("Due: \(dueKey)"))
+
+        revealLeadingActions(for: child, in: app)
+        app.buttons["task-add-subtask-\(childID)"].tap()
+        XCTAssertTrue(app.navigationBars["New Todo"].waitForExistence(timeout: 8))
+        let nestedName = app.textFields["task-editor-name"]
+        nestedName.tap()
+        nestedName.typeText("Swipe grandchild\n")
+        app.buttons["task-editor-save"].tap()
+        XCTAssertTrue(app.navigationBars["New Todo"].waitForNonExistence(timeout: 8))
+
+        revealLeadingActions(for: child, in: app)
+        app.buttons["task-complete-\(childID)"].tap()
+        let completed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", "State: Done"), object: child
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 8), .completed)
+        revealTrailingActions(for: child, in: app)
+        app.buttons["task-delete-\(childID)"].tap()
+        let refusal = app.descendants(matching: .any).matching(identifier: "subtask-action-error").firstMatch
+        app.revealTaskEditorElement(refusal)
+        XCTAssertTrue(refusal.label.localizedCaseInsensitiveContains("child"))
+        XCTAssertTrue(child.exists, "Delete must retain a nonleaf just as the main list does")
+
+        app.revealTaskEditorElement(child)
+        child.tap()
+        let grandchild = existingChild("Swipe grandchild", in: app)
+        app.revealTaskEditorElement(grandchild)
+        XCTAssertTrue(grandchild.label.contains("State: Done"))
+        let grandchildID = String(grandchild.identifier.dropFirst("task-editor-existing-subtask-".count))
+        revealTrailingActions(for: grandchild, in: app)
+        app.buttons["task-delete-\(grandchildID)"].tap()
+        XCTAssertTrue(grandchild.waitForNonExistence(timeout: 8))
+        app.buttons["Cancel"].tap()
+        revealTrailingActions(for: child, in: app)
+        app.buttons["task-delete-\(childID)"].tap()
+        XCTAssertTrue(child.waitForNonExistence(timeout: 8))
+        app.revealTaskEditorElement(name)
+        XCTAssertEqual(name.value as? String, unsavedName, "Child actions must not replace unsaved parent fields")
+        save(in: app)
+
+        relaunch(app)
+        openTask(unsavedName, in: app)
+        let input = app.textFields["task-editor-subtask-name"]
+        app.revealTaskEditorElement(input)
+        XCTAssertFalse(existingChild("Hierarchy child", in: app).exists)
+        attachScreenshot(in: app, name: "Parent draft and subtask deletions persist after offline relaunch")
+    }
+
+    @MainActor
+    private func revealLeadingActions(for row: XCUIElement, in app: XCUIApplication) {
+        app.revealTaskEditorElement(row)
+        row.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).press(
+            forDuration: 0.1,
+            thenDragTo: row.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
+        )
+    }
+
+    @MainActor
+    private func revealTrailingActions(for row: XCUIElement, in app: XCUIApplication) {
+        app.revealTaskEditorElement(row)
+        row.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)).press(
+            forDuration: 0.1,
+            thenDragTo: row.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5))
+        )
+    }
+
+    @MainActor
     func testLegacyStoreDisablesSubtasksAndRejectsUnsafeLinkWithoutLosingDraft() {
         continueAfterFailure = false
         let app = XCUIApplication()

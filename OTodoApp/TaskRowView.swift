@@ -12,6 +12,7 @@ struct TaskRowView: View {
     var isSelected: Bool? = nil
     var ancestry: String? = nil
     var hierarchyDepth: Int = 0
+    var rowIdentifier: String? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -91,7 +92,7 @@ struct TaskRowView: View {
                     ? "Opens the todo editor; swipe right or touch and hold for task actions"
                     : "Selects this todo for bulk rescheduling"
             )
-            .accessibilityIdentifier("task-row-\(task.id.rawValue)")
+            .accessibilityIdentifier(rowIdentifier ?? "task-row-\(task.id.rawValue)")
             .accessibilityAddTraits(isSelected == true ? .isSelected : [])
         }
         .accessibilityElement(children: .contain)

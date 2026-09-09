@@ -1351,13 +1351,12 @@ struct TaskListView: View {
     private func taskRow(_ task: TodoTask) -> some View {
         let today = dates.today
         let workflowState = state(for: task.state)
-        let canComplete = workflowState?.isTerminal != true && completionState != nil
         TaskRowView(
             task: task,
             workflowState: workflowState,
             today: today,
             isCompletionDisabled: model.isBusy
-                || (isSelecting ? isFiltering : completionTarget(for: task) == nil),
+                || (isSelecting ? isFiltering : TaskRowActions.completionTarget(for: task, in: model) == nil),
             onOpen: {
                 if isSelecting {
                     toggleSelection(task)
@@ -1369,7 +1368,7 @@ struct TaskListView: View {
                 if isSelecting {
                     toggleSelection(task)
                 } else {
-                    toggleCompletion(task)
+                    TaskRowActions.toggleCompletion(task, in: model)
                 }
             },
             isSelected: isSelecting ? selectedTaskIDs.contains(task.id) : nil,
@@ -1377,115 +1376,11 @@ struct TaskListView: View {
             hierarchyDepth: displayedDepths[task.id] ?? 0
         )
         .padding(.leading, CGFloat(min(displayedDepths[task.id] ?? 0, 8)) * 12)
-        .contextMenu {
-            if !isSelecting {
-                Button {
-                    presentSubtask(of: task)
-                } label: {
-                    Label("Add Subtask", systemImage: "arrow.turn.down.right")
-                }
-                .disabled(model.isBusy || model.configuration?.schemaVersion != 2)
-                .accessibilityIdentifier("task-context-add-subtask-\(task.id.rawValue)")
-                if canComplete {
-                    Button {
-                        toggleCompletion(task)
-                    } label: {
-                        Label(task.recurrence == nil ? "Done" : "Complete occurrence", systemImage: "checkmark")
-                    }
-                    .disabled(model.isBusy)
-                    .accessibilityIdentifier(
-                        "task-context-complete-\(task.id.rawValue)"
-                    )
-                }
-                if canComplete, task.recurrence != nil {
-                    Button {
-                        finishSeries(task)
-                    } label: {
-                        Label("Finish series", systemImage: "stop.circle")
-                    }
-                    .disabled(model.isBusy)
-                    .accessibilityIdentifier("task-context-finish-series-\(task.id.rawValue)")
-                }
-                Button {
-                    reschedulePresentation = ReschedulePresentation(tasks: [task])
-                } label: {
-                    Label(
-                        "Reschedule",
-                        systemImage: "calendar.badge.clock"
-                    )
-                }
-                .disabled(model.isBusy)
-                .accessibilityIdentifier(
-                    "task-context-reschedule-\(task.id.rawValue)"
-                )
-
-                Divider()
-
-                Button(role: .destructive) {
-                    Task { @MainActor in
-                        await model.deleteTask(task)
-                    }
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-                .disabled(model.isBusy)
-                .accessibilityIdentifier(
-                    "task-context-delete-\(task.id.rawValue)"
-                )
-            }
-        }
-        .swipeActions(edge: .leading, allowsFullSwipe: true) {
-            if !isSelecting {
-                if canComplete {
-                    Button {
-                        toggleCompletion(task)
-                    } label: {
-                        Label(task.recurrence == nil ? "Done" : "Complete occurrence", systemImage: "checkmark")
-                    }
-                    .tint(OTodoTheme.mint)
-                    .disabled(model.isBusy)
-                    .accessibilityIdentifier(
-                        "task-complete-\(task.id.rawValue)"
-                    )
-                }
-                Button {
-                    presentSubtask(of: task)
-                } label: {
-                    Label("Add Subtask", systemImage: "arrow.turn.down.right")
-                }
-                .tint(OTodoTheme.accent)
-                .disabled(model.isBusy || model.configuration?.schemaVersion != 2)
-                .accessibilityIdentifier("task-add-subtask-\(task.id.rawValue)")
-                Button {
-                    reschedulePresentation = ReschedulePresentation(tasks: [task])
-                } label: {
-                    Label(
-                        "Reschedule",
-                        systemImage: "calendar.badge.clock"
-                    )
-                }
-                .tint(OTodoTheme.filledViolet)
-                .disabled(model.isBusy)
-                .accessibilityIdentifier(
-                    "task-reschedule-\(task.id.rawValue)"
-                )
-            }
-        }
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            if !isSelecting {
-                Button(role: .destructive) {
-                    Task { @MainActor in
-                        await model.deleteTask(task)
-                    }
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-                .disabled(model.isBusy)
-                .accessibilityIdentifier(
-                    "task-delete-\(task.id.rawValue)"
-                )
-            }
-        }
+        .modifier(TaskRowActions(
+            task: task, model: model, isSelecting: isSelecting,
+            onAddSubtask: { presentSubtask(of: task) },
+            onReschedule: { reschedulePresentation = ReschedulePresentation(tasks: [task]) }
+        ))
         .listRowInsets(
             EdgeInsets(
                 top: 0,
@@ -1512,46 +1407,6 @@ struct TaskListView: View {
         return "Parent: \(names.joined(separator: " › "))\(outsideFilter ? " · outside this filter" : "")"
     }
 
-    private var completionState: WorkflowState? {
-        let states = model.configuration?.states ?? []
-        return states.first(where: { $0.id == "done" && $0.isTerminal })
-            ?? states.first(where: \.isTerminal)
-    }
-
-
-    private func completionTarget(for task: TodoTask) -> String? {
-        if state(for: task.state)?.isTerminal == true {
-            return model.configuration?.defaultState
-        }
-        return completionState?.id
-    }
-
-    private func toggleCompletion(_ task: TodoTask) {
-        guard let targetState = completionTarget(for: task) else { return }
-        Task { @MainActor in
-            guard !model.isBusy else { return }
-            if state(for: task.state)?.isTerminal == true {
-                var draft = TaskEditorDraft(task: task)
-                draft.state = targetState
-                await model.updateTask(id: task.id, draft: draft)
-            } else {
-                await model.completeTask(task)
-            }
-        }
-    }
-
-    private func finishSeries(_ task: TodoTask) {
-        guard task.recurrence != nil,
-              state(for: task.state)?.isTerminal != true,
-              let targetState = completionState?.id else { return }
-        Task { @MainActor in
-            guard !model.isBusy else { return }
-            var draft = TaskEditorDraft(task: task)
-            draft.state = targetState
-            await model.updateTask(id: task.id, draft: draft)
-        }
-    }
-
     private func state(for id: String) -> WorkflowState? {
         model.configuration?.states.first(where: { $0.id == id })
     }
@@ -1576,7 +1431,7 @@ private struct TaskFilterResult: Sendable {
     let sections: [TaskAgendaSection]
 }
 
-private enum EditorPresentation: Identifiable {
+enum EditorPresentation: Identifiable {
     case create(TaskEditorDraft, id: UUID)
     case edit(TodoTask)
 
@@ -1599,7 +1454,7 @@ private enum EditorPresentation: Identifiable {
     }
 }
 
-private struct ReschedulePresentation: Identifiable {
+struct ReschedulePresentation: Identifiable {
     let id = UUID()
     let tasks: [TodoTask]
 }

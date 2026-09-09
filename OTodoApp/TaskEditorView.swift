@@ -100,6 +100,8 @@ struct TaskEditorView: View {
     @FocusState private var notesFocused: Bool
     @State private var isScheduleExpanded = false
     @State private var isDetailsExpanded = false
+    @State private var childEditorPresentation: EditorPresentation?
+    @State private var childReschedulePresentation: ReschedulePresentation?
 
     init(
         draft: TaskEditorDraft,
@@ -272,7 +274,7 @@ struct TaskEditorView: View {
                         }
                     }
                 }
-                .disabled(isSaving)
+                .disabled(isSaving || attachmentModel?.isBusy == true)
                 .accessibilityIdentifier("task-editor")
                 .scrollContentBackground(.hidden)
                 .scrollDismissesKeyboard(.interactively)
@@ -293,13 +295,13 @@ struct TaskEditorView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(OTodoTheme.formCanvas, for: .navigationBar)
                 .toolbarBackground(.visible, for: .navigationBar)
-                .interactiveDismissDisabled(isSaving)
+                .interactiveDismissDisabled(isSaving || attachmentModel?.isBusy == true)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Cancel", role: .cancel) {
                             dismiss()
                         }
-                        .disabled(isSaving)
+                        .disabled(isSaving || attachmentModel?.isBusy == true)
                     }
 
                     ToolbarItem(placement: .confirmationAction) {
@@ -351,6 +353,34 @@ struct TaskEditorView: View {
                 parentID: $draft.parentID,
                 schemaVersion: configuration.schemaVersion
             )
+        }
+        .sheet(item: $childEditorPresentation) { presentation in
+            if let model = attachmentModel {
+                TaskEditorView(
+                    draft: presentation.draft, configuration: configuration,
+                    projectChoices: model.projectChoices, tagChoices: model.tagChoices,
+                    hierarchy: model.hierarchy, workspaceTasks: model.tasks, attachmentModel: model
+                ) { value in
+                    switch presentation {
+                    case .create:
+                        await model.createTask(draft: value)
+                    case let .edit(task):
+                        await model.updateTask(id: task.id, draft: value)
+                    }
+                    return model.errorMessage
+                }
+                .id(presentation.id)
+                .presentationDetents([.large])
+            }
+        }
+        .sheet(item: $childReschedulePresentation) { presentation in
+            if let model = attachmentModel {
+                TaskRescheduleView(tasks: presentation.tasks) { date, time in
+                    await model.rescheduleTasks(presentation.tasks, dueDate: date, dueTime: time)
+                    return model.errorMessage
+                }
+                .presentationDetents([.large])
+            }
         }
     }
 
@@ -518,16 +548,38 @@ struct TaskEditorView: View {
     private var subtaskSection: some View {
         Section("Subtasks") {
             if let taskID = draft.preservedTask?.id {
-                ForEach(hierarchy.children(of: taskID), id: \.id) { child in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(child.name)
-                        Text(configuration.states.first(where: { $0.id == child.state })?.name ?? child.state)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                ForEach((attachmentModel?.hierarchy ?? hierarchy).children(of: taskID), id: \.id) { child in
+                    if let model = attachmentModel {
+                        TaskRowView(
+                            task: child,
+                            workflowState: configuration.states.first { $0.id == child.state },
+                            today: TodayWidgetSnapshotBuilder.dateKey(for: .now),
+                            isCompletionDisabled: model.isBusy || TaskRowActions.completionTarget(for: child, in: model) == nil,
+                            onOpen: { childEditorPresentation = .edit(child) },
+                            onToggleCompletion: { TaskRowActions.toggleCompletion(child, in: model) },
+                            rowIdentifier: "task-editor-existing-subtask-\(child.id.rawValue)"
+                        )
+                        .modifier(TaskRowActions(
+                            task: child, model: model,
+                            onAddSubtask: { presentSubtask(of: child) },
+                            onReschedule: { childReschedulePresentation = ReschedulePresentation(tasks: [child]) }
+                        ))
+                    } else {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(child.name)
+                            Text(configuration.states.first(where: { $0.id == child.state })?.name ?? child.state)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("task-editor-existing-subtask-\(child.id.rawValue)")
                     }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("task-editor-existing-subtask-\(child.id.rawValue)")
                 }
+            }
+            if let message = attachmentModel?.errorMessage {
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("subtask-action-error")
             }
             if configuration.schemaVersion >= 2 {
                 ForEach(draft.subtaskNames.indices, id: \.self) { index in
@@ -568,6 +620,13 @@ struct TaskEditorView: View {
                     .accessibilityIdentifier("task-editor-subtasks-unavailable")
             }
         }
+    }
+
+    private func presentSubtask(of task: TodoTask) {
+        var child = TaskEditorDraft(configuration: configuration)
+        child.parentID = task.id
+        child.projectSlugs = task.projectSlugs
+        childEditorPresentation = .create(child, id: UUID())
     }
 
     private var saveAnotherButton: some View {
@@ -712,7 +771,8 @@ struct TaskEditorView: View {
     }
 
     private var isSaveDisabled: Bool {
-        validationMessage != nil || hasPendingRelativeDueDate || hasPendingSubtask || isImportingAttachments || isSaving
+        validationMessage != nil || hasPendingRelativeDueDate || hasPendingSubtask
+            || isImportingAttachments || isSaving || attachmentModel?.isBusy == true
     }
 
     private func save(createAnother: Bool = false) {
