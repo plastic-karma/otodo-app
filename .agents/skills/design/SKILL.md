@@ -156,9 +156,10 @@ The three exports are:
   `{overviewPath, artboards: [{id, path, width, height}], diagnostics}`.
   It brings each iframe into view, waits for fonts/images and two paint frames,
   and captures **without reloading or changing the screen's own scroll position**.
-  The outer workbench may scroll. Individual images live in `artboards/` to
-  avoid colliding with `overview.png`. Diagnostics report overflow, resource and
-  runtime problems; they do not replace looking at pixels.
+  The outer workbench temporarily scrolls and grows if necessary; its original
+  viewport and scroll position are restored afterward. Individual images live in
+  `artboards/` to avoid colliding with `overview.png`. Diagnostics report overflow,
+  resource and runtime problems; they do not replace looking at pixels.
 
 Use `read` on the returned `overviewPath` and **each** returned artboard `path`
 to see actual PNG pixels. Do not stop at paths, DOM text, or a successful
@@ -251,7 +252,7 @@ await tool.write({
 Refresh through the direct navigation helper in its own cell:
 
 ```js
-await designTab.goto(await designTab.url(), {wait_until: "domcontentloaded"});
+await designTab.goto(await designTab.url(), {waitUntil: "domcontentloaded"});
 ```
 
 Then capture and record in another cell:

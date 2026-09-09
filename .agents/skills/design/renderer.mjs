@@ -19,7 +19,7 @@ export async function openPreview(browser, { file, name = 'design-preview', app 
     }, { args: [pathToFileURL(path).href] });
     return tab;
   } catch (error) {
-    await browser.close({ name });
+    await browser.close({ name, kill: true });
     throw error;
   }
 }
@@ -35,6 +35,9 @@ export async function capturePreview(tab, { outputDir } = {}) {
   return tab.run(async ({ page }, paths) => {
     const started = performance.now();
     await page.bringToFront();
+    const originalViewport = page.viewport();
+    if (!originalViewport) throw new Error('Open the preview with openPreview before capturing');
+    const originalScroll = await page.evaluate(() => ({ x: scrollX, y: scrollY }));
     const frames = await page.evaluate(() => Array.from(
       document.querySelectorAll('iframe[data-artboard]'),
       element => ({
@@ -66,6 +69,13 @@ export async function capturePreview(tab, { outputDir } = {}) {
           throw new Error(`Invalid artboard dimensions: ${board.id}`);
         }
         ids.add(board.id);
+        // Keep the entire frame paintable, including on a smaller workbench.
+        const viewport = page.viewport();
+        const width = Math.max(viewport.width, board.width + 64);
+        const height = Math.max(viewport.height, board.height + 64);
+        if (width !== viewport.width || height !== viewport.height) {
+          await page.setViewport({ ...viewport, width, height });
+        }
         const handle = await page.$(`iframe[data-artboard="${board.id}"]`);
         if (!handle) throw new Error(`Artboard disappeared during capture: ${board.id}`);
         handles.push(handle);
@@ -103,11 +113,31 @@ export async function capturePreview(tab, { outputDir } = {}) {
         artboards.push({ ...board, path });
         diagnostics.artboards.push({ id: board.id, ...state });
       }
+      // Full-page screenshots alone do not paint offscreen opaque-origin frames.
+      const viewport = page.viewport();
+      const overviewHeight = await page.evaluate(() => document.documentElement.scrollHeight);
+      if (overviewHeight > viewport.height) {
+        await page.setViewport({ ...viewport, height: overviewHeight });
+      }
+      await page.evaluate(() => scrollTo({ left: 0, top: 0, behavior: 'instant' }));
+      await Promise.all(handles.map(async handle => {
+        const frame = await handle.contentFrame();
+        await frame.mainRealm().evaluate(() => new Promise(done => {
+          requestAnimationFrame(() => requestAnimationFrame(done));
+        }));
+      }));
       await page.screenshot({ path: paths.overview, fullPage: true });
       diagnostics.captureMs = Math.round(performance.now() - started);
       return { overviewPath: paths.overview, artboards, diagnostics };
     } finally {
       await Promise.all(handles.map(handle => handle.dispose()));
+      const viewport = page.viewport();
+      if (viewport.width !== originalViewport.width || viewport.height !== originalViewport.height) {
+        await page.setViewport(originalViewport);
+      }
+      await page.evaluate(({ x, y }) => {
+        scrollTo({ left: x, top: y, behavior: 'instant' });
+      }, originalScroll);
     }
   }, { args: [{ directory: artboardDirectory, overview: join(directory, 'overview.png') }] });
 }

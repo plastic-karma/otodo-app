@@ -5,6 +5,8 @@
   background: #eceef1;
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
+  /* Screenshots hide scrollbars; keep the artboard layout unchanged. */
+  scrollbar-gutter: stable;
 }
 
 * { box-sizing: border-box; }
