@@ -2,7 +2,7 @@ import XCTest
 
 @MainActor
 final class ReminderSettingsUITests: XCTestCase {
-    func testExactTimeReminderPresentsWhileAppIsForegrounded() {
+    func testExactTimeReminderOpensTaskWhileAppIsForegrounded() {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace"]
@@ -58,6 +58,19 @@ final class ReminderSettingsUITests: XCTestCase {
         screenshot.name = "Native due-time reminder banner over foreground OTodo"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+
+        let banner = notifications.allElementsBoundByIndex.first(where: \.isHittable)
+        XCTAssertNotNil(banner)
+        banner?.tap()
+        XCTAssertTrue(name.waitForExistence(timeout: 10),
+                      "Tapping the native reminder must open the editor without terminating OTodo")
+        XCTAssertEqual(name.value as? String, title)
+        let opened = XCTAttachment(screenshot: app.screenshot())
+        opened.name = "Native reminder tap opens its exact task"
+        opened.lifetime = .keepAlways
+        add(opened)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(name.waitForNonExistence(timeout: 8))
     }
 
     func testTimingChoicesPersistAndInvalidCustomValueKeepsSavedTiming() {
