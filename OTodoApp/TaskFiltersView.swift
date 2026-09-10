@@ -167,9 +167,10 @@ private struct TaskFilterEditorView: View {
                 Section {
                     TextField("Filter name", text: $name)
                         .accessibilityIdentifier("filter-editor-name")
-                    TaskFilterQueryField(
+                    TaskTextEditor(
                         text: $query, selection: $querySelection,
-                        isFocused: $isQueryFocused, isComposing: $isQueryComposing
+                        isFocused: $isQueryFocused, isComposing: $isQueryComposing,
+                        style: .filterQuery
                     )
                         .frame(height: queryHeight)
                         .onChange(of: query) { _, value in

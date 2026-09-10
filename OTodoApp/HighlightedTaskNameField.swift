@@ -6,6 +6,9 @@ struct HighlightedTaskNameField: UIViewRepresentable {
     let highlightRanges: [NSRange]
     let accessibilityIdentifier: String
     @Binding var requestsFocus: Bool
+    @Binding var selection: NSRange
+    @Binding var isFocused: Bool
+    @Binding var isComposing: Bool
 
     @MainActor
     func makeCoordinator() -> Coordinator {
@@ -42,60 +45,53 @@ struct HighlightedTaskNameField: UIViewRepresentable {
     @MainActor
     func updateUIView(_ textField: NameTextField, context: Context) {
         context.coordinator.parent = self
+        context.coordinator.isUpdating = true
+        defer { context.coordinator.isUpdating = false }
         textField.isEnabled = context.environment.isEnabled
         textField.wantsFocus = requestsFocus
         if requestsFocus {
             textField.setNeedsLayout()
         }
+        // Replacing attributed text also replaces the IME's marked text.
+        guard textField.markedTextRange == nil else { return }
+
         let validHighlightRanges = validatedHighlightRanges
         let font = context.coordinator.nameFont(for: textField.traitCollection)
-        guard textField.attributedText?.string != text
-                || context.coordinator.appliedHighlightRanges != validHighlightRanges
-                || textField.font != font
-        else {
-            return
-        }
-
-        // An unfocused name field must not restore its UIKit selection while another
-        // editor owns the keyboard (for example when moving directly into notes).
-        let selectionOffsets = (textField.isFirstResponder ? textField.selectedTextRange : nil).map { selection in
-            (
-                textField.offset(from: textField.beginningOfDocument, to: selection.start),
-                textField.offset(from: textField.beginningOfDocument, to: selection.end)
+        if textField.attributedText?.string != text
+            || context.coordinator.appliedHighlightRanges != validHighlightRanges
+            || textField.font != font
+        {
+            let baseAttributes: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: UIColor.label,
+            ]
+            let attributedText = NSMutableAttributedString(
+                string: text,
+                attributes: baseAttributes
             )
-        }
-        let baseAttributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: UIColor.label,
-        ]
-        let attributedText = NSMutableAttributedString(
-            string: text,
-            attributes: baseAttributes
-        )
-        for validHighlightRange in validHighlightRanges {
-            attributedText.addAttributes(
-                [
-                    .backgroundColor: UIColor.systemPurple.withAlphaComponent(0.18),
-                    .foregroundColor: UIColor.systemPurple,
-                ],
-                range: validHighlightRange
-            )
+            for validHighlightRange in validHighlightRanges {
+                attributedText.addAttributes(
+                    [
+                        .backgroundColor: UIColor.systemPurple.withAlphaComponent(0.18),
+                        .foregroundColor: UIColor.systemPurple,
+                    ],
+                    range: validHighlightRange
+                )
+            }
+
+            textField.font = font
+            textField.defaultTextAttributes = baseAttributes
+            textField.attributedText = attributedText
+            context.coordinator.appliedHighlightRanges = validHighlightRanges
         }
 
-        textField.font = font
-        textField.defaultTextAttributes = baseAttributes
-        textField.attributedText = attributedText
-        context.coordinator.appliedHighlightRanges = validHighlightRanges
-
-        if let selectionOffsets,
-           let start = textField.position(
-               from: textField.beginningOfDocument,
-               offset: min(selectionOffsets.0, text.utf16.count)
-           ),
-           let end = textField.position(
-               from: textField.beginningOfDocument,
-               offset: min(selectionOffsets.1, text.utf16.count)
-           )
+        // Never restore a selection while another editor owns the keyboard.
+        // The binding also carries the new caret when a completion changes the text.
+        if textField.isFirstResponder,
+           context.coordinator.selection(in: textField) != selection,
+           Range(selection, in: text) != nil,
+           let start = textField.position(from: textField.beginningOfDocument, offset: selection.location),
+           let end = textField.position(from: start, offset: selection.length)
         {
             textField.selectedTextRange = textField.textRange(from: start, to: end)
         }
@@ -136,6 +132,7 @@ struct HighlightedTaskNameField: UIViewRepresentable {
     final class Coordinator: NSObject, UITextFieldDelegate {
         var parent: HighlightedTaskNameField
         var appliedHighlightRanges: [NSRange] = []
+        var isUpdating = false
         private var preferredNameFont: UIFont?
         private var roundedNameFont: UIFont?
 
@@ -156,13 +153,43 @@ struct HighlightedTaskNameField: UIViewRepresentable {
         }
 
         @objc func textDidChange(_ textField: UITextField) {
-            parent.text = textField.text ?? ""
+            reportEditingState(textField)
+        }
+
+        func textFieldDidChangeSelection(_ textField: UITextField) {
+            reportEditingState(textField)
+        }
+
+        func selection(in textField: UITextField) -> NSRange? {
+            guard let range = textField.selectedTextRange else { return nil }
+            return NSRange(
+                location: textField.offset(from: textField.beginningOfDocument, to: range.start),
+                length: textField.offset(from: range.start, to: range.end)
+            )
+        }
+
+        private func reportEditingState(_ textField: UITextField) {
+            guard !isUpdating else { return }
+            let text = textField.text ?? ""
+            if parent.text != text { parent.text = text }
+            if let selection = selection(in: textField), parent.selection != selection {
+                parent.selection = selection
+            }
+            let composing = textField.markedTextRange != nil
+            if parent.isComposing != composing { parent.isComposing = composing }
+        }
+
+        func textFieldDidBeginEditing(_ textField: UITextField) {
+            if !parent.isFocused { parent.isFocused = true }
+            reportEditingState(textField)
         }
 
         func textFieldDidEndEditing(_ textField: UITextField) {
             // A user-initiated focus change cancels any deferred layout request.
             (textField as? NameTextField)?.wantsFocus = false
             parent.requestsFocus = false
+            if parent.isFocused { parent.isFocused = false }
+            reportEditingState(textField)
         }
 
         func textFieldShouldReturn(_ textField: UITextField) -> Bool {
