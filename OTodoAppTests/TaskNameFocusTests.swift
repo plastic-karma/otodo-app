@@ -73,7 +73,7 @@ final class TaskNameFocusTests: XCTestCase {
 
     private func nameField(in view: UIView) -> HighlightedTaskNameField.NameTextField? {
         if let field = view as? HighlightedTaskNameField.NameTextField { return field }
-        return view.subviews.lazy.compactMap { nameField(in: $0) }.first
+        return view.subviews.lazy.compactMap { self.nameField(in: $0) }.first
     }
 
     private func waitForRendering(_ condition: () -> Bool) async -> Bool {
