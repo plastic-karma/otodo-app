@@ -59,6 +59,13 @@ regressions and update affected documentation. Do not require user/manual
 acceptance testing. Re-read the task before mutating it through otodo and
 verify any state change as prescribed by the otodo skill.
 
+Every new feature must also be mentioned in the app's changelog. Follow
+`README.md`'s **Product changelog entries** convention: give every
+product-feature commit a user-facing subject and a `Changelog: feature`
+trailer. Before pushing, verify the trailer on each product-feature commit
+and confirm the generated `Changelog.json` includes each feature.
+Do not mark maintenance-only commits as product features.
+
 Commit the scoped fix on the issue branch and push that branch to `origin`
 so GitHub Actions can run it. Record the full commit SHA. This preliminary
 branch push is required for CI; **do not push to `main` yet**.
