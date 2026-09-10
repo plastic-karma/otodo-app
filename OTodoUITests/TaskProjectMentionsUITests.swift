@@ -36,6 +36,10 @@ final class TaskProjectMentionsUITests: XCTestCase {
         preview.name = "Project mentions complete in task name and multiline notes"
         preview.lifetime = .keepAlways
         add(preview)
+        let done = app.buttons["task-editor-keyboard-done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        done.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
         app.buttons["task-editor-save"].tap()
         XCTAssertTrue(name.waitForNonExistence(timeout: 10))
 

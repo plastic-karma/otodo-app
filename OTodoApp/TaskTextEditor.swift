@@ -41,6 +41,19 @@ struct TaskTextEditor: UIViewRepresentable {
             view.autocorrectionType = .default
             view.accessibilityIdentifier = "task-editor-notes"
             view.accessibilityLabel = "Todo notes"
+            let done = UIBarButtonItem(
+                barButtonSystemItem: .done, target: view,
+                action: #selector(UIResponder.resignFirstResponder)
+            )
+            done.accessibilityIdentifier = "task-editor-keyboard-done"
+            let toolbar = UIToolbar()
+            toolbar.items = [
+                UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil),
+                done,
+            ]
+            toolbar.tintColor = UIColor(OTodoTheme.accent)
+            toolbar.sizeToFit()
+            view.inputAccessoryView = toolbar
         }
         view.keyboardDismissMode = .interactive
         view.delegate = context.coordinator
