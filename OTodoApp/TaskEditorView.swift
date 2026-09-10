@@ -142,8 +142,8 @@ struct TaskEditorView: View {
         _hasDueTime = State(initialValue: draft.dueTime != nil)
         _dueDate = State(initialValue: TaskSchedule.date(from: draft.dueDate, time: draft.dueTime))
         let duePhrase = Self.detectDueDatePhrase(in: draft.name)
-        let nameMentions = TaskTextMentions(in: draft.name, marker: "@")
-        let notesMentions = TaskTextMentions(in: draft.body, marker: "@")
+        let nameMentions = TaskTextMentions(in: draft.name, marker: "#")
+        let notesMentions = TaskTextMentions(in: draft.body, marker: "#")
         _detectedDueDatePhrase = State(initialValue: duePhrase)
         _nameMentions = State(initialValue: nameMentions)
         _notesMentions = State(initialValue: notesMentions)
@@ -190,7 +190,7 @@ struct TaskEditorView: View {
                         .frame(minHeight: 44)
                         .onChange(of: draft.name) { _, name in
                             detectedDueDatePhrase = Self.detectDueDatePhrase(in: name)
-                            nameMentions = TaskTextMentions(in: name, marker: "@")
+                            nameMentions = TaskTextMentions(in: name, marker: "#")
                             nameHighlightRanges = (detectedDueDatePhrase?.utf16Ranges ?? [])
                                 + Self.projectHighlightRanges(nameMentions, choices: projectChoiceSet)
                             refreshDetectedProjects()
@@ -237,7 +237,7 @@ struct TaskEditorView: View {
                             )
                                 .frame(height: notesHeight)
                                 .onChange(of: draft.body) { _, text in
-                                    notesMentions = TaskTextMentions(in: text, marker: "@")
+                                    notesMentions = TaskTextMentions(in: text, marker: "#")
                                     refreshDetectedProjects()
                                 }
                                 .onChange(of: notesFocused) { _, focused in
@@ -260,7 +260,7 @@ struct TaskEditorView: View {
                             }
                         }
                         if !detectedProjects.isEmpty {
-                            let explanation = "Projects from @mentions: \(detectedProjects.joined(separator: ", "))"
+                            let explanation = "Projects from #mentions: \(detectedProjects.joined(separator: ", "))"
                             Label(explanation, systemImage: "folder.badge.plus")
                                 .font(.footnote)
                                 .foregroundStyle(OTodoTheme.accent)
@@ -736,7 +736,7 @@ struct TaskEditorView: View {
                         Button {
                             onSelect(suggestion)
                         } label: {
-                            Label("@\(suggestion.value)", systemImage: "folder")
+                            Label("#\(suggestion.value)", systemImage: "folder")
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
@@ -793,7 +793,7 @@ struct TaskEditorView: View {
         .tint(isSelected ? OTodoTheme.accent : .secondary)
         .accessibilityLabel("\(project) project")
         .accessibilityValue(isSelected ? "Selected" : "Not selected")
-        .accessibilityHint(isDetected ? "Assigned by an @mention in the name or notes." : "")
+        .accessibilityHint(isDetected ? "Assigned by a #mention in the name or notes." : "")
         .disabled(isDetected)
     }
 

@@ -14,23 +14,23 @@ final class TaskProjectMentionsUITests: XCTestCase {
         let name = app.textFields["task-editor-name"]
         XCTAssertTrue(name.waitForExistence(timeout: 8))
         name.tap()
-        name.typeText("Prepare @wo")
+        name.typeText("Prepare #wo")
         let work = app.buttons["task-editor-name-project-suggestion-work"]
         XCTAssertTrue(work.waitForExistence(timeout: 8))
         work.tap()
         name.typeText(" report\n")
-        let title = "Prepare @work report"
+        let title = "Prepare #work report"
         XCTAssertEqual(name.value as? String, title)
 
         let notes = app.textViews["task-editor-notes"]
         app.revealTaskEditorElement(notes)
         notes.tap()
-        notes.typeText("Café discussion @ho")
+        notes.typeText("Café discussion #ho")
         let home = app.buttons["task-editor-notes-project-suggestion-home"]
         XCTAssertTrue(home.waitForExistence(timeout: 8))
         home.tap()
         notes.typeText("\nKeep **Markdown** and person@example.com intact.")
-        let body = "Café discussion @home\nKeep **Markdown** and person@example.com intact."
+        let body = "Café discussion #home\nKeep **Markdown** and person@example.com intact."
         XCTAssertEqual(notes.value as? String, body)
         let preview = XCTAttachment(screenshot: app.screenshot())
         preview.name = "Project mentions complete in task name and multiline notes"
