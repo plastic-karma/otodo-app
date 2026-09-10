@@ -8,7 +8,7 @@ import Glibc
 
 /// Persists each selected repository workspace as one versioned JSON document.
 public actor FileWorkspaceStore: WorkspacePersisting {
-    private static let formatVersion = 3
+    private static let formatVersion = 4
     private static let persistenceLock = NSLock()
 
     private struct Envelope: Codable {
@@ -25,7 +25,7 @@ public actor FileWorkspaceStore: WorkspacePersisting {
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             version = try container.decode(Int.self, forKey: .version)
-            guard (1...3).contains(version) else {
+            guard (1...4).contains(version) else {
                 throw OTodoError.corruptLocalState(message: "Unsupported workspace persistence version \(version)")
             }
             let decoded = try container.decode(WorkspaceState.self, forKey: .workspace)

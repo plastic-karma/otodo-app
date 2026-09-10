@@ -265,7 +265,10 @@ final class CodecTests: XCTestCase {
 
         XCTAssertEqual(parsed.extraProperties, [YAMLProperty(name: "plugin", value: .string("yes"))])
         let serialized = try codec.serializeTask(parsed, configuration: configuration)
-        XCTAssertTrue(serialized.contains("\nplugin: \"yes\"\n"))
+        let reparsed = try codec.parseTask(
+            id: taskID, relativePath: taskPath, text: serialized, configuration: configuration
+        )
+        XCTAssertEqual(reparsed.extraProperties, [YAMLProperty(name: "plugin", value: .string("yes"))])
     }
 
     func testDuplicateTopLevelAndNestedYAMLKeysAreRejected() {

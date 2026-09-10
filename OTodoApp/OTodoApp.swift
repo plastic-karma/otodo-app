@@ -10,7 +10,7 @@ struct OTodoApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @State private var startup: Result<AppModel, Error> = Result { try AppModel() }
     private var notifications: TaskNotificationManager { applicationDelegate.notifications }
-    @State private var watchSync = PhoneWatchSync()
+    private var watchSync: PhoneWatchSync { applicationDelegate.watchSync }
 
     var body: some Scene {
         WindowGroup {

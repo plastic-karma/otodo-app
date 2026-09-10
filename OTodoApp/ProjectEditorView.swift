@@ -92,9 +92,18 @@ struct ProjectEditorView: View {
     }
 
     private var validationMessage: String? {
-        guard !trimmedName.isEmpty else {
+        Self.creationValidationMessage(name: name, existingSlugs: existingSlugs)
+    }
+
+    static func creationValidationMessage(name: String, existingSlugs: Set<String>) -> String? {
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else {
             return "Enter a project name."
         }
+        guard !title.contains("\n"), !title.contains("\r") else {
+            return "Use a single line for the project name."
+        }
+        let slug = Self.slug(from: title)
         guard !slug.isEmpty else {
             return "Use at least one letter or number in the project name."
         }
@@ -129,7 +138,7 @@ struct ProjectEditorView: View {
         }
     }
 
-    private static func slug(from name: String) -> String {
+    static func slug(from name: String) -> String {
         let folded = name
             .folding(
                 options: [.diacriticInsensitive, .widthInsensitive],

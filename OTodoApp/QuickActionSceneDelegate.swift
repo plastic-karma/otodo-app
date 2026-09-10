@@ -4,8 +4,9 @@ import UIKit
 
 @MainActor
 final class OTodoApplicationDelegate: NSObject, UIApplicationDelegate {
-    // UNUserNotificationCenter holds its delegate weakly; retain it for app life.
+    // Both frameworks hold delegates weakly; retain them for the application lifetime.
     let notifications = TaskNotificationManager()
+    let watchSync = PhoneWatchSync()
 
     func application(
         _ application: UIApplication,

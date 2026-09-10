@@ -35,6 +35,9 @@ final class AppModel {
     private(set) var relationshipBlocks: [TaskRelationshipBlock] = []
     private(set) var configuration: StoreConfiguration?
     private(set) var projectChoices: [String] = []
+    private(set) var projectDetails: [String: TodoProject] = [:]
+    private(set) var activeProjectChoices: [String] = []
+    private(set) var archivedProjectChoices: [String] = []
     private(set) var tagChoices: [String] = []
 
     private(set) var pendingChangeCount = 0
@@ -276,6 +279,9 @@ final class AppModel {
         tasks = []
         configuration = nil
         projectChoices = []
+        projectDetails = [:]
+        activeProjectChoices = []
+        archivedProjectChoices = []
         tagChoices = []
         pendingChangeCount = 0
         conflictCount = 0
@@ -501,6 +507,73 @@ final class AppModel {
             publishLocalSaveStatus(
                 onlineMessage: "Project saved on this device; waiting to sync.",
                 offlineMessage: "Project saved on this device while offline."
+            )
+            isBusy = false
+        } catch {
+            guard sessionID == operationSession else { return }
+            isBusy = false
+            errorMessage = Self.message(for: error)
+            statusMessage = nil
+        }
+    }
+
+    func archiveProject(
+        slug: String,
+        destination: ProjectArchiveDestination,
+        completeOpenTasks: Bool
+    ) async {
+        guard rootState == .workspace, let selection = workspaceSelection else {
+            errorMessage = "No todo workspace is selected."
+            return
+        }
+        let operationSession = sessionID
+        beginLocalMutation()
+        defer { finishLocalMutation() }
+        errorMessage = nil
+        statusMessage = "Archiving project on this device…"
+        isBusy = true
+        do {
+            let workspace = try await taskService.archiveProject(
+                selection: selection, slug: slug, destination: destination,
+                completeOpenTasks: completeOpenTasks
+            )
+            guard sessionID == operationSession else { return }
+            syncFollowUpRequested = true
+            apply(workspace)
+            errorMessage = nil
+            publishLocalSaveStatus(
+                onlineMessage: "Project archived on this device; waiting to sync.",
+                offlineMessage: "Project archived on this device while offline."
+            )
+            isBusy = false
+        } catch {
+            guard sessionID == operationSession else { return }
+            isBusy = false
+            errorMessage = Self.message(for: error)
+            statusMessage = nil
+        }
+    }
+
+    func restoreProject(slug: String) async {
+        guard rootState == .workspace, let selection = workspaceSelection else {
+            errorMessage = "No todo workspace is selected."
+            return
+        }
+        let operationSession = sessionID
+        beginLocalMutation()
+        defer { finishLocalMutation() }
+        errorMessage = nil
+        statusMessage = "Restoring project on this device…"
+        isBusy = true
+        do {
+            let workspace = try await taskService.restoreProject(selection: selection, slug: slug)
+            guard sessionID == operationSession else { return }
+            syncFollowUpRequested = true
+            apply(workspace)
+            errorMessage = nil
+            publishLocalSaveStatus(
+                onlineMessage: "Project restored on this device; waiting to sync.",
+                offlineMessage: "Project restored on this device while offline."
             )
             isBusy = false
         } catch {
@@ -984,6 +1057,9 @@ final class AppModel {
         tasks = []
         configuration = nil
         projectChoices = []
+        projectDetails = [:]
+        activeProjectChoices = []
+        archivedProjectChoices = []
         tagChoices = []
         pendingChangeCount = 0
         conflictCount = 0
@@ -1064,6 +1140,21 @@ final class AppModel {
         configuration = workspace.configuration
         attachmentCatalog = workspace.attachments
         projectChoices = workspace.knownProjectSlugs.sorted()
+        projectDetails = Dictionary(uniqueKeysWithValues: workspace.projects.map {
+            ($0.project.slug, $0.project)
+        })
+        var activeProjects: [String] = []
+        var archivedProjects: [String] = []
+        activeProjects.reserveCapacity(projectChoices.count)
+        for slug in projectChoices {
+            if projectDetails[slug]?.isArchived == true {
+                archivedProjects.append(slug)
+            } else {
+                activeProjects.append(slug)
+            }
+        }
+        activeProjectChoices = activeProjects
+        archivedProjectChoices = archivedProjects
         tasks = workspace.tasks.map(\.task)
         hierarchy = TaskHierarchy(tasks: tasks)
         relationshipBlocks = workspace.relationshipBlocks
@@ -1368,6 +1459,16 @@ final class AppModel {
                     let content = try codec.serializeTask(task, configuration: configuration)
                     return TaskDocument(task: task, content: content, blobSHA: "seed-\(id.rawValue)")
                 }
+                let projectCodec = ObsidianProjectCodec()
+                let projects = try ["home", "work"].map { slug in
+                    let project = try TodoProject(
+                        slug: slug, relativePath: "projects/\(slug).md", name: slug.capitalized
+                    )
+                    return ProjectDocument(
+                        project: project, content: try projectCodec.serializeProject(project),
+                        blobSHA: "seed-project-\(slug)"
+                    )
+                }
                 let workspace = try WorkspaceState(
                     selection: selection,
                     configuration: configuration,
@@ -1376,7 +1477,8 @@ final class AppModel {
                     baseHeadCommitSHA: "seed-head",
                     baseRootTreeSHA: "seed-tree",
                     pendingChanges: [],
-                    conflicts: []
+                    conflicts: [],
+                    projects: projects
                 )
                 try await workspaceStore.save(workspace, expectedRevision: nil)
                 restored = try await taskService.loadWorkspace(selection: selection)

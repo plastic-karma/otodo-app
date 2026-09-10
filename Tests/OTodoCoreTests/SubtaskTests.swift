@@ -252,7 +252,7 @@ final class SubtaskTests: XCTestCase, @unchecked Sendable {
         XCTAssertNil(capture.parentID)
     }
 
-    func testGenuineEnvelopeOneImportsLegacyParentWithoutChangingEvidenceAndCASWritesThree() async throws {
+    func testGenuineEnvelopeOneImportsLegacyParentWithoutChangingEvidenceAndCASWritesCurrentFormat() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -304,7 +304,7 @@ final class SubtaskTests: XCTestCase, @unchecked Sendable {
         XCTAssertNil(next.conflicts[1].localContent)
         XCTAssertEqual(next.conflicts[1].remoteContent, "Deleted record remote bytes")
         let newJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
-        XCTAssertEqual(newJSON["version"] as? Int, 3)
+        XCTAssertEqual(newJSON["version"] as? Int, 4)
     }
 
     func testSchemaContextKeepsLegacyMetadataAndRejectsConflictingTypedParent() throws {

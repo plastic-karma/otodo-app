@@ -322,6 +322,48 @@ public struct ObsidianTaskCodec: TaskRecordCoding, Sendable {
     }
 }
 
+public struct ObsidianProjectCodec: Sendable {
+    public init() {}
+
+    public func parseProject(slug: String, relativePath: String, text: String) throws -> TodoProject {
+        // Import only the exact historical addProject writer, retaining its heading as body.
+        if text.hasPrefix("# "), text.hasSuffix("\n") {
+            let title = String(text.dropFirst(2).dropLast())
+            if !title.isEmpty, title == title.trimmingCharacters(in: .whitespacesAndNewlines),
+               !title.contains("\n"), !title.contains("\r"),
+               text.utf8.count <= ObsidianTaskCodec.maximumRecordBytes {
+                return try TodoProject(slug: slug, relativePath: relativePath, name: title, body: text)
+            }
+        }
+        let envelope = try FrontMatterEnvelope.parse(text)
+        let properties = try SafeYAML.parseMapping(envelope.yaml)
+        guard !properties.contains(where: { $0.name == "id" }) else {
+            throw OTodoError.validation(field: "id", message: "Record identity belongs only in its filename; remove the id property")
+        }
+        guard let name = properties.first(where: { $0.name == "name" })?.value,
+              case let .string(title) = name else {
+            throw OTodoError.validation(field: "name", message: "Project name is required and must be a string")
+        }
+        return try TodoProject(slug: slug, relativePath: relativePath, name: title, body: envelope.body,
+                               extraProperties: properties.filter { $0.name != "name" })
+    }
+
+    public func serializeProject(_ project: TodoProject) throws -> String {
+        _ = try TodoProject(slug: project.slug, relativePath: project.relativePath, name: project.name,
+                            body: project.body, extraProperties: project.extraProperties)
+        try FrontMatterEnvelope.rejectConflictMarkers(project.body)
+        try SafeYAML.validateProperties(project.extraProperties, reserved: ["name", "id"])
+        var output = "---\nname: \(try YAMLWriter.quoted(project.name))\n"
+        try YAMLWriter.appendProperties(project.extraProperties, indentation: 0, to: &output)
+        output += "---\n"
+        output += project.body
+        guard output.utf8.count <= ObsidianTaskCodec.maximumRecordBytes else {
+            throw OTodoError.validation(field: "record", message: "Markdown project record exceeds the byte limit")
+        }
+        return output
+    }
+}
+
 private struct FrontMatterEnvelope {
     let yaml: String
     let body: String
@@ -841,10 +883,10 @@ private enum SafeYAML {
             for value in values { _ = try validate(value, depth: depth + 1, count: &count) }
         case let .mapping(properties):
             let names = properties.map(\.name)
-            guard names.allSatisfy({ !$0.isEmpty }), Set(names).count == names.count else {
+            guard Set(names).count == names.count else {
                 throw OTodoError.validation(
                     field: "extraProperties",
-                    message: "Nested YAML mapping keys must be nonempty and unique"
+                    message: "Nested YAML mapping keys must be unique"
                 )
             }
             guard !names.contains("<<") else {
@@ -968,7 +1010,7 @@ private enum YAMLWriter {
     ) throws {
         for property in properties {
             let prefix = String(repeating: " ", count: indentation)
-            output += prefix + (try renderKey(property.name)) + ":"
+            output += prefix + (try quoted(property.name)) + ":"
             try appendValue(property.value, indentation: indentation, to: &output)
         }
     }
@@ -1059,17 +1101,4 @@ private enum YAMLWriter {
         }
     }
 
-    private static func renderKey(_ key: String) throws -> String {
-        let bytes = Array(key.utf8)
-        if let first = bytes.first,
-           (65 ... 90).contains(first) || (97 ... 122).contains(first) || first == 95,
-           bytes.dropFirst().allSatisfy({
-               (48 ... 57).contains($0) || (65 ... 90).contains($0) ||
-                   (97 ... 122).contains($0) || $0 == 45 || $0 == 95
-           })
-        {
-            return key
-        }
-        return try quoted(key)
-    }
 }

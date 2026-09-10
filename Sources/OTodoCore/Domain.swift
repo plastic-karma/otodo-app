@@ -428,6 +428,80 @@ public struct TodoTask: Sendable, Codable, Equatable {
     }
 }
 
+public struct TodoProject: Sendable, Codable, Equatable {
+    public let slug: String
+    public let relativePath: String
+    public var name: String
+    public var body: String
+    public var extraProperties: [YAMLProperty]
+
+    public init(slug: String, relativePath: String, name: String, body: String = "", extraProperties: [YAMLProperty] = []) throws {
+        try DomainValidation.validateProjectSlugs([slug])
+        try DomainValidation.validateRelativePath(relativePath, field: "relativePath")
+        guard relativePath.split(separator: "/").last == Substring(slug + ".md") else {
+            throw OTodoError.validation(field: "relativePath", message: "Project path basename must match its slug and use the .md extension")
+        }
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !name.contains("\n"), !name.contains("\r") else {
+            throw OTodoError.validation(field: "name", message: "Project name must be nonempty and single-line")
+        }
+        let names = extraProperties.map(\.name)
+        guard Set(names).count == names.count,
+              Set(names).isDisjoint(with: ["name", "id"]) else {
+            throw OTodoError.validation(field: "extraProperties", message: "Project extras must have unique names and cannot contain name or id")
+        }
+        self.slug = slug
+        self.relativePath = relativePath
+        self.name = name
+        self.body = body
+        self.extraProperties = extraProperties
+    }
+
+    public var isArchived: Bool {
+        extraProperties.first(where: { $0.name == "archived" })?.value == .bool(true)
+    }
+
+    public mutating func setArchived(_ archived: Bool) throws {
+        if let index = extraProperties.firstIndex(where: { $0.name == "archived" }) {
+            guard case .bool = extraProperties[index].value else {
+                throw OTodoError.validation(field: "archived", message: "Existing archived metadata is not Boolean; preserve or explicitly relocate it before archiving or restoring")
+            }
+            if archived {
+                extraProperties[index] = YAMLProperty(name: "archived", value: .bool(true))
+            } else {
+                extraProperties.remove(at: index)
+            }
+        } else if archived {
+            extraProperties.append(YAMLProperty(name: "archived", value: .bool(true)))
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey { case slug, relativePath, name, body, extraProperties }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            slug: container.decode(String.self, forKey: .slug),
+            relativePath: container.decode(String.self, forKey: .relativePath),
+            name: container.decode(String.self, forKey: .name),
+            body: container.decode(String.self, forKey: .body),
+            extraProperties: container.decode([YAMLProperty].self, forKey: .extraProperties)
+        )
+    }
+}
+
+public struct ProjectDocument: Sendable, Codable, Equatable {
+    public let project: TodoProject
+    public let content: String
+    public let blobSHA: String?
+
+    public init(project: TodoProject, content: String, blobSHA: String?) {
+        self.project = project
+        self.content = content
+        self.blobSHA = blobSHA
+    }
+}
+
 public struct RepositorySelection: Sendable, Codable, Equatable {
     public let owner: String
     public let name: String
@@ -605,13 +679,14 @@ public struct PendingChange: Sendable, Codable, Equatable {
     public let payload: ChangePayload
     public var content: String? { payload.text }
     public let createdAt: Date
+    public let groupID: UUID?
 
-    public init(id: UUID, path: String, baseBlobSHA: String?, content: String?, createdAt: Date) throws {
+    public init(id: UUID, path: String, baseBlobSHA: String?, content: String?, createdAt: Date, groupID: UUID? = nil) throws {
         try self.init(id: id, path: path, baseBlobSHA: baseBlobSHA,
-                      payload: content.map(ChangePayload.text) ?? .deletion, createdAt: createdAt)
+                      payload: content.map(ChangePayload.text) ?? .deletion, createdAt: createdAt, groupID: groupID)
     }
 
-    public init(id: UUID, path: String, baseBlobSHA: String?, payload: ChangePayload, createdAt: Date) throws {
+    public init(id: UUID, path: String, baseBlobSHA: String?, payload: ChangePayload, createdAt: Date, groupID: UUID? = nil) throws {
         try DomainValidation.validateRelativePath(path, field: "path")
         self.id = id
         self.path = path
@@ -619,16 +694,18 @@ public struct PendingChange: Sendable, Codable, Equatable {
         if case .remoteBinary = payload { throw OTodoError.corruptLocalState(message: "An outbox upload requires local binary bytes") }
         self.payload = payload
         self.createdAt = createdAt
+        self.groupID = groupID
     }
 
-    private enum CodingKeys: String, CodingKey { case id, path, baseBlobSHA, content, payload, createdAt }
+    private enum CodingKeys: String, CodingKey { case id, path, baseBlobSHA, content, payload, createdAt, groupID }
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let payload = try container.decodeIfPresent(ChangePayload.self, forKey: .payload)
             ?? container.decodeIfPresent(String.self, forKey: .content).map(ChangePayload.text) ?? .deletion
         try self.init(id: container.decode(UUID.self, forKey: .id), path: container.decode(String.self, forKey: .path),
                       baseBlobSHA: container.decodeIfPresent(String.self, forKey: .baseBlobSHA), payload: payload,
-                      createdAt: container.decode(Date.self, forKey: .createdAt))
+                      createdAt: container.decode(Date.self, forKey: .createdAt),
+                      groupID: container.decodeIfPresent(UUID.self, forKey: .groupID))
     }
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -637,6 +714,7 @@ public struct PendingChange: Sendable, Codable, Equatable {
         try container.encodeIfPresent(baseBlobSHA, forKey: .baseBlobSHA)
         try container.encode(payload, forKey: .payload)
         try container.encode(createdAt, forKey: .createdAt)
+        try container.encodeIfPresent(groupID, forKey: .groupID)
     }
 }
 
@@ -737,6 +815,7 @@ public struct WorkspaceState: Sendable, Codable, Equatable {
     public let revision: UInt64
     public let relationshipBlocks: [TaskRelationshipBlock]
     public let attachments: [AttachmentMetadata]
+    public let projects: [ProjectDocument]
 
     public init(
         selection: RepositorySelection,
@@ -749,7 +828,8 @@ public struct WorkspaceState: Sendable, Codable, Equatable {
         conflicts: [SyncConflict],
         revision: UInt64 = 0,
         relationshipBlocks: [TaskRelationshipBlock] = [],
-        attachments: [AttachmentMetadata] = []
+        attachments: [AttachmentMetadata] = [],
+        projects: [ProjectDocument] = []
     ) throws {
         guard !baseHeadCommitSHA.isEmpty, !baseRootTreeSHA.isEmpty else {
             throw OTodoError.validation(field: "workspace", message: "Base commit and tree SHAs are required")
@@ -767,6 +847,14 @@ public struct WorkspaceState: Sendable, Codable, Equatable {
             )
         }
         try DomainValidation.validateProjectSlugs(knownProjectSlugs)
+        guard Set(projects.map(\.project.slug)).count == projects.count,
+              Set(projects.map(\.project.relativePath)).count == projects.count,
+              projects.allSatisfy({
+                  knownProjectSlugs.contains($0.project.slug)
+                      && $0.project.relativePath == configuration.projectsDirectory + "/" + $0.project.slug + ".md"
+              }) else {
+            throw OTodoError.corruptLocalState(message: "Project documents must have unique known slugs and configured flat paths")
+        }
         guard Set(pendingChanges.map(\.path)).count == pendingChanges.count else {
             throw OTodoError.corruptLocalState(message: "More than one pending change exists for a path")
         }
@@ -791,11 +879,12 @@ public struct WorkspaceState: Sendable, Codable, Equatable {
             guard pending.path.hasPrefix(prefix) else { throw OTodoError.corruptLocalState(message: "Binary outbox path is outside selected Attachments/") }
         }
         self.attachments = attachments
+        self.projects = projects
     }
 
     private enum CodingKeys: String, CodingKey {
         case selection, configuration, tasks, knownProjectSlugs, baseHeadCommitSHA, baseRootTreeSHA
-        case pendingChanges, conflicts, revision, relationshipBlocks, attachments
+        case pendingChanges, conflicts, revision, relationshipBlocks, attachments, projects
     }
 
     public init(from decoder: any Decoder) throws {
@@ -814,7 +903,8 @@ public struct WorkspaceState: Sendable, Codable, Equatable {
             conflicts: container.decode([SyncConflict].self, forKey: .conflicts),
             revision: container.decodeIfPresent(UInt64.self, forKey: .revision) ?? 0,
             relationshipBlocks: container.decodeIfPresent([TaskRelationshipBlock].self, forKey: .relationshipBlocks) ?? [],
-            attachments: container.decodeIfPresent([AttachmentMetadata].self, forKey: .attachments) ?? []
+            attachments: container.decodeIfPresent([AttachmentMetadata].self, forKey: .attachments) ?? [],
+            projects: container.decodeIfPresent([ProjectDocument].self, forKey: .projects) ?? []
         )
     }
 }

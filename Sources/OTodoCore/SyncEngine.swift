@@ -252,6 +252,7 @@ public actor SyncEngine {
         let configuration: StoreConfiguration
         let knownProjectSlugs: [String]
         let tasks: [TaskDocument]
+        let projects: [ProjectDocument]
         let filesByPath: [String: RemoteFile]
         let attachmentsByPath: [String: AttachmentMetadata]
     }
@@ -345,12 +346,20 @@ public actor SyncEngine {
                     baseHeadCommitSHA: previousWorkspace.baseHeadCommitSHA,
                     baseRootTreeSHA: previousWorkspace.baseRootTreeSHA,
                     pendingChanges: pendingChanges, conflicts: existingConflicts,
-                    revision: previousWorkspace.revision + 1, relationshipBlocks: blocked, attachments: previousWorkspace.attachments
+                    revision: previousWorkspace.revision + 1, relationshipBlocks: blocked,
+                    attachments: previousWorkspace.attachments, projects: previousWorkspace.projects
                 )
                 return Reconciliation(workspace: retained, safePendingChanges: [], confirmedPendingIDs: [], pulledCount: 0)
             }
         }
+        let relocated = try remappingProjectLayout(
+            pending: pendingChanges, conflicts: existingConflicts, selection: selection,
+            previous: previousWorkspace?.configuration, current: parsed.configuration
+        )
+        let pendingChanges = relocated.pending
+        let existingConflicts = relocated.conflicts
         var tasksByPath = Dictionary(uniqueKeysWithValues: parsed.tasks.map { ($0.task.relativePath, $0) })
+        var projectsByPath = Dictionary(uniqueKeysWithValues: parsed.projects.map { ($0.project.relativePath, $0) })
         var knownProjectSlugs = Set(parsed.knownProjectSlugs)
         let existingConflictsByPath = Dictionary(uniqueKeysWithValues: existingConflicts.map { ($0.path, $0) })
         var reconciledConflicts: [SyncConflict] = []
@@ -387,7 +396,8 @@ public actor SyncEngine {
             // A coalesced edit retains the in-flight change's identity and old base. Once those
             // attempted bytes are remote, rebase only the newer bytes instead of conflicting.
             let reconciledPending: PendingChange
-            if let confirmedAttempt = confirmedAttemptsByPath[pending.path],
+            if let confirmedAttempt = confirmedAttemptsByPath[pending.path]
+                ?? relocated.originalPaths[pending.path].flatMap({ confirmedAttemptsByPath[$0] }),
                confirmedAttempt.id == pending.id,
                confirmedAttempt.content != pending.content,
                let remote,
@@ -398,7 +408,8 @@ public actor SyncEngine {
                     path: pending.path,
                     baseBlobSHA: remote.blobSHA,
                     content: pending.content,
-                    createdAt: pending.createdAt
+                    createdAt: pending.createdAt,
+                    groupID: pending.groupID
                 )
                 safePendingChanges.append(reconciledPending)
             } else {
@@ -420,7 +431,8 @@ public actor SyncEngine {
                 selection: selection,
                 configuration: parsed.configuration,
                 tasksByPath: &tasksByPath,
-                knownProjectSlugs: &knownProjectSlugs
+                knownProjectSlugs: &knownProjectSlugs,
+                projectsByPath: &projectsByPath
             )
         }
 
@@ -455,7 +467,8 @@ public actor SyncEngine {
                 selection: selection,
                 configuration: parsed.configuration,
                 tasksByPath: &tasksByPath,
-                knownProjectSlugs: &knownProjectSlugs
+                knownProjectSlugs: &knownProjectSlugs,
+                projectsByPath: &projectsByPath
             )
         }
 
@@ -494,7 +507,8 @@ public actor SyncEngine {
             conflicts: conflicts,
             revision: nextRevision,
             relationshipBlocks: relationshipResult.blocks,
-            attachments: snapshot.attachments
+            attachments: snapshot.attachments,
+            projects: projectsByPath.values.sorted { $0.project.relativePath < $1.project.relativePath }
         )
         let pulledCount = previousWorkspace.map {
             changedTaskCount(
@@ -511,6 +525,45 @@ public actor SyncEngine {
             confirmedPendingIDs: confirmedPendingIDs,
             pulledCount: pulledCount
         )
+    }
+
+    private func remappingProjectLayout(
+        pending: [PendingChange], conflicts: [SyncConflict], selection: RepositorySelection,
+        previous: StoreConfiguration?, current: StoreConfiguration
+    ) throws -> (pending: [PendingChange], conflicts: [SyncConflict], originalPaths: [String: String]) {
+        guard let previous, previous.projectsDirectory != current.projectsDirectory else {
+            return (pending, conflicts, [:])
+        }
+        let oldPrefix = repositoryPath(storePath: selection.storePath, relativePath: previous.projectsDirectory + "/")
+        let newPrefix = repositoryPath(storePath: selection.storePath, relativePath: current.projectsDirectory + "/")
+        let occupied = Set(pending.map(\.path) + conflicts.map(\.path))
+        var originalPaths: [String: String] = [:]
+        func currentPath(for path: String) throws -> String {
+            guard path.hasPrefix(oldPrefix), path.hasSuffix(".md") else { return path }
+            let filename = String(path.dropFirst(oldPrefix.count))
+            guard !filename.contains("/") else { return path }
+            try DomainValidation.validateProjectSlugs([String(filename.dropLast(3))])
+            let destination = newPrefix + filename
+            guard !occupied.contains(destination) else {
+                throw OTodoError.conflict(message: "Cannot move pending project to occupied path \(destination)")
+            }
+            originalPaths[destination] = path
+            return destination
+        }
+        let relocatedPending = try pending.map { change in
+            let path = try currentPath(for: change.path)
+            guard path != change.path else { return change }
+            return try PendingChange(id: change.id, path: path, baseBlobSHA: change.baseBlobSHA,
+                payload: change.payload, createdAt: change.createdAt, groupID: change.groupID)
+        }
+        let relocatedConflicts = try conflicts.map { conflict in
+            let path = try currentPath(for: conflict.path)
+            guard path != conflict.path else { return conflict }
+            return try SyncConflict(path: path, baseBlobSHA: conflict.baseBlobSHA,
+                remoteBlobSHA: conflict.remoteBlobSHA, localPayload: conflict.localPayload,
+                remotePayload: conflict.remotePayload)
+        }
+        return (relocatedPending, relocatedConflicts, originalPaths)
     }
 
     private func legacyParentTransitionBlocks(
@@ -539,7 +592,7 @@ public actor SyncEngine {
         return result.sorted { $0.path < $1.path }
     }
 
-    /// Attachments and parent relationships are reduced together until no withheld change has a dependent publisher.
+    /// Projects, attachments, parent relationships and durable groups are reduced together to a safe fixed point.
     private func dependencySafeChanges(candidates: [PendingChange], pending: [PendingChange], conflicts: [SyncConflict], remote: ParsedSnapshot,
         localTasks: [TaskDocument], selection: RepositorySelection) throws -> (changes: [PendingChange], blocks: [TaskRelationshipBlock]) {
         var safe = candidates
@@ -555,6 +608,9 @@ public actor SyncEngine {
             let relationships = try relationshipSafeChanges(candidates: safe, remote: remote, localTasks: localTasks, selection: selection)
             safe = relationships.changes
             blocks.append(contentsOf: relationships.blocks)
+            let projects = projectSafeChanges(candidates: safe, remote: remote, localTasksByPath: taskByPath, selection: selection)
+            safe = projects.changes
+            blocks.append(contentsOf: projects.blocks)
             let safePaths = Set(safe.map(\.path))
             safe = safe.filter { change in
                 guard let task = taskByPath[change.path], change.content != nil else { return true }
@@ -582,10 +638,71 @@ public actor SyncEngine {
                     return !pending.contains(where: { $0.path == fullPath }) || publishingTasks.contains(document.task.id)
                 }
             }
+            let eligiblePaths = Set(safe.map(\.path))
+            let blockedGroups = Set(pending.compactMap { change in
+                eligiblePaths.contains(change.path) ? nil : change.groupID
+            })
+            safe.removeAll { change in
+                change.groupID.map { blockedGroups.contains($0) } ?? false
+            }
             if safe.count == priorCount { break }
         }
         var seen = Set<String>()
         return (safe, blocks.filter { seen.insert($0.path + $0.code + $0.message).inserted })
+    }
+
+    private func projectSafeChanges(
+        candidates: [PendingChange], remote: ParsedSnapshot,
+        localTasksByPath: [String: TodoTask], selection: RepositorySelection
+    ) -> (changes: [PendingChange], blocks: [TaskRelationshipBlock]) {
+        let prefix = repositoryPath(storePath: selection.storePath, relativePath: remote.configuration.projectsDirectory + "/")
+        var available = Set(remote.knownProjectSlugs)
+        var deletions: [String: String] = [:]
+        for change in candidates where change.path.hasPrefix(prefix) && change.path.hasSuffix(".md") {
+            let filename = String(change.path.dropFirst(prefix.count))
+            guard !filename.contains("/") else { continue }
+            let slug = String(filename.dropLast(3))
+            if change.content == nil {
+                available.remove(slug)
+                deletions[slug] = change.path
+            } else {
+                available.insert(slug)
+            }
+        }
+        var blocks: [TaskRelationshipBlock] = []
+        var safe = candidates.filter { change in
+            guard change.content != nil, let task = localTasksByPath[change.path] else { return true }
+            guard task.projectSlugs.allSatisfy(available.contains) else {
+                blocks.append(TaskRelationshipBlock(path: change.path, code: "project_dependency",
+                    message: "Task waits for its project record to become publishable; resolve the project operation's conflict first",
+                    relatedTaskIDs: [task.id]))
+                return false
+            }
+            return true
+        }
+        if !deletions.isEmpty {
+            let safeByPath = Dictionary(uniqueKeysWithValues: safe.map { ($0.path, $0) })
+            var blockedDeletions = Set<String>()
+            for document in remote.tasks where document.task.projectSlugs.contains(where: { deletions[$0] != nil }) {
+                let path = repositoryPath(storePath: selection.storePath, relativePath: document.task.relativePath)
+                let task: TodoTask
+                if let change = safeByPath[path] {
+                    guard change.content != nil, let replacement = localTasksByPath[path] else { continue }
+                    task = replacement
+                } else {
+                    task = document.task
+                }
+                for slug in task.projectSlugs {
+                    guard let deletionPath = deletions[slug] else { continue }
+                    blockedDeletions.insert(deletionPath)
+                    blocks.append(TaskRelationshipBlock(path: deletionPath, code: "project_dependency",
+                        message: "Project deletion waits for its remaining task links to be removed",
+                        relatedTaskIDs: [task.id]))
+                }
+            }
+            safe.removeAll { blockedDeletions.contains($0.path) }
+        }
+        return (safe, blocks)
     }
 
     private func relationshipSafeChanges(
@@ -640,15 +757,14 @@ public actor SyncEngine {
         }
 
         safe = withholding(localBlocks, from: safe)
+        let localByPath = Dictionary(uniqueKeysWithValues: localTasks.map { ($0.task.relativePath, $0) })
         while true {
             var publish = Dictionary(uniqueKeysWithValues: remote.tasks.map { ($0.task.relativePath, $0) })
-            var projects = Set(remote.knownProjectSlugs)
+            // Reconciliation already parsed every local record; project metadata is irrelevant to hierarchy.
             for change in safe {
-                try overlayChange(
-                    content: change.content, fullPath: change.path, blobSHA: change.baseBlobSHA,
-                    selection: selection, configuration: remote.configuration,
-                    tasksByPath: &publish, knownProjectSlugs: &projects
-                )
+                guard let relative = storeRelativePath(change.path, storePath: selection.storePath),
+                      relative.hasPrefix(remote.configuration.tasksDirectory + "/"), relative.hasSuffix(".md") else { continue }
+                publish[relative] = change.content == nil ? nil : localByPath[relative]
             }
             let publishBlocks = TaskHierarchy.blocks(tasks: publish.values.map(\.task), storePath: selection.storePath)
             blocks.append(contentsOf: publishBlocks)
@@ -674,6 +790,7 @@ public actor SyncEngine {
 
         var tasks: [TaskDocument] = []
         var projectSlugs: [String] = []
+        var projects: [ProjectDocument] = []
 
         for file in snapshot.files {
             guard let relativePath = storeRelativePath(file.path, storePath: selection.storePath) else {
@@ -701,7 +818,10 @@ public actor SyncEngine {
                         message: "Nested project record is not supported: \(relativePath)"
                     )
                 }
-                projectSlugs.append(String(projectRelativePath.dropLast(3)))
+                let slug = String(projectRelativePath.dropLast(3))
+                let project = try ObsidianProjectCodec().parseProject(slug: slug, relativePath: relativePath, text: file.content)
+                projectSlugs.append(slug)
+                projects.append(ProjectDocument(project: project, content: file.content, blobSHA: file.blobSHA))
             }
         }
 
@@ -712,6 +832,7 @@ public actor SyncEngine {
             configuration: configuration,
             knownProjectSlugs: projectSlugs,
             tasks: tasks,
+            projects: projects.sorted { $0.project.relativePath < $1.project.relativePath },
             filesByPath: filesByPath,
             attachmentsByPath: Dictionary(uniqueKeysWithValues: snapshot.attachments.map { ($0.path, $0) })
         )
@@ -745,7 +866,8 @@ public actor SyncEngine {
         selection: RepositorySelection,
         configuration: StoreConfiguration,
         tasksByPath: inout [String: TaskDocument],
-        knownProjectSlugs: inout Set<String>
+        knownProjectSlugs: inout Set<String>,
+        projectsByPath: inout [String: ProjectDocument]
     ) throws {
         guard let relativePath = storeRelativePath(fullPath, storePath: selection.storePath) else {
             return
@@ -787,10 +909,13 @@ public actor SyncEngine {
             )
         }
         let slug = String(projectRelativePath.dropLast(3))
-        if content == nil {
-            knownProjectSlugs.remove(slug)
-        } else {
+        if let content {
+            let project = try ObsidianProjectCodec().parseProject(slug: slug, relativePath: relativePath, text: content)
             knownProjectSlugs.insert(slug)
+            projectsByPath[relativePath] = ProjectDocument(project: project, content: content, blobSHA: blobSHA)
+        } else {
+            knownProjectSlugs.remove(slug)
+            projectsByPath.removeValue(forKey: relativePath)
         }
     }
 

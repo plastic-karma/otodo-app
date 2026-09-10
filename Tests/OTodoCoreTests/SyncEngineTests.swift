@@ -12,6 +12,10 @@ final class SyncEngineTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(workspace.configuration.projectsDirectory, "Projects")
         XCTAssertEqual(workspace.configuration.states.map(\.id), ["open", "done"])
         XCTAssertEqual(workspace.knownProjectSlugs, ["alpha"])
+        XCTAssertEqual(workspace.projects.first?.project.name, "Alpha")
+        XCTAssertEqual(workspace.projects.first?.project.body, "# Alpha\n")
+        XCTAssertEqual(workspace.projects.first?.content, "# Alpha\n")
+        XCTAssertEqual(workspace.projects.first?.blobSHA, "project")
         XCTAssertEqual(workspace.tasks.map { $0.task.relativePath }, [Fixture.aRelative, Fixture.bRelative])
         XCTAssertEqual(workspace.tasks.map { $0.task.name }, ["A", "B"])
         XCTAssertEqual(workspace.tasks[0].task.projectSlugs, ["alpha"])
@@ -736,7 +740,8 @@ private struct Fixture {
             baseRootTreeSHA: base.baseRootTreeSHA,
             pendingChanges: [pending],
             conflicts: [],
-            revision: base.revision + 1
+            revision: base.revision + 1,
+            projects: base.projects
         )
     }
 
@@ -746,7 +751,7 @@ private struct Fixture {
         let content = try XCTUnwrap(pending.content)
         let task = try ObsidianTaskCodec().parseTask(id: tasks[index].task.id, relativePath: Self.aRelative, text: content, configuration: base.configuration)
         tasks[index] = TaskDocument(task: task, content: content, blobSHA: pending.baseBlobSHA)
-        return try WorkspaceState(selection: selection, configuration: base.configuration, knownProjectSlugs: base.knownProjectSlugs, tasks: tasks, baseHeadCommitSHA: base.baseHeadCommitSHA, baseRootTreeSHA: base.baseRootTreeSHA, pendingChanges: [pending], conflicts: [], revision: revision ?? base.revision + 1)
+        return try WorkspaceState(selection: selection, configuration: base.configuration, knownProjectSlugs: base.knownProjectSlugs, tasks: tasks, baseHeadCommitSHA: base.baseHeadCommitSHA, baseRootTreeSHA: base.baseRootTreeSHA, pendingChanges: [pending], conflicts: [], revision: revision ?? base.revision + 1, projects: base.projects)
     }
 }
 
@@ -1091,5 +1096,266 @@ private struct SubtaskSyncFixture: Sendable {
         let config = try XCTUnwrap(snapshot.files.first { $0.path == ".todo/config.toml" })
         return try ObsidianTaskCodec().parseTask(id: id(number), relativePath: path(number), text: file.content,
                                                 configuration: StrictStoreConfigCodec().parseConfiguration(config.content))
+    }
+}
+
+extension SyncEngineTests {
+    func testLaterTaskWaitsForWithheldArchiveDestinationThenPublishesAfterResolution() async throws {
+        let f = try Fixture(twoTasks: true)
+        _ = try await f.engine.initialPull(selection: f.selection)
+        let service = TaskWorkspaceService(persistence: f.store, taskCodec: ObsidianTaskCodec())
+        let archived = try await service.archiveProject(selection: f.selection, slug: "alpha",
+            destination: .newProject(slug: "beta", name: "Beta"))
+        let later = try PendingChange(id: UUID(), path: f.bPath, baseBlobSHA: "b1",
+            content: Fixture.record("Later task", projects: ["beta"], body: "Needs the destination\n"),
+            createdAt: Date(timeIntervalSince1970: 100))
+        try await f.store.save(try f.applying(archived, pending: archived.pendingChanges + [later]),
+                               expectedRevision: archived.revision)
+        let divergent = try f.snapshot(head: "diverged", tree: "diverged-tree",
+            a: Fixture.record("Remote A", projects: ["alpha"], body: "Remote notes\n"),
+            b: f.bOriginal, aSHA: "remote-a")
+        await f.gitHub.replace(divergent)
+        let report = try await f.engine.sync(selection: f.selection)
+        let blockedRemote = await f.gitHub.branch()
+        XCTAssertEqual(report.pushedCount, 0)
+        XCTAssertEqual(blockedRemote.files.first { $0.path == f.bPath }?.content, f.bOriginal,
+                       "A later task must not publish a link to the withheld destination")
+        XCTAssertNil(blockedRemote.files.first { $0.path == f.path("Projects/beta.md") })
+
+        _ = try await service.resolveConflict(selection: f.selection, path: f.aPath, resolution: .keepLocal)
+        _ = try await f.engine.sync(selection: f.selection)
+        let published = await f.gitHub.branch()
+        XCTAssertNotNil(published.files.first { $0.path == f.path("Projects/beta.md") })
+        XCTAssertEqual(published.files.first { $0.path == f.bPath }?.content, later.content)
+    }
+
+    func testMovedProjectConflictResolvesAtCurrentDirectoryWithRemoteEvidence() async throws {
+        for keepLocal in [true, false] {
+            let f = try Fixture()
+            let slug = "00000000000000000000000000"
+            let oldPath = f.path("Projects/\(slug).md")
+            let newPath = f.path("Areas/\(slug).md")
+            let initial = await f.gitHub.branch()
+            let files = try initial.files.filter { !$0.path.contains("/Tasks/") }.map { file in
+                file.path == f.path("Projects/alpha.md")
+                    ? try RemoteFile(path: oldPath, blobSHA: file.blobSHA, content: file.content) : file
+            }
+            await f.gitHub.replace(try GitSnapshot(headCommitSHA: "projects", rootTreeSHA: "projects-tree", files: files))
+            _ = try await f.engine.initialPull(selection: f.selection)
+            let service = TaskWorkspaceService(persistence: f.store, taskCodec: ObsidianTaskCodec())
+            _ = try await service.archiveProject(selection: f.selection, slug: slug)
+
+            let movedContent = "---\nname: Remote title\nplugin: changed\n---\nRemote notes\n"
+            let moved = try GitSnapshot(headCommitSHA: "moved", rootTreeSHA: "moved-tree", files: [
+                try RemoteFile(path: f.path(".todo/config.toml"), blobSHA: "moved-config",
+                    content: Fixture.config.replacingOccurrences(of: "projects_directory = \"Projects\"", with: "projects_directory = \"Areas\"")),
+                try RemoteFile(path: newPath, blobSHA: "moved-project", content: movedContent),
+            ])
+            await f.gitHub.replace(moved)
+            let report = try await f.engine.sync(selection: f.selection)
+            let conflict = try XCTUnwrap(report.conflicts.first)
+            XCTAssertEqual(conflict.path, newPath)
+            XCTAssertEqual(conflict.remoteContent, movedContent)
+            XCTAssertEqual(conflict.remoteBlobSHA, "moved-project")
+            let resolved = try await service.resolveConflict(
+                selection: f.selection, path: conflict.path, resolution: keepLocal ? .keepLocal : .useRemote
+            )
+            XCTAssertFalse(resolved.pendingChanges.contains { $0.path == oldPath })
+            XCTAssertTrue(resolved.conflicts.isEmpty)
+            XCTAssertEqual(resolved.projects.first?.project.relativePath, "Areas/\(slug).md")
+            _ = try await f.engine.sync(selection: f.selection)
+            let remote = await f.gitHub.branch()
+            XCTAssertFalse(remote.files.contains { $0.path == oldPath })
+            let saved = try XCTUnwrap(remote.files.first { $0.path == newPath })
+            let project = try ObsidianProjectCodec().parseProject(slug: slug, relativePath: "Areas/\(slug).md", text: saved.content)
+            XCTAssertEqual(project.isArchived, keepLocal)
+            XCTAssertEqual(project.body, keepLocal ? "# Alpha\n" : "Remote notes\n")
+            if !keepLocal { XCTAssertEqual(saved.content, movedContent) }
+        }
+    }
+
+    func testArchiveGroupWithholdsProjectAndTasksOnEitherConflictButPublishesIndependentEdit() async throws {
+        for conflictOnProject in [false, true] {
+            let f = try Fixture(twoTasks: true)
+            _ = try await f.engine.initialPull(selection: f.selection)
+            let service = TaskWorkspaceService(persistence: f.store, taskCodec: ObsidianTaskCodec())
+            let archived = try await service.archiveProject(selection: f.selection, slug: "alpha", destination: .inbox)
+            let independent = try PendingChange(id: UUID(), path: f.bPath, baseBlobSHA: "b1",
+                content: Fixture.record("Independent local", body: "Independent\n"), createdAt: Date(timeIntervalSince1970: 100))
+            try await f.store.save(try f.applying(archived, pending: archived.pendingChanges + [independent]),
+                                   expectedRevision: archived.revision)
+            let projectPath = f.path("Projects/alpha.md")
+            let conflictingPath = conflictOnProject ? projectPath : f.aPath
+            let remoteContent = conflictOnProject ? "---\nname: Alpha remote\nplugin: [true, 2]\n---\nRemote notes\r\n"
+                : Fixture.record("A remote", projects: ["alpha"], body: "Remote task\n")
+            let oldRemote = await f.gitHub.branch()
+            let divergent = try GitSnapshot(headCommitSHA: "diverged", rootTreeSHA: "diverged-tree",
+                files: oldRemote.files.map { file in
+                    file.path == conflictingPath ? try RemoteFile(path: file.path, blobSHA: "divergent-blob", content: remoteContent) : file
+                })
+            await f.gitHub.replace(divergent)
+
+            let report = try await f.engine.sync(selection: f.selection)
+            let remote = await f.gitHub.branch()
+            XCTAssertEqual(report.pushedCount, 1)
+            XCTAssertEqual(report.conflicts.map(\.path), [conflictingPath])
+            XCTAssertEqual(remote.files.first { $0.path == f.bPath }?.content, independent.content)
+            for path in [projectPath, f.aPath] {
+                XCTAssertEqual(remote.files.first { $0.path == path }, divergent.files.first { $0.path == path })
+            }
+            let savedValue = await f.store.current()
+            let saved = try XCTUnwrap(savedValue)
+            XCTAssertEqual(Set(saved.pendingChanges.map(\.path)), Set([projectPath, f.aPath]))
+            XCTAssertEqual(saved.projects.first?.content, archived.projects.first?.content)
+            XCTAssertEqual(saved.projects.first?.blobSHA, "project")
+            XCTAssertTrue(try XCTUnwrap(saved.projects.first).project.isArchived)
+            let conflict = try XCTUnwrap(saved.conflicts.first)
+            XCTAssertEqual(conflict.remoteContent, remoteContent)
+            XCTAssertEqual(conflict.remoteBlobSHA, "divergent-blob")
+        }
+    }
+
+    func testOverlappingArchiveGroupsStayTogetherAfterSecondArchiveAndRemoteConflict() async throws {
+        let f = try Fixture(twoTasks: true)
+        _ = try await f.engine.initialPull(selection: f.selection)
+        let service = TaskWorkspaceService(persistence: f.store, taskCodec: ObsidianTaskCodec())
+        _ = try await service.archiveProject(selection: f.selection, slug: "alpha",
+                                              destination: .newProject(slug: "beta", name: "Beta"))
+        let coalesced = try await service.archiveProject(selection: f.selection, slug: "beta", destination: .inbox)
+        let independent = try PendingChange(id: UUID(), path: f.bPath, baseBlobSHA: "b1",
+            content: Fixture.record("Independent", body: "Unrelated\n"), createdAt: Date(timeIntervalSince1970: 100))
+        try await f.store.save(try f.applying(coalesced, pending: coalesced.pendingChanges + [independent]),
+                               expectedRevision: coalesced.revision)
+        let oldRemote = await f.gitHub.branch()
+        let divergent = try GitSnapshot(headCommitSHA: "diverged", rootTreeSHA: "diverged-tree",
+            files: oldRemote.files.map { file in
+                file.path == f.path("Projects/alpha.md")
+                    ? try RemoteFile(path: file.path, blobSHA: "remote-alpha", content: "# Alpha remote\n") : file
+            })
+        await f.gitHub.replace(divergent)
+
+        let report = try await f.engine.sync(selection: f.selection)
+        XCTAssertEqual(report.pushedCount, 1)
+        let remote = await f.gitHub.branch()
+        XCTAssertNil(remote.files.first { $0.path == f.path("Projects/beta.md") })
+        XCTAssertEqual(remote.files.first { $0.path == f.aPath }?.content, f.aOriginal)
+        XCTAssertEqual(remote.files.first { $0.path == f.path("Projects/alpha.md") }?.content, "# Alpha remote\n")
+        XCTAssertEqual(remote.files.first { $0.path == f.bPath }?.content, independent.content)
+        let savedValue = await f.store.current()
+        let saved = try XCTUnwrap(savedValue)
+        XCTAssertEqual(Set(saved.pendingChanges.map(\.path)), Set([f.aPath, f.path("Projects/alpha.md"), f.path("Projects/beta.md")]))
+        XCTAssertTrue(saved.projects.allSatisfy(\.project.isArchived))
+    }
+
+    func testRacedRefCannotPublishAttemptedSubsetOfExpandedArchiveGroup() async throws {
+        let f = try Fixture(twoTasks: true)
+        _ = try await f.engine.initialPull(selection: f.selection)
+        let service = TaskWorkspaceService(persistence: f.store, taskCodec: ObsidianTaskCodec())
+        _ = try await service.archiveProject(selection: f.selection, slug: "alpha",
+                                              destination: .newProject(slug: "beta", name: "Beta"))
+        let race = try f.snapshot(head: "race", tree: "race-tree", a: f.aOriginal,
+                                  b: Fixture.record("B raced", body: "Unrelated remote\n"), bSHA: "b-race")
+        await f.gitHub.raceNextUpdate(to: race)
+        await f.gitHub.onNextCommit {
+            _ = try await service.archiveProject(selection: f.selection, slug: "beta",
+                                                  destination: .newProject(slug: "gamma", name: "Gamma"))
+        }
+        let report = try await f.engine.sync(selection: f.selection)
+        XCTAssertEqual(report.pushedCount, 0)
+        let unchanged = await f.gitHub.branch()
+        XCTAssertEqual(unchanged, race)
+        let savedValue = await f.store.current()
+        let saved = try XCTUnwrap(savedValue)
+        XCTAssertEqual(Set(saved.pendingChanges.map(\.path)),
+                       Set([f.aPath, f.path("Projects/alpha.md"), f.path("Projects/beta.md"), f.path("Projects/gamma.md")]))
+
+        let retried = try await f.engine.sync(selection: f.selection)
+        XCTAssertEqual(retried.pushedCount, 4)
+        let remote = await f.gitHub.branch()
+        let task = try XCTUnwrap(remote.files.first { $0.path == f.aPath })
+        XCTAssertTrue(task.content.contains("[[Vault/Projects/gamma]]"))
+        for slug in ["alpha", "beta", "gamma"] {
+            let file = try XCTUnwrap(remote.files.first { $0.path == f.path("Projects/\(slug).md") })
+            let project = try ObsidianProjectCodec().parseProject(slug: slug, relativePath: "Projects/\(slug).md", text: file.content)
+            XCTAssertEqual(project.isArchived, slug != "gamma")
+        }
+    }
+
+    func testConfirmedCoalescedArchiveRebasesWithoutDetachingRemainingGroup() async throws {
+        let f = try Fixture()
+        _ = try await f.engine.initialPull(selection: f.selection)
+        let service = TaskWorkspaceService(persistence: f.store, taskCodec: ObsidianTaskCodec())
+        _ = try await service.archiveProject(selection: f.selection, slug: "alpha",
+                                              destination: .newProject(slug: "beta", name: "Beta"))
+        await f.gitHub.onNextCommit {
+            _ = try await service.archiveProject(selection: f.selection, slug: "beta", destination: .inbox)
+        }
+        _ = try await f.engine.sync(selection: f.selection)
+        let firstRemote = await f.gitHub.branch()
+        let betaPath = f.path("Projects/beta.md")
+        let activeBeta = try XCTUnwrap(firstRemote.files.first { $0.path == betaPath })
+        XCTAssertFalse(try ObsidianProjectCodec().parseProject(slug: "beta", relativePath: "Projects/beta.md", text: activeBeta.content).isArchived)
+        let savedValue = await f.store.current()
+        let saved = try XCTUnwrap(savedValue)
+        XCTAssertEqual(Set(saved.pendingChanges.map(\.path)), Set([f.aPath, betaPath]))
+        XCTAssertEqual(saved.projects.first { $0.project.slug == "beta" }?.blobSHA, activeBeta.blobSHA)
+        let divergent = try GitSnapshot(headCommitSHA: "diverged", rootTreeSHA: "diverged-tree",
+            files: firstRemote.files.map { file in
+                file.path == f.aPath ? try RemoteFile(path: file.path, blobSHA: "remote-task",
+                    content: Fixture.record("Remote edited", projects: ["beta"], body: "Remote\n")) : file
+            })
+        await f.gitHub.replace(divergent)
+
+        let report = try await f.engine.sync(selection: f.selection)
+        XCTAssertEqual(report.pushedCount, 0)
+        XCTAssertEqual(report.conflicts.map(\.path), [f.aPath])
+        let blocked = await f.gitHub.branch()
+        XCTAssertEqual(blocked, divergent)
+    }
+
+    func testHierarchyFilteringAlsoWithholdsGroupedProjectCreation() async throws {
+        let f = try SubtaskSyncFixture()
+        let initial = try await f.engine.initialPull(selection: f.selection)
+        let group = UUID()
+        let brokenTask = try PendingChange(id: UUID(), path: f.path(1), baseBlobSHA: "b1",
+            content: SubtaskSyncFixture.record(1, parent: 99), createdAt: Date(timeIntervalSince1970: 100), groupID: group)
+        let projectContent = "---\nname: New project\n---\n"
+        let project = try ObsidianProjectCodec().parseProject(slug: "new", relativePath: "Projects/new.md", text: projectContent)
+        let projectChange = try PendingChange(id: UUID(), path: project.relativePath, baseBlobSHA: nil,
+            content: projectContent, createdAt: Date(timeIntervalSince1970: 100), groupID: group)
+        let independent = try f.pending(3, name: "Independent")
+        let broken = try ObsidianTaskCodec().parseTask(id: f.id(1), relativePath: f.path(1),
+            text: XCTUnwrap(brokenTask.content), configuration: initial.configuration)
+        let workspace = try WorkspaceState(selection: f.selection, configuration: initial.configuration,
+            knownProjectSlugs: ["new"], tasks: initial.tasks.map {
+                $0.task.id == broken.id ? TaskDocument(task: broken, content: brokenTask.content!, blobSHA: "b1") : $0
+            }, baseHeadCommitSHA: initial.baseHeadCommitSHA, baseRootTreeSHA: initial.baseRootTreeSHA,
+            pendingChanges: [brokenTask, projectChange, independent], conflicts: [], revision: initial.revision + 1,
+            projects: [ProjectDocument(project: project, content: projectContent, blobSHA: nil)])
+        try await f.store.save(workspace, expectedRevision: initial.revision)
+
+        let report = try await f.engine.sync(selection: f.selection)
+        XCTAssertEqual(report.pushedCount, 1)
+        let remote = await f.gitHub.branch()
+        XCTAssertNil(remote.files.first { $0.path == project.relativePath })
+        XCTAssertNil(try f.task(1, in: remote).parentID)
+        XCTAssertEqual(try f.task(3, in: remote).name, "Independent")
+    }
+}
+
+private extension Fixture {
+    func applying(_ base: WorkspaceState, pending: [PendingChange]) throws -> WorkspaceState {
+        var tasks = Dictionary(uniqueKeysWithValues: base.tasks.map { ($0.task.relativePath, $0) })
+        for change in pending where change.path.hasPrefix(path("Tasks/")) {
+            let relativePath = String(change.path.dropFirst(selection.storePath.count + 1))
+            guard let content = change.content else { tasks.removeValue(forKey: relativePath); continue }
+            let id = try TaskID(rawValue: String(relativePath.split(separator: "/").last!.dropLast(3)))
+            let task = try ObsidianTaskCodec().parseTask(id: id, relativePath: relativePath, text: content, configuration: base.configuration)
+            tasks[relativePath] = TaskDocument(task: task, content: content, blobSHA: change.baseBlobSHA)
+        }
+        return try WorkspaceState(selection: selection, configuration: base.configuration,
+            knownProjectSlugs: base.knownProjectSlugs, tasks: tasks.values.sorted { $0.task.relativePath < $1.task.relativePath },
+            baseHeadCommitSHA: base.baseHeadCommitSHA, baseRootTreeSHA: base.baseRootTreeSHA,
+            pendingChanges: pending, conflicts: base.conflicts, revision: base.revision + 1, projects: base.projects)
     }
 }

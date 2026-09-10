@@ -21,6 +21,8 @@ APP_GROUP = "group.plastickarma.otodo"
 EXPECTED_NAMES = {"Seed todo", "Overdue todo", "Future todo", "Week review", "Later review"}
 SMOKE_ARGUMENT = "-watch-smoke-diagnostics"
 LOG_PREDICATE = ('process == "OTodo" OR process == "OTodoWatch" OR process == "wcd" '
+                 'OR process == "gizmoappd" OR process == "appconduitd" '
+                 'OR process == "installd" OR process == "nanoregistryd" '
                  'OR subsystem BEGINSWITH "plastickarma.otodo" '
                  'OR subsystem == "com.apple.WatchConnectivity"')
 
@@ -212,11 +214,22 @@ def collect_role(output, role, device, phase, failures):
     attempt = f"{role}-{phase}-{time.time_ns()}"
     log = output / f"{attempt}.log"
     try:
-        run("xcrun", "simctl", "spawn", device, "log", "show", "--last", "10m", "--style", "compact",
+        # A full delivery wait already lasts ten minutes; a rolling window loses
+        # the activation and installation events needed to diagnose that failure.
+        window = ["--last", "10m"]
+        events = output / "progress.jsonl"
+        if events.exists():
+            for line in events.read_text().splitlines():
+                event = json.loads(line)
+                if event["stage"] == "verification-started":
+                    started = datetime.fromisoformat(event["at"])
+                    window = ["--start", started.strftime("%Y-%m-%d %H:%M:%S%z")]
+                    break
+        run("xcrun", "simctl", "spawn", device, "log", "show", *window, "--style", "compact",
             "--info", "--debug", "--predicate", LOG_PREDICATE,
             stage=f"diagnostics-{role}-{phase}", timeout=45, log_path=log)
         shutil.copy2(log, output / f"{role}-watch-sync.log")
-    except (CommandError, OSError, RuntimeError) as error:
+    except (CommandError, OSError, RuntimeError, ValueError, KeyError) as error:
         failures.append({"stage": f"{role}-{phase}-logs", "error": str(error)})
     try:
         run("xcrun", "simctl", "io", device, "screenshot", output / f"{attempt}.png",
@@ -237,6 +250,7 @@ def record_diagnostics(output, failures):
 
 
 def verify(output, derived_data):
+    progress(output, "verification-started")
     devices = json.loads((output / "devices.json").read_text())
     phone, watch = devices["phone"], devices["watch"]
     phone_app = derived_data / "Build/Products/Debug-iphonesimulator/OTodo.app"

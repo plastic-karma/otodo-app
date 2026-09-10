@@ -87,6 +87,13 @@ public enum WorkspaceConflictResolution: Sendable, Equatable {
     case useRemote
 }
 
+public enum ProjectArchiveDestination: Sendable, Equatable {
+    case leaveInProject
+    case inbox
+    case project(slug: String)
+    case newProject(slug: String, name: String)
+}
+
 /// Offline-first task operations. Every mutation is validated, reflected in the
 /// durable outbox, and saved before its result is returned.
 public actor TaskWorkspaceService {
@@ -204,40 +211,13 @@ public actor TaskWorkspaceService {
         title: String
     ) async throws -> String {
         let workspace = try await requireWorkspace(selection: selection)
-        _ = try workspace.configuration.projectLink(slug: slug)
-
-        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedTitle.isEmpty,
-              !trimmedTitle.contains("\n"),
-              !trimmedTitle.contains("\r")
-        else {
-            throw OTodoError.validation(
-                field: "project.title",
-                message: "Project title must be nonempty and single-line"
-            )
-        }
-        guard !workspace.knownProjectSlugs.contains(slug) else {
-            throw OTodoError.validation(
-                field: "projects",
-                message: "Project \(slug) already exists"
-            )
-        }
-
-        let relativePath = "\(workspace.configuration.projectsDirectory)/\(slug).md"
+        let document = try newProject(slug: slug, name: title, in: workspace)
         let repositoryPath = Self.repositoryPath(
-            selection: workspace.selection,
-            storeRelativePath: relativePath
+            selection: selection, storeRelativePath: document.project.relativePath
         )
-        guard !workspace.conflicts.contains(where: { $0.path == repositoryPath }) else {
-            throw OTodoError.conflict(
-                message: "Resolve the conflict at \(repositoryPath) before creating this project"
-            )
-        }
-
-        let content = "# \(trimmedTitle)\n"
         let pendingChanges = try upsertingPendingChange(
             path: repositoryPath,
-            content: content,
+            content: document.content,
             baseBlobSHA: nil,
             in: workspace.pendingChanges,
             at: now()
@@ -248,10 +228,217 @@ public actor TaskWorkspaceService {
             knownProjectSlugs: knownProjectSlugs,
             tasks: workspace.tasks,
             pendingChanges: pendingChanges,
-            conflicts: workspace.conflicts
+            conflicts: workspace.conflicts,
+            projects: workspace.projects + [document]
         )
         try await persistence.save(updatedWorkspace, expectedRevision: workspace.revision)
         return slug
+    }
+
+    public func archiveProject(
+        selection: RepositorySelection,
+        slug: String,
+        destination: ProjectArchiveDestination = .leaveInProject,
+        completeOpenTasks: Bool = false
+    ) async throws -> WorkspaceState {
+        let workspace = try await requireWorkspace(selection: selection)
+        let sourceIndex = try Self.editableProjectIndex(slug: slug, in: workspace)
+        let source = workspace.projects[sourceIndex]
+        var archived = source.project
+        try archived.setArchived(true)
+        guard !source.project.isArchived else {
+            throw OTodoError.validation(field: "project", message: "Project \(slug) is already archived")
+        }
+
+        var projects = workspace.projects
+        var knownProjectSlugs = workspace.knownProjectSlugs
+        var pendingChanges = workspace.pendingChanges
+        let timestamp = now()
+        var groupedPaths = Set<String>()
+        var targetSlug: String?
+        switch destination {
+        case .leaveInProject, .inbox:
+            break
+        case let .project(target):
+            guard target != slug else {
+                throw OTodoError.validation(field: "project", message: "Archive destination must differ from the source")
+            }
+            let targetIndex = try Self.editableProjectIndex(slug: target, in: workspace)
+            var targetProject = projects[targetIndex].project
+            // Validate the Boolean field as well as its interpreted archive state.
+            try targetProject.setArchived(false)
+            guard !projects[targetIndex].project.isArchived else {
+                throw OTodoError.validation(field: "project", message: "Archive destination must be active")
+            }
+            targetSlug = target
+            let targetPath = Self.repositoryPath(
+                selection: selection, storeRelativePath: targetProject.relativePath
+            )
+            if pendingChanges.contains(where: { $0.path == targetPath && $0.baseBlobSHA == nil }) {
+                groupedPaths.insert(targetPath)
+            }
+        case let .newProject(target, name):
+            let document = try newProject(slug: target, name: name, in: workspace)
+            projects.append(document)
+            knownProjectSlugs.append(target)
+            targetSlug = target
+            let path = Self.repositoryPath(selection: selection, storeRelativePath: document.project.relativePath)
+            pendingChanges = try upsertingPendingChange(
+                path: path, content: document.content, baseBlobSHA: nil, in: pendingChanges, at: timestamp
+            )
+            groupedPaths.insert(path)
+        }
+
+        let projectContent = try ObsidianProjectCodec().serializeProject(archived)
+        projects[sourceIndex] = ProjectDocument(project: archived, content: projectContent, blobSHA: source.blobSHA)
+        let sourcePath = Self.repositoryPath(selection: selection, storeRelativePath: source.project.relativePath)
+        pendingChanges = try upsertingPendingChange(
+            path: sourcePath, content: projectContent, baseBlobSHA: source.blobSHA,
+            in: pendingChanges, at: timestamp
+        )
+        groupedPaths.insert(sourcePath)
+
+        let terminalStates = Set(workspace.configuration.states.filter(\.isTerminal).map(\.id))
+        let completedState = workspace.configuration.states.first(where: { $0.id == "done" && $0.isTerminal })
+            ?? workspace.configuration.states.first(where: \.isTerminal)
+        let conflictedPaths = Set(workspace.conflicts.map(\.path))
+        let parentsWithChildren = completeOpenTasks ? Set(workspace.tasks.compactMap(\.task.parentID)) : []
+        var completionDay: CivilDate?
+        var tasks = workspace.tasks
+        for index in tasks.indices where tasks[index].task.projectSlugs.contains(slug) {
+            let original = tasks[index]
+            let path = Self.repositoryPath(selection: selection, storeRelativePath: original.task.relativePath)
+            var task = original.task
+            if completeOpenTasks {
+                guard workspace.configuration.states.contains(where: { $0.id == task.state }) else {
+                    throw OTodoError.validation(field: "state", message: "State is not configured")
+                }
+                if !terminalStates.contains(task.state) {
+                    guard let completedState else {
+                        throw OTodoError.validation(field: "state", message: "Completion requires a configured terminal state")
+                    }
+                    task.state = completedState.id
+                    let day = try completionDay ?? CivilDate(
+                        rawValue: TodayWidgetSnapshotBuilder.dateKey(for: timestamp, timeZone: calendar.timeZone)
+                    )
+                    completionDay = day
+                    try TaskCompletionHistory.append(
+                        to: &task, snapshot: original.task, completedAt: timestamp, completedOn: day,
+                        calendar: calendar,
+                        usesSubtasks: original.task.parentID != nil || parentsWithChildren.contains(original.task.id),
+                        storePrefix: workspace.configuration.obsidianLinkPrefix, id: makeUUID()
+                    )
+                }
+            }
+            if destination == .inbox {
+                task.projectSlugs = []
+            } else if let targetSlug {
+                var memberships = Set<String>()
+                task.projectSlugs = task.projectSlugs.compactMap {
+                    let replacement = $0 == slug ? targetSlug : $0
+                    return memberships.insert(replacement).inserted ? replacement : nil
+                }
+            }
+            guard task != original.task else { continue }
+            guard !conflictedPaths.contains(path) else {
+                throw OTodoError.conflict(message: "Resolve the conflict at \(path) before archiving this project")
+            }
+            let document = try canonicalDocument(
+                for: task, configuration: workspace.configuration, blobSHA: original.blobSHA
+            )
+            tasks[index] = document
+            pendingChanges = try upsertingPendingChange(
+                path: path, content: document.content, baseBlobSHA: original.blobSHA,
+                in: pendingChanges, at: timestamp
+            )
+            groupedPaths.insert(path)
+        }
+        pendingChanges = try grouping(pendingChanges, affectedPaths: groupedPaths)
+        let updated = try Self.replacing(
+            workspace, knownProjectSlugs: knownProjectSlugs.sorted(), tasks: tasks,
+            pendingChanges: pendingChanges, conflicts: workspace.conflicts, projects: projects
+        )
+        try await persistence.save(updated, expectedRevision: workspace.revision)
+        return updated
+    }
+
+    public func restoreProject(
+        selection: RepositorySelection,
+        slug: String
+    ) async throws -> WorkspaceState {
+        let workspace = try await requireWorkspace(selection: selection)
+        let index = try Self.editableProjectIndex(slug: slug, in: workspace)
+        let original = workspace.projects[index]
+        var project = original.project
+        try project.setArchived(false)
+        guard project != original.project else { return workspace }
+        let content = try ObsidianProjectCodec().serializeProject(project)
+        var projects = workspace.projects
+        projects[index] = ProjectDocument(project: project, content: content, blobSHA: original.blobSHA)
+        let pendingChanges = try upsertingPendingChange(
+            path: Self.repositoryPath(selection: selection, storeRelativePath: project.relativePath),
+            content: content, baseBlobSHA: original.blobSHA, in: workspace.pendingChanges, at: now()
+        )
+        let updated = try Self.replacing(
+            workspace, tasks: workspace.tasks, pendingChanges: pendingChanges,
+            conflicts: workspace.conflicts, projects: projects
+        )
+        try await persistence.save(updated, expectedRevision: workspace.revision)
+        return updated
+    }
+
+    private func newProject(slug: String, name: String, in workspace: WorkspaceState) throws -> ProjectDocument {
+        _ = try workspace.configuration.projectLink(slug: slug)
+        let project = try TodoProject(
+            slug: slug, relativePath: "\(workspace.configuration.projectsDirectory)/\(slug).md",
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        guard !workspace.knownProjectSlugs.contains(slug) else {
+            throw OTodoError.validation(field: "projects", message: "Project \(slug) already exists")
+        }
+        let path = Self.repositoryPath(selection: workspace.selection, storeRelativePath: project.relativePath)
+        guard !workspace.conflicts.contains(where: { $0.path == path }),
+              !workspace.pendingChanges.contains(where: { $0.path == path }) else {
+            throw OTodoError.conflict(message: "Project path \(path) has an unresolved local change")
+        }
+        return ProjectDocument(
+            project: project, content: try ObsidianProjectCodec().serializeProject(project), blobSHA: nil
+        )
+    }
+
+    private static func editableProjectIndex(slug: String, in workspace: WorkspaceState) throws -> Int {
+        _ = try workspace.configuration.projectLink(slug: slug)
+        guard workspace.knownProjectSlugs.contains(slug) else {
+            throw OTodoError.notFound(resource: "project \(slug)")
+        }
+        let path = repositoryPath(
+            selection: workspace.selection, storeRelativePath: "\(workspace.configuration.projectsDirectory)/\(slug).md"
+        )
+        guard !workspace.conflicts.contains(where: { $0.path == path }) else {
+            throw OTodoError.conflict(message: "Resolve the conflict at \(path) before changing this project")
+        }
+        guard let index = workspace.projects.firstIndex(where: { $0.project.slug == slug }) else {
+            throw OTodoError.validation(
+                field: "project", message: "Connect and sync to download project metadata before changing this project"
+            )
+        }
+        guard !workspace.pendingChanges.contains(where: { $0.path == path && $0.content == nil }) else {
+            throw OTodoError.conflict(message: "Project \(slug) has a pending deletion")
+        }
+        return index
+    }
+
+    private func grouping(_ changes: [PendingChange], affectedPaths: Set<String>) throws -> [PendingChange] {
+        let overlapping = Set(changes.compactMap { affectedPaths.contains($0.path) ? $0.groupID : nil })
+        let groupID = overlapping.sorted { $0.uuidString < $1.uuidString }.first ?? makeUUID()
+        return try changes.map { change in
+            guard affectedPaths.contains(change.path)
+                || change.groupID.map({ overlapping.contains($0) }) == true else { return change }
+            return try PendingChange(
+                id: change.id, path: change.path, baseBlobSHA: change.baseBlobSHA,
+                payload: change.payload, createdAt: change.createdAt, groupID: groupID
+            )
+        }
     }
 
     public func addTask(
@@ -908,6 +1095,14 @@ public actor TaskWorkspaceService {
         }
         let conflict = workspace.conflicts[conflictIndex]
         let relativePath = try Self.storeRelativePath(for: path, selection: workspace.selection)
+        let projectPrefix = "\(workspace.configuration.projectsDirectory)/"
+        if relativePath.hasPrefix(projectPrefix), relativePath.hasSuffix(".md") {
+            let slug = String(relativePath.dropFirst(projectPrefix.count).dropLast(3))
+            _ = try workspace.configuration.projectLink(slug: slug)
+            return try await resolveProjectConflict(
+                conflict, slug: slug, relativePath: relativePath, resolution: resolution, in: workspace
+            )
+        }
 
         var tasks = workspace.tasks
         var pendingChanges = workspace.pendingChanges
@@ -938,7 +1133,7 @@ public actor TaskWorkspaceService {
                     storePrefix: workspace.configuration.obsidianLinkPrefix)
                 if unlinked != content {
                     pendingChanges[index] = try PendingChange(id: pending.id, path: pending.path, baseBlobSHA: pending.baseBlobSHA,
-                        content: unlinked, createdAt: pending.createdAt)
+                        content: unlinked, createdAt: pending.createdAt, groupID: pending.groupID)
                 }
             }
             let conflicts = try workspace.conflicts.filter { $0.path != path }.map { existing in
@@ -1056,6 +1251,53 @@ public actor TaskWorkspaceService {
         )
         try await persistence.save(updatedWorkspace, expectedRevision: workspace.revision)
         return updatedWorkspace
+    }
+
+    private func resolveProjectConflict(
+        _ conflict: SyncConflict, slug: String, relativePath: String,
+        resolution: WorkspaceConflictResolution, in workspace: WorkspaceState
+    ) async throws -> WorkspaceState {
+        let payload = resolution == .keepLocal ? conflict.localPayload : conflict.remotePayload
+        switch payload {
+        case .text, .deletion:
+            break
+        case .binaryFile, .remoteBinary:
+            throw OTodoError.validation(field: "project", message: "Project conflict must resolve to a Markdown record or deletion")
+        }
+        let content: String?
+        var pendingChanges = workspace.pendingChanges
+        switch resolution {
+        case .keepLocal:
+            content = conflict.localContent
+            pendingChanges = try replacingConflictPendingChange(
+                conflict: conflict, destinationPath: conflict.path, baseBlobSHA: conflict.remoteBlobSHA,
+                content: content, pendingChanges: pendingChanges
+            )
+        case .useRemote:
+            content = conflict.remoteContent
+            pendingChanges.removeAll { $0.path == conflict.path }
+        }
+        var projects = workspace.projects.filter { $0.project.slug != slug }
+        var knownProjectSlugs = workspace.knownProjectSlugs
+        if let content {
+            let project = try ObsidianProjectCodec().parseProject(
+                slug: slug, relativePath: relativePath, text: content
+            )
+            projects.append(ProjectDocument(project: project, content: content, blobSHA: conflict.remoteBlobSHA))
+            if !knownProjectSlugs.contains(slug) { knownProjectSlugs.append(slug) }
+        } else {
+            guard !workspace.tasks.contains(where: { $0.task.projectSlugs.contains(slug) }) else {
+                throw OTodoError.conflict(message: "Cannot remove project \(slug) while local tasks still reference it")
+            }
+            knownProjectSlugs.removeAll { $0 == slug }
+        }
+        let updated = try Self.replacing(
+            workspace, knownProjectSlugs: knownProjectSlugs.sorted(), tasks: workspace.tasks,
+            pendingChanges: pendingChanges, conflicts: workspace.conflicts.filter { $0.path != conflict.path },
+            projects: projects
+        )
+        try await persistence.save(updated, expectedRevision: workspace.revision)
+        return updated
     }
 
     public func keepLocalConflict(
@@ -1208,7 +1450,8 @@ public actor TaskWorkspaceService {
                 path: path,
                 baseBlobSHA: original.baseBlobSHA,
                 content: content,
-                createdAt: original.createdAt
+                createdAt: original.createdAt,
+                groupID: original.groupID
             )
         } else {
             result.append(try PendingChange(
@@ -1241,7 +1484,8 @@ public actor TaskWorkspaceService {
             path: destinationPath,
             baseBlobSHA: baseBlobSHA,
             content: content,
-            createdAt: source?.createdAt ?? now()
+            createdAt: source?.createdAt ?? now(),
+            groupID: source?.groupID
         ))
         return result
     }
@@ -1322,7 +1566,8 @@ public actor TaskWorkspaceService {
         knownProjectSlugs: [String]? = nil,
         tasks: [TaskDocument],
         pendingChanges: [PendingChange],
-        conflicts: [SyncConflict]
+        conflicts: [SyncConflict],
+        projects: [ProjectDocument]? = nil
     ) throws -> WorkspaceState {
         guard workspace.revision < UInt64.max else {
             throw OTodoError.corruptLocalState(message: "Workspace revision cannot be incremented")
@@ -1338,7 +1583,8 @@ public actor TaskWorkspaceService {
             conflicts: conflicts,
             revision: workspace.revision + 1,
             relationshipBlocks: try relationshipBlocks(tasks: tasks, conflicts: conflicts, in: workspace),
-            attachments: workspace.attachments
+            attachments: workspace.attachments,
+            projects: projects?.sorted { $0.project.relativePath < $1.project.relativePath } ?? workspace.projects
         )
     }
 

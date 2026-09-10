@@ -23,6 +23,8 @@ struct TaskListView: View {
     @State private var selectedProject: String?
     @State private var isProjectSidebarPresented = false
     @State private var isProjectEditorPresented = false
+    @State private var projectArchivePresentation: ProjectArchivePresentation?
+    @State private var showsArchivedProjects = false
     @State private var isChangelogPresented = false
     @State private var isStatsPresented = false
     @State private var isReminderSettingsPresented = false
@@ -38,6 +40,10 @@ struct TaskListView: View {
     @State private var dates = TaskDateContext()
     @State private var isSelecting = false
     @State private var selectedTaskIDs: Set<TaskID> = []
+
+    private struct ProjectArchivePresentation: Identifiable {
+        let id: String
+    }
 
     init(model: AppModel, notifications: TaskNotificationManager) {
         self.model = model
@@ -331,6 +337,9 @@ struct TaskListView: View {
                     description: Text("Close the editor and refresh the workspace.")
                 )
             }
+        }
+        .sheet(item: $projectArchivePresentation, onDismiss: presentPendingNotificationRequest) { presentation in
+            archiveProjectEditor(for: presentation)
         }
         .sheet(isPresented: $isFilterLibraryPresented, onDismiss: presentPendingNotificationRequest) {
             TaskFiltersView(
@@ -731,8 +740,36 @@ struct TaskListView: View {
                     .padding(.top, 16)
                     projectFilterButton(nil)
 
-                    ForEach(model.projectChoices, id: \.self) { project in
-                        projectFilterButton(project)
+                    ForEach(model.activeProjectChoices, id: \.self) { project in
+                        projectSidebarRow(project)
+                    }
+
+                    if !model.archivedProjectChoices.isEmpty {
+                        Button {
+                            showsArchivedProjects.toggle()
+                        } label: {
+                            HStack {
+                                Text("Archived projects")
+                                Text("\(model.archivedProjectChoices.count)")
+                                    .monospacedDigit()
+                                Spacer()
+                                Image(systemName: showsArchivedProjects ? "chevron.down" : "chevron.right")
+                            }
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 11)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("sidebar-archived-projects")
+                        .accessibilityValue(showsArchivedProjects ? "Expanded" : "Collapsed")
+
+                        if showsArchivedProjects {
+                            ForEach(model.archivedProjectChoices, id: \.self) { project in
+                                projectSidebarRow(project)
+                            }
+                        }
                     }
                 }
                 .padding(14)
@@ -753,6 +790,73 @@ struct TaskListView: View {
         .accessibilityIdentifier("project-sidebar")
         .accessibilityAction(.escape) {
             dismissProjectSidebar()
+        }
+    }
+
+    @ViewBuilder
+    private func archiveProjectEditor(for presentation: ProjectArchivePresentation) -> some View {
+        if let project = model.projectDetails[presentation.id], let configuration = model.configuration {
+            ProjectArchiveView(
+                project: project, projects: model.projectDetails,
+                existingSlugs: model.projectChoices, tasks: model.tasks, states: configuration.states
+            ) { destination, completeOpenTasks in
+                await model.archiveProject(
+                    slug: project.slug, destination: destination, completeOpenTasks: completeOpenTasks
+                )
+                if model.errorMessage == nil {
+                    showsArchivedProjects = true
+                    if selectedProject == project.slug {
+                        selectProject(nil)
+                    }
+                }
+                return model.errorMessage
+            }
+            .presentationDetents([.large])
+        } else {
+            NavigationStack {
+                ContentUnavailableView(
+                    "Project details need a sync",
+                    systemImage: "arrow.triangle.2.circlepath",
+                    description: Text("Connect and sync this workspace before archiving. Its existing project notes must be cached first.")
+                )
+                .navigationTitle("Archive Project")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel", role: .cancel) { projectArchivePresentation = nil }
+                    }
+                }
+            }
+        }
+    }
+
+    private func projectSidebarRow(_ project: String) -> some View {
+        HStack(spacing: 0) {
+            projectFilterButton(project)
+            Menu {
+                if model.projectDetails[project]?.isArchived == true {
+                    Button("Restore Project", systemImage: "arrow.uturn.backward") {
+                        Task { @MainActor in
+                            await model.restoreProject(slug: project)
+                        }
+                    }
+                    .accessibilityIdentifier("project-restore-\(project)")
+                } else {
+                    Button("Archive Project…", systemImage: "archivebox") {
+                        dismissProjectSidebar()
+                        projectArchivePresentation = ProjectArchivePresentation(id: project)
+                    }
+                    .accessibilityIdentifier("project-archive-\(project)")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .disabled(model.isBusy)
+            .accessibilityLabel("Actions for \(projectDisplayName(project))")
+            .accessibilityIdentifier("project-actions-\(project)")
         }
     }
 
@@ -968,7 +1072,8 @@ struct TaskListView: View {
         } label: {
             layout {
                 HStack(spacing: 12) {
-                    Image(systemName: project == nil ? "checklist" : "folder")
+                    Image(systemName: project == nil ? "checklist"
+                          : project.flatMap { model.projectDetails[$0] }?.isArchived == true ? "archivebox" : "folder")
                         .font(.body)
                         .foregroundStyle(color)
                         .frame(width: sidebarIconWidth)
@@ -1042,7 +1147,7 @@ struct TaskListView: View {
     }
 
     private func projectDisplayName(_ project: String) -> String {
-        project.replacingOccurrences(of: "-", with: " ").capitalized
+        model.projectDetails[project]?.name ?? project.replacingOccurrences(of: "-", with: " ").capitalized
     }
 
     private func dismissProjectSidebar() {

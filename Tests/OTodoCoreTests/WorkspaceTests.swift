@@ -125,6 +125,7 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         var envelope = try XCTUnwrap(
             try JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
         )
+        XCTAssertEqual(envelope["version"] as? Int, 4)
         envelope["version"] = 999
         let corruptedData = try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
         try corruptedData.write(to: workspaceURL, options: .atomic)
@@ -574,6 +575,488 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(durable.conflicts, [conflict])
     }
 
+    func testDefaultArchivePreservesTaskBytesAndRestoresOfflineWithoutReversingEdits() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let original = try makeDocument(
+            id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"), name: "Still open",
+            projectSlugs: ["alpha"], blobSHA: "task-base", configuration: configuration
+        )
+        let task = TaskDocument(task: original.task, content: original.content + "\n\n", blobSHA: original.blobSHA)
+        let project = try makeProject(body: "\n# Keep this body\n\n", extras: [
+            YAMLProperty(name: "priority", value: .integer(7))
+        ])
+        let initial = try makeWorkspace(
+            selection: selection, configuration: configuration, tasks: [task], projects: [project]
+        )
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+        let archived = try await service.archiveProject(selection: selection, slug: "alpha")
+        XCTAssertEqual(archived.revision, initial.revision + 1)
+        XCTAssertEqual(archived.tasks, initial.tasks)
+        XCTAssertEqual(archived.knownProjectSlugs, initial.knownProjectSlugs)
+        XCTAssertTrue(try XCTUnwrap(archived.projects.first).project.isArchived)
+        XCTAssertEqual(archived.projects.first?.project.body, project.project.body)
+        XCTAssertEqual(archived.projects.first?.project.extraProperties.first, project.project.extraProperties.first)
+        XCTAssertEqual(archived.pendingChanges.map(\.path), [repositoryPath(selection, project.project.relativePath)])
+        XCTAssertNotNil(archived.pendingChanges.first?.groupID)
+        let reloaded = TaskWorkspaceService(
+            persistence: FileWorkspaceStore(rootURL: directory), taskCodec: ObsidianTaskCodec()
+        )
+        var update = TaskUpdate(task: task.task)
+        update.name = "Edited while archived"
+        let edited = try await reloaded.editTask(
+            selection: selection, id: task.task.id, expectedTask: task.task, update: update
+        )
+        let beforeRestore = try await loadRequired(store, selection: selection)
+        let restored = try await reloaded.restoreProject(selection: selection, slug: "alpha")
+        XCTAssertFalse(try XCTUnwrap(restored.projects.first).project.isArchived)
+        XCTAssertEqual(restored.tasks, beforeRestore.tasks)
+        XCTAssertEqual(restored.tasks.first?.task, edited)
+        XCTAssertEqual(
+            restored.pendingChanges.filter { $0.path != repositoryPath(selection, project.project.relativePath) },
+            beforeRestore.pendingChanges.filter { $0.path != repositoryPath(selection, project.project.relativePath) }
+        )
+        XCTAssertEqual(restored.pendingChanges.first?.id, archived.pendingChanges.first?.id)
+        XCTAssertEqual(restored.pendingChanges.first?.groupID, archived.pendingChanges.first?.groupID)
+        XCTAssertEqual(restored.pendingChanges.first?.baseBlobSHA, "project-base")
+        let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(durable, restored)
+    }
+
+    func testDefaultArchiveLeavesConflictedTaskAndItsOutboxUntouched() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let document = try makeDocument(
+            id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"), name: "Local conflicted task",
+            projectSlugs: ["alpha"], blobSHA: "base", configuration: configuration
+        )
+        let pending = try PendingChange(
+            id: UUID(), path: repositoryPath(selection, document.task.relativePath),
+            baseBlobSHA: "base", content: document.content, createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let conflict = try SyncConflict(
+            path: pending.path, baseBlobSHA: "base", remoteBlobSHA: "remote",
+            localContent: document.content, remoteContent: "Remote task"
+        )
+        let initial = try makeWorkspace(
+            selection: selection, configuration: configuration, tasks: [document],
+            pendingChanges: [pending], conflicts: [conflict], projects: [makeProject()]
+        )
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+        let archived = try await service.archiveProject(selection: selection, slug: "alpha")
+        XCTAssertTrue(try XCTUnwrap(archived.projects.first).project.isArchived)
+        XCTAssertEqual(archived.tasks, initial.tasks)
+        XCTAssertEqual(archived.conflicts, initial.conflicts)
+        XCTAssertEqual(archived.pendingChanges.first { $0.path == pending.path }, pending)
+        let durable = try await loadRequired(store, selection: selection)
+        XCTAssertEqual(durable, archived)
+    }
+
+    func testArchiveMovesOnlyOwnMembershipAndEndsRecurringSeriesWithoutCascade() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration(schemaVersion: 2)
+        let parent = try makeDocument(
+            id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"), name: "Recurring parent",
+            projectSlugs: ["alpha", "beta"], tags: ["preserved"],
+            dueDate: CivilDate(rawValue: "2026-09-07"), dueTime: CivilTime(rawValue: "09:30"),
+            recurrence: "FREQ=WEEKLY;BYDAY=MO", recurrenceFrom: .schedule,
+            lastCompletedDate: CivilDate(rawValue: "2026-08-31"),
+            extraProperties: [YAMLProperty(name: "priority", value: .integer(3))],
+            body: "Keep body\n", blobSHA: "parent-base", configuration: configuration
+        )
+        let child = try makeDocument(
+            id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAW"), name: "Outside source",
+            projectSlugs: ["beta"], parentID: parent.task.id, configuration: configuration
+        )
+        let terminal = try makeDocument(
+            id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAX"), name: "Already done", state: "done",
+            projectSlugs: ["alpha"], parentID: parent.task.id, configuration: configuration
+        )
+        let initial = try makeWorkspace(
+            selection: selection, configuration: configuration, tasks: [parent, child, terminal],
+            projects: [makeProject(), makeProject(slug: "beta")]
+        )
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+        let result = try await service.archiveProject(
+            selection: selection, slug: "alpha", destination: .project(slug: "beta"), completeOpenTasks: true
+        )
+        let completed = try XCTUnwrap(result.tasks.first { $0.task.id == parent.task.id }).task
+        XCTAssertEqual(completed.state, "done")
+        XCTAssertEqual(completed.projectSlugs, ["beta"])
+        XCTAssertEqual(completed.dueDate, parent.task.dueDate)
+        XCTAssertEqual(completed.dueTime, parent.task.dueTime)
+        XCTAssertEqual(completed.recurrence, parent.task.recurrence)
+        XCTAssertEqual(completed.recurrenceFrom, parent.task.recurrenceFrom)
+        XCTAssertEqual(completed.lastCompletedDate, parent.task.lastCompletedDate)
+        XCTAssertEqual(completed.body, parent.task.body)
+        XCTAssertEqual(completed.tags, parent.task.tags)
+        XCTAssertEqual(completed.extraProperties.first, parent.task.extraProperties.first)
+        let event = try XCTUnwrap(TaskCompletionHistory.read(completed).events.first)
+        XCTAssertEqual(event.projects, ["alpha", "beta"])
+        XCTAssertTrue(event.isRecurring)
+        XCTAssertTrue(event.usesSubtasks)
+        XCTAssertEqual(result.tasks.first { $0.task.id == child.task.id }, child)
+        let movedTerminal = try XCTUnwrap(result.tasks.first { $0.task.id == terminal.task.id }).task
+        XCTAssertEqual(movedTerminal.projectSlugs, ["beta"])
+        XCTAssertEqual(movedTerminal.parentID, parent.task.id)
+        XCTAssertEqual(movedTerminal.state, "done")
+        XCTAssertTrue(TaskCompletionHistory.read(movedTerminal).events.isEmpty)
+        XCTAssertEqual(result.projects.first { $0.project.slug == "beta" }, initial.projects.last)
+        XCTAssertEqual(result.pendingChanges.count, 3)
+        XCTAssertEqual(Set(result.pendingChanges.compactMap(\.groupID)).count, 1)
+        let restored = try await service.restoreProject(selection: selection, slug: "alpha")
+        XCTAssertEqual(restored.tasks, result.tasks)
+    }
+
+    func testArchiveNewProjectAndInboxMovesAreAtomicAndKeepUnrelatedMemberships() async throws {
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        for destination in [ProjectArchiveDestination.newProject(slug: "gamma", name: "New project"), .inbox] {
+            let directory = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let document = try makeDocument(
+                id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"), name: "Move me",
+                projectSlugs: ["alpha", "beta"], configuration: configuration
+            )
+            let initial = try makeWorkspace(
+                selection: selection, configuration: configuration, tasks: [document], projects: [makeProject()]
+            )
+            let store = FileWorkspaceStore(rootURL: directory)
+            try await store.save(initial, expectedRevision: nil)
+            let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+            let result = try await service.archiveProject(selection: selection, slug: "alpha", destination: destination)
+            XCTAssertEqual(result.revision, 1)
+            XCTAssertEqual(Set(try XCTUnwrap(result.tasks.first?.task.projectSlugs)), destination == .inbox ? [] : ["beta", "gamma"])
+            XCTAssertEqual(result.tasks.first?.task.state, "backlog")
+            XCTAssertTrue(TaskCompletionHistory.read(try XCTUnwrap(result.tasks.first).task).events.isEmpty)
+            if destination != .inbox {
+                let target = try XCTUnwrap(result.projects.first { $0.project.slug == "gamma" })
+                XCTAssertEqual(target.project.name, "New project")
+                XCTAssertNil(target.blobSHA)
+                XCTAssertEqual(result.pendingChanges.first { $0.path.hasSuffix("Projects/gamma.md") }?.content, target.content)
+            }
+            let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+            XCTAssertEqual(durable, result)
+        }
+    }
+
+    func testArchiveRejectsLegacyMetadataInvalidTargetsAndArchiveCollisionsWithoutSaving() async throws {
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let collision = try makeProject(extras: [YAMLProperty(name: "archived", value: .string("custom"))])
+        let cases: [([ProjectDocument], ProjectArchiveDestination)] = [
+            ([], .leaveInProject),
+            ([collision], .leaveInProject),
+            ([try makeProject()], .project(slug: "alpha")),
+            ([try makeProject()], .project(slug: "missing")),
+            ([try makeProject()], .project(slug: "beta")),
+            ([try makeProject(), try makeProject(slug: "beta", archived: true)], .project(slug: "beta")),
+            ([try makeProject(archived: true)], .leaveInProject),
+            ([try makeProject()], .newProject(slug: "beta", name: "Duplicate")),
+            ([try makeProject()], .newProject(slug: "bad/path", name: "Bad")),
+            ([try makeProject()], .newProject(slug: "gamma", name: "Two\nlines"))
+        ]
+        for (projects, destination) in cases {
+            let directory = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let initial = try makeWorkspace(selection: selection, configuration: configuration, projects: projects)
+            let store = FileWorkspaceStore(rootURL: directory)
+            try await store.save(initial, expectedRevision: nil)
+            let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+            do {
+                _ = try await service.archiveProject(selection: selection, slug: "alpha", destination: destination)
+                XCTFail("Expected archive rejection")
+            } catch {}
+            if projects.isEmpty || projects == [collision] {
+                do {
+                    _ = try await service.restoreProject(selection: selection, slug: "alpha")
+                    XCTFail("Expected restore rejection")
+                } catch {}
+            }
+            let unchanged = try await loadRequired(store, selection: selection)
+            XCTAssertEqual(unchanged, initial)
+        }
+    }
+
+    func testArchiveStorageFailureStaleRevisionAndConflictsLeaveNoDestinationOrTaskEdits() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let document = try makeDocument(
+            id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"), name: "Must remain",
+            projectSlugs: ["alpha"], configuration: configuration
+        )
+        let initial = try makeWorkspace(
+            selection: selection, configuration: configuration, tasks: [document],
+            projects: [makeProject(), makeProject(slug: "beta")]
+        )
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let failing = TaskWorkspaceService(
+            persistence: CapacityLimitedWorkspaceStore(store: store, maximumTaskCount: 0), taskCodec: ObsidianTaskCodec()
+        )
+        do {
+            _ = try await failing.archiveProject(
+                selection: selection, slug: "alpha", destination: .newProject(slug: "gamma", name: "Must not exist"),
+                completeOpenTasks: true
+            )
+            XCTFail("Expected save failure")
+        } catch {}
+        let afterFailure = try await loadRequired(store, selection: selection)
+        XCTAssertEqual(afterFailure, initial)
+        var revision = initial.revision
+        for path in [document.task.relativePath, "Projects/alpha.md", "Projects/beta.md"] {
+            let conflict = try SyncConflict(
+                path: repositoryPath(selection, path), baseBlobSHA: "base", remoteBlobSHA: "remote",
+                localContent: "local", remoteContent: "remote"
+            )
+            let conflicted = try makeWorkspace(
+                selection: selection, configuration: configuration, tasks: initial.tasks,
+                conflicts: [conflict], revision: revision + 1, projects: initial.projects
+            )
+            try await store.save(conflicted, expectedRevision: revision)
+            revision = conflicted.revision
+            let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+            await assertConflict {
+                _ = try await service.archiveProject(
+                    selection: selection, slug: "alpha",
+                    destination: path == "Projects/beta.md" ? .project(slug: "beta") : .newProject(slug: "gamma", name: "New"),
+                    completeOpenTasks: true
+                )
+            }
+            let stale = TaskWorkspaceService(
+                persistence: SnapshotWorkspaceStore(store: store, snapshot: initial), taskCodec: ObsidianTaskCodec()
+            )
+            await assertConflict {
+                _ = try await stale.archiveProject(
+                    selection: selection, slug: "alpha", destination: .newProject(slug: "gamma", name: "New")
+                )
+            }
+            let unchanged = try await loadRequired(store, selection: selection)
+            XCTAssertEqual(unchanged, conflicted)
+        }
+    }
+
+    func testArchiveCompletionUsesTerminalPolicyAndRejectsLateHistoryErrorsAtomically() async throws {
+        let selection = try makeSelection()
+        for terminalIDs in [["cancelled", "done"], ["cancelled"], []] {
+            let directory = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let configuration = try StoreConfiguration(
+                schemaVersion: 1, tasksDirectory: "Tasks", projectsDirectory: "Projects",
+                obsidianLinkPrefix: "", defaultState: "backlog",
+                states: [WorkflowState(id: "backlog", name: "Backlog", isTerminal: false)] +
+                    terminalIDs.map { try WorkflowState(id: $0, name: $0, isTerminal: true) }
+            )
+            let document = try makeDocument(
+                id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"), name: "Complete",
+                projectSlugs: ["alpha"], configuration: configuration
+            )
+            let initial = try makeWorkspace(
+                selection: selection, configuration: configuration, tasks: [document], projects: [makeProject()]
+            )
+            let store = FileWorkspaceStore(rootURL: directory)
+            try await store.save(initial, expectedRevision: nil)
+            let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+            if terminalIDs.isEmpty {
+                do {
+                    _ = try await service.archiveProject(
+                        selection: selection, slug: "alpha", destination: .newProject(slug: "gamma", name: "New"),
+                        completeOpenTasks: true
+                    )
+                    XCTFail("Expected missing terminal state rejection")
+                } catch {}
+                let unchanged = try await loadRequired(store, selection: selection)
+                XCTAssertEqual(unchanged, initial)
+            } else {
+                let archived = try await service.archiveProject(
+                    selection: selection, slug: "alpha", completeOpenTasks: true
+                )
+                XCTAssertEqual(archived.tasks.first?.task.state, terminalIDs.contains("done") ? "done" : "cancelled")
+            }
+        }
+
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let configuration = try makeConfiguration()
+        let first = try makeDocument(
+            id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"), name: "Staged first",
+            projectSlugs: ["alpha"], configuration: configuration
+        )
+        let invalidHistory = try makeDocument(
+            id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAW"), name: "Reserved history collision",
+            projectSlugs: ["alpha"],
+            extraProperties: [YAMLProperty(name: TaskCompletionHistory.propertyName, value: .string("preserve custom value"))],
+            configuration: configuration
+        )
+        let initial = try makeWorkspace(
+            selection: selection, configuration: configuration, tasks: [first, invalidHistory], projects: [makeProject()]
+        )
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+        do {
+            _ = try await service.archiveProject(
+                selection: selection, slug: "alpha", destination: .newProject(slug: "gamma", name: "New"),
+                completeOpenTasks: true
+            )
+            XCTFail("Expected history collision rejection after staging first task")
+        } catch {}
+        let unchanged = try await loadRequired(store, selection: selection)
+        XCTAssertEqual(unchanged, initial)
+    }
+
+    func testArchiveUnionsOverlappingGroupsAndPendingDestinationCreationAcrossLaterEdits() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let document = try makeDocument(
+            id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"), name: "Grouped task",
+            projectSlugs: ["alpha"], blobSHA: "task-base", configuration: configuration
+        )
+        let source = try makeProject()
+        let target = try makeProject(slug: "beta", blobSHA: nil)
+        let groupA = UUID()
+        let groupB = UUID()
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+        let paths = [source.project.relativePath, document.task.relativePath, target.project.relativePath, "Notes/a.md", "Notes/b.md", "Notes/independent.md"]
+        let contents = [source.content, document.content, target.content, "Keep A", "Keep B", "Independent"]
+        let groups: [UUID?] = [groupA, groupB, nil, groupA, groupB, nil]
+        let pending = try paths.indices.map { index in
+            try PendingChange(
+                id: UUID(), path: repositoryPath(selection, paths[index]),
+                baseBlobSHA: index == 2 ? nil : "base-\(index)", content: contents[index],
+                createdAt: timestamp, groupID: groups[index]
+            )
+        }
+        let initial = try makeWorkspace(
+            selection: selection, configuration: configuration, tasks: [document], pendingChanges: pending,
+            projects: [source, target]
+        )
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+        let result = try await service.archiveProject(
+            selection: selection, slug: "alpha", destination: .project(slug: "beta")
+        )
+        let group = try XCTUnwrap(result.pendingChanges.first?.groupID)
+        for index in 0..<5 {
+            XCTAssertEqual(result.pendingChanges[index].groupID, group)
+            XCTAssertEqual(result.pendingChanges[index].id, pending[index].id)
+            XCTAssertEqual(result.pendingChanges[index].baseBlobSHA, pending[index].baseBlobSHA)
+            XCTAssertEqual(result.pendingChanges[index].createdAt, timestamp)
+        }
+        XCTAssertEqual(result.pendingChanges.last, pending.last)
+        XCTAssertEqual(Array(result.pendingChanges[2...4].map(\.content)), Array(pending[2...4].map(\.content)))
+        let moved = try XCTUnwrap(result.tasks.first).task
+        var update = TaskUpdate(task: moved)
+        update.name = "Edited after group"
+        _ = try await service.editTask(selection: selection, id: moved.id, expectedTask: moved, update: update)
+        let restored = try await service.restoreProject(selection: selection, slug: "alpha")
+        XCTAssertEqual(restored.pendingChanges.dropLast().map(\.groupID), Array(repeating: group, count: 5))
+        XCTAssertEqual(restored.tasks.first?.task.projectSlugs, ["beta"])
+        let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(durable, restored)
+    }
+
+    func testProjectConflictResolutionPreservesExactChosenBytesAndOtherGroupedWork() async throws {
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        for resolution in [WorkspaceConflictResolution.keepLocal, .useRemote] {
+            let directory = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let local = try makeProject(archived: true, body: "Local body\n")
+            let remote = try makeProject(body: "\nRemote body\n\n", blobSHA: "remote-project")
+            let remoteContent = remote.content + "\n"
+            let path = repositoryPath(selection, local.project.relativePath)
+            let group = UUID()
+            let pending = try PendingChange(
+                id: UUID(), path: path, baseBlobSHA: "old-project", content: local.content,
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000), groupID: group
+            )
+            let other = try PendingChange(
+                id: UUID(), path: repositoryPath(selection, "Notes/other.md"), baseBlobSHA: "other-base",
+                content: "Keep this work", createdAt: pending.createdAt, groupID: group
+            )
+            let conflict = try SyncConflict(
+                path: path, baseBlobSHA: pending.baseBlobSHA, remoteBlobSHA: "remote-project",
+                localContent: local.content, remoteContent: remoteContent
+            )
+            let initial = try makeWorkspace(
+                selection: selection, configuration: configuration, pendingChanges: [pending, other],
+                conflicts: [conflict], projects: [local]
+            )
+            let store = FileWorkspaceStore(rootURL: directory)
+            try await store.save(initial, expectedRevision: nil)
+            let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+            let result = try await service.resolveConflict(selection: selection, path: path, resolution: resolution)
+            let chosen = try XCTUnwrap(result.projects.first)
+            XCTAssertEqual(chosen.content, resolution == .keepLocal ? local.content : remoteContent)
+            XCTAssertEqual(chosen.blobSHA, "remote-project")
+            XCTAssertEqual(chosen.project.isArchived, resolution == .keepLocal)
+            XCTAssertTrue(result.conflicts.isEmpty)
+            XCTAssertEqual(result.pendingChanges.first { $0.path == other.path }, other)
+            if resolution == .keepLocal {
+                let rebased = try XCTUnwrap(result.pendingChanges.first { $0.path == path })
+                XCTAssertEqual(rebased.id, pending.id)
+                XCTAssertEqual(rebased.createdAt, pending.createdAt)
+                XCTAssertEqual(rebased.groupID, group)
+                XCTAssertEqual(rebased.baseBlobSHA, "remote-project")
+                XCTAssertEqual(rebased.content, local.content)
+            } else {
+                XCTAssertEqual(result.pendingChanges, [other])
+            }
+            let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+            XCTAssertEqual(durable, result)
+        }
+    }
+
+    func testProjectConflictDeletionRefusesReferencedProjectForEitherResolution() async throws {
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        for resolution in [WorkspaceConflictResolution.keepLocal, .useRemote] {
+            let directory = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let project = try makeProject()
+            let task = try makeDocument(
+                id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"), name: "Keep link",
+                projectSlugs: ["alpha"], configuration: configuration
+            )
+            let path = repositoryPath(selection, project.project.relativePath)
+            let conflict = try SyncConflict(
+                path: path, baseBlobSHA: "base", remoteBlobSHA: resolution == .keepLocal ? "remote" : nil,
+                localContent: resolution == .keepLocal ? nil : project.content,
+                remoteContent: resolution == .useRemote ? nil : project.content
+            )
+            let initial = try makeWorkspace(
+                selection: selection, configuration: configuration, tasks: [task],
+                conflicts: [conflict], projects: [project]
+            )
+            let store = FileWorkspaceStore(rootURL: directory)
+            try await store.save(initial, expectedRevision: nil)
+            let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+            await assertConflict {
+                _ = try await service.resolveConflict(selection: selection, path: path, resolution: resolution)
+            }
+            let unchanged = try await loadRequired(store, selection: selection)
+            XCTAssertEqual(unchanged, initial)
+        }
+    }
+
     func testAddProjectCreatesCanonicalDurableRecordAndRejectsDuplicates() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -615,7 +1098,12 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(pending.id, pendingID)
         XCTAssertEqual(pending.path, repositoryPath(selection, "Projects/side-project.md"))
         XCTAssertNil(pending.baseBlobSHA)
-        XCTAssertEqual(pending.content, "# Side Project\n")
+        let project = try ObsidianProjectCodec().parseProject(
+            slug: slug, relativePath: "Projects/side-project.md", text: XCTUnwrap(pending.content)
+        )
+        XCTAssertEqual(project.name, "Side Project")
+        XCTAssertFalse(project.isArchived)
+        XCTAssertEqual(durable.projects, [ProjectDocument(project: project, content: try XCTUnwrap(pending.content), blobSHA: nil)])
         XCTAssertEqual(pending.createdAt, createdAt)
 
         do {
@@ -625,14 +1113,8 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
                 title: "Duplicate"
             )
             XCTFail("Expected duplicate project creation to fail")
-        } catch {
-            XCTAssertEqual(
-                error as? OTodoError,
-                .validation(
-                    field: "projects",
-                    message: "Project side-project already exists"
-                )
-            )
+        } catch let error as OTodoError {
+            guard case .validation = error else { return XCTFail("Expected validation, got \(error)") }
         }
 
         let unchanged = try await loadRequired(store, selection: selection)
@@ -2178,7 +2660,8 @@ private func makeWorkspace(
     tasks: [TaskDocument] = [],
     pendingChanges: [PendingChange] = [],
     conflicts: [SyncConflict] = [],
-    revision: UInt64 = 0
+    revision: UInt64 = 0,
+    projects: [ProjectDocument] = []
 ) throws -> WorkspaceState {
     try WorkspaceState(
         selection: selection,
@@ -2189,7 +2672,8 @@ private func makeWorkspace(
         baseRootTreeSHA: "base-tree",
         pendingChanges: pendingChanges,
         conflicts: conflicts,
-        revision: revision
+        revision: revision,
+        projects: projects
     )
 }
 
@@ -2208,6 +2692,7 @@ private func makeDocument(
     extraProperties: [YAMLProperty] = [],
     body: String = "",
     blobSHA: String? = nil,
+    parentID: TaskID? = nil,
     configuration: StoreConfiguration
 ) throws -> TaskDocument {
     let path = relativePath ?? "\(configuration.tasksDirectory)/\(id.rawValue).md"
@@ -2224,7 +2709,8 @@ private func makeDocument(
         recurrenceFrom: recurrenceFrom,
         lastCompletedDate: lastCompletedDate,
         body: body,
-        extraProperties: extraProperties
+        extraProperties: extraProperties,
+        parentID: parentID
     )
     let codec = ObsidianTaskCodec()
     let content = try codec.serializeTask(task, configuration: configuration)
@@ -2235,6 +2721,21 @@ private func makeDocument(
         configuration: configuration
     )
     return TaskDocument(task: canonicalTask, content: content, blobSHA: blobSHA)
+}
+
+private func makeProject(
+    slug: String = "alpha",
+    archived: Bool = false,
+    body: String = "Project body\n",
+    extras: [YAMLProperty] = [],
+    blobSHA: String? = "project-base"
+) throws -> ProjectDocument {
+    var project = try TodoProject(
+        slug: slug, relativePath: "Projects/\(slug).md", name: slug.capitalized,
+        body: body, extraProperties: extras
+    )
+    if archived { try project.setArchived(true) }
+    return ProjectDocument(project: project, content: try ObsidianProjectCodec().serializeProject(project), blobSHA: blobSHA)
 }
 
 private func makeService(
