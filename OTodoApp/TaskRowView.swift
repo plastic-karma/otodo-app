@@ -52,19 +52,27 @@ struct TaskRowView: View {
 
                     let due = duePresentation
                     let context = contextPresentation
-                    if due != nil || context != nil || task.recurrence != nil {
+                    if due != nil || context != nil || task.recurrence != nil || workflowState?.isInProgress == true {
                         HStack(spacing: 8) {
                             if let due {
                                 Text(due.label)
                                     .foregroundStyle(due.color)
                                     .layoutPriority(1)
                             }
+                            if let workflowState, workflowState.isInProgress {
+                                if due != nil {
+                                    Text("·")
+                                        .accessibilityHidden(true)
+                                }
+                                Text(workflowState.name)
+                                    .foregroundStyle(OTodoTheme.accent)
+                            }
                             if task.recurrence != nil {
                                 Image(systemName: "repeat")
                                     .accessibilityHidden(true)
                             }
                             if let context {
-                                if due != nil {
+                                if due != nil || workflowState?.isInProgress == true {
                                     Text("·")
                                         .accessibilityHidden(true)
                                 }
@@ -114,6 +122,10 @@ struct TaskRowView: View {
                 Image(systemName: "checkmark")
                     .font(.caption2.bold())
                     .foregroundStyle(.white)
+            } else if isSelected == nil, workflowState?.isInProgress == true {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(stateColor)
             }
         }
         .frame(width: 21, height: 21)

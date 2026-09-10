@@ -425,6 +425,218 @@ final class SyncEngineTests: XCTestCase, @unchecked Sendable {
     }
 }
 
+extension SyncEngineTests {
+    func testExplicitInProgressSetupPreservesCustomStoreAndOfflineTaskEdits() async throws {
+        let f = try Fixture()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let disk = FileWorkspaceStore(rootURL: directory)
+        let engine = SyncEngine(
+            gitHub: f.gitHub, persistence: disk,
+            configCodec: StrictStoreConfigCodec(), taskCodec: ObsidianTaskCodec()
+        )
+        let originalConfig = [
+            "# Keep this store's formatting and workflow order.",
+            "schema_version = 2", "tasks_directory = 'Work'", "projects_directory = 'Areas'",
+            "obsidian_link_prefix = 'Home'", "default_state = 'active'",
+            "", "[[states]]", "id = 'blocked'", "name = 'Waiting'", "terminal = false",
+            "", "[[states]]", "id = 'active'", "name = 'Underway'", "terminal = false",
+            "", "[[states]]", "id = 'open'", "name = 'Inbox'", "terminal = false",
+            "", "[[states]]", "id = 'done'", "name = 'Finished'", "terminal = true",
+            "", "[[states]]", "id = 'cancelled'", "name = 'Cancelled'", "terminal = true",
+            "# No final newline",
+        ].joined(separator: "\r\n")
+        let relativePath = Fixture.aRelative.replacingOccurrences(of: "Tasks/", with: "Work/")
+        let taskPath = f.path(relativePath)
+        let configPath = f.path(".todo/config.toml")
+        let originalTask = Fixture.record("A", body: "Keep my notes\n")
+        let original = try GitSnapshot(headCommitSHA: "custom", rootTreeSHA: "custom-tree", files: [
+            try RemoteFile(path: configPath, blobSHA: "config", content: originalConfig),
+            try RemoteFile(path: taskPath, blobSHA: "a1", content: originalTask),
+        ])
+        await f.gitHub.replace(original)
+        let initial = try await engine.initialPull(selection: f.selection)
+        _ = try await engine.sync(selection: f.selection)
+        let unchanged = await f.gitHub.branch()
+        XCTAssertEqual(unchanged, original, "Pull and ordinary sync must not migrate the workflow")
+        XCTAssertFalse(initial.configuration.states.contains(where: \.isInProgress))
+
+        let service = TaskWorkspaceService(persistence: disk, taskCodec: ObsidianTaskCodec())
+        var update = TaskUpdate(task: initial.tasks[0].task)
+        update.name = "Pending offline name"
+        let edited = try await service.editTask(
+            selection: f.selection, id: initial.tasks[0].task.id,
+            expectedTask: initial.tasks[0].task, update: update
+        )
+        let beforeSetup = try await service.loadWorkspace(selection: f.selection)
+
+        let configured = try await engine.addInProgressState(selection: f.selection)
+
+        XCTAssertEqual(configured.configuration.states, initial.configuration.states + [.inProgress])
+        XCTAssertEqual(configured.configuration.defaultState, "active")
+        XCTAssertEqual(configured.configuration.schemaVersion, 2)
+        XCTAssertEqual(configured.configuration.tasksDirectory, "Work")
+        XCTAssertEqual(configured.configuration.projectsDirectory, "Areas")
+        XCTAssertEqual(configured.configuration.obsidianLinkPrefix, "Home")
+        XCTAssertEqual(configured.tasks.map(\.task), [edited])
+        XCTAssertEqual(configured.pendingChanges, beforeSetup.pendingChanges)
+        let configuredBranch = await f.gitHub.branch()
+        XCTAssertEqual(configuredBranch.files.first { $0.path == taskPath }?.content, originalTask)
+        let publishedConfig = try XCTUnwrap(configuredBranch.files.first { $0.path == configPath }?.content)
+        XCTAssertEqual(Array(publishedConfig.utf8.prefix(originalConfig.utf8.count)), Array(originalConfig.utf8))
+        let appended = String(publishedConfig.dropFirst(originalConfig.count))
+        XCTAssertFalse(appended.replacingOccurrences(of: "\r\n", with: "").contains("\n"))
+        XCTAssertEqual(try StrictStoreConfigCodec().parseConfiguration(publishedConfig), configured.configuration)
+
+        // A fresh disk-backed service has no network dependency: state edits survive reload,
+        // coalesce with the existing edit, and later publish through ordinary sync.
+        let offline = TaskWorkspaceService(
+            persistence: FileWorkspaceStore(rootURL: directory), taskCodec: ObsidianTaskCodec()
+        )
+        var start = TaskUpdate(task: edited)
+        start.state = WorkflowState.inProgress.id
+        let started = try await offline.editTask(
+            selection: f.selection, id: edited.id, expectedTask: edited, update: start
+        )
+        let reloaded = TaskWorkspaceService(
+            persistence: FileWorkspaceStore(rootURL: directory), taskCodec: ObsidianTaskCodec()
+        )
+        let durable = try await reloaded.loadWorkspace(selection: f.selection)
+        XCTAssertEqual(durable.tasks.map(\.task), [started])
+        XCTAssertEqual(durable.tasks[0].task.state, "in-progress")
+        XCTAssertEqual(durable.pendingChanges.map(\.id), beforeSetup.pendingChanges.map(\.id))
+        let stillRemote = await f.gitHub.branch()
+        XCTAssertEqual(stillRemote, configuredBranch)
+        _ = try await engine.sync(selection: f.selection)
+        let synced = await f.gitHub.branch()
+        let remoteTask = try XCTUnwrap(synced.files.first { $0.path == taskPath })
+        XCTAssertEqual(
+            try ObsidianTaskCodec().parseTask(
+                id: started.id, relativePath: relativePath, text: remoteTask.content,
+                configuration: configured.configuration
+            ),
+            started
+        )
+        XCTAssertEqual(synced.files.first { $0.path == configPath }?.content, publishedConfig)
+    }
+
+    func testInProgressSetupReusesCustomCanonicalStateWithoutPublishing() async throws {
+        let f = try Fixture()
+        let initial = try await f.engine.initialPull(selection: f.selection)
+        let config = Fixture.config + "\n[[states]]\nid = 'in-progress'\nname = 'Doing'\nterminal = false\n"
+        let remote = try replacingConfiguration(in: await f.gitHub.branch(), with: config)
+        await f.gitHub.replace(remote)
+
+        let configured = try await f.engine.addInProgressState(selection: f.selection)
+        let repeated = try await f.engine.addInProgressState(selection: f.selection)
+
+        XCTAssertEqual(configured.configuration.states, initial.configuration.states + [
+            try WorkflowState(id: "in-progress", name: "Doing", isTerminal: false),
+        ])
+        XCTAssertEqual(repeated.configuration, configured.configuration)
+        XCTAssertTrue(try XCTUnwrap(configured.configuration.states.last).isInProgress)
+        let branch = await f.gitHub.branch()
+        XCTAssertEqual(branch, remote, "Idempotent setup must not create a new remote commit")
+    }
+
+    func testInProgressSetupRejectsTerminalCollisionWithoutChangingEitherStore() async throws {
+        let f = try Fixture()
+        let config = Fixture.config + "\n[[states]]\nid = 'in-progress'\nname = 'Archived'\nterminal = true\n"
+        let remote = try replacingConfiguration(in: await f.gitHub.branch(), with: config)
+        await f.gitHub.replace(remote)
+        let initial = try await f.engine.initialPull(selection: f.selection)
+        XCTAssertFalse(try XCTUnwrap(initial.configuration.states.last).isInProgress)
+
+        do {
+            _ = try await f.engine.addInProgressState(selection: f.selection)
+            XCTFail("A terminal canonical ID must not be reinterpreted")
+        } catch let error as OTodoError {
+            guard case .conflict = error else { return XCTFail("Expected conflict, got \(error)") }
+        }
+
+        let branch = await f.gitHub.branch()
+        let saved = await f.store.current()
+        XCTAssertEqual(branch, remote)
+        XCTAssertEqual(saved, initial)
+    }
+
+    func testInProgressSetupRejectsPendingConfigurationAndOrphanedConflict() async throws {
+        for isConflict in [false, true] {
+            let f = try Fixture()
+            let initial = try await f.engine.initialPull(selection: f.selection)
+            let path = f.path(".todo/config.toml")
+            let content = Fixture.config + "\n# local configuration work\n"
+            let pending = try PendingChange(
+                id: UUID(), path: path, baseBlobSHA: "config", content: content,
+                createdAt: Date(timeIntervalSince1970: 100)
+            )
+            let conflict = try SyncConflict(
+                path: path, baseBlobSHA: "config", remoteBlobSHA: "config",
+                localContent: content, remoteContent: Fixture.config
+            )
+            let local = try WorkspaceState(
+                selection: f.selection, configuration: initial.configuration,
+                knownProjectSlugs: initial.knownProjectSlugs, tasks: initial.tasks,
+                baseHeadCommitSHA: initial.baseHeadCommitSHA, baseRootTreeSHA: initial.baseRootTreeSHA,
+                pendingChanges: isConflict ? [] : [pending],
+                conflicts: isConflict ? [conflict] : [], revision: initial.revision + 1
+            )
+            try await f.store.save(local, expectedRevision: initial.revision)
+            let original = await f.gitHub.branch()
+
+            do {
+                _ = try await f.engine.addInProgressState(selection: f.selection)
+                XCTFail("Local configuration work must be resolved explicitly")
+            } catch let error as OTodoError {
+                guard case .conflict = error else { return XCTFail("Expected conflict, got \(error)") }
+            }
+
+            let branch = await f.gitHub.branch()
+            let saved = await f.store.current()
+            XCTAssertEqual(branch, original)
+            XCTAssertEqual(saved, local)
+        }
+    }
+
+    func testInProgressSetupSurfacesStaleHeadWithoutRetryingOrPublishingPendingTasks() async throws {
+        let f = try Fixture(twoTasks: true)
+        let initial = try await f.engine.initialPull(selection: f.selection)
+        let pending = try f.pending(Fixture.record("Local A", body: "Offline\n"))
+        let local = try f.edit(initial, pending: pending)
+        try await f.store.save(local, expectedRevision: initial.revision)
+        let raced = try f.snapshot(
+            head: "raced", tree: "raced-tree", a: f.aOriginal,
+            b: Fixture.record("Remote B", body: "Concurrent\n"), bSHA: "b-raced"
+        )
+        await f.gitHub.raceNextUpdate(to: raced)
+
+        do {
+            _ = try await f.engine.addInProgressState(selection: f.selection)
+            XCTFail("A stale head must surface rather than silently retrying setup")
+        } catch let error as OTodoError {
+            guard case .conflict = error else { return XCTFail("Expected conflict, got \(error)") }
+        }
+
+        let branch = await f.gitHub.branch()
+        let saved = await f.store.current()
+        XCTAssertEqual(branch, raced)
+        XCTAssertEqual(saved, local)
+    }
+
+    private func replacingConfiguration(in snapshot: GitSnapshot, with content: String) throws -> GitSnapshot {
+        try GitSnapshot(
+            headCommitSHA: "configured", rootTreeSHA: "configured-tree",
+            files: snapshot.files.map { file in
+                if file.path.hasSuffix("/.todo/config.toml") {
+                    return try RemoteFile(path: file.path, blobSHA: "custom-config", content: content)
+                }
+                return file
+            },
+            attachments: snapshot.attachments
+        )
+    }
+}
+
 private struct Fixture {
     static let aRelative = "Tasks/01ARZ3NDEKTSV4RRFFQ69G5FAV.md"
     static let bRelative = "Tasks/01ARZ3NDEKTSV4RRFFQ69G5FAW.md"

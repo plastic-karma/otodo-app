@@ -152,6 +152,10 @@ public struct WorkflowState: Sendable, Codable, Equatable {
     public let name: String
     public let isTerminal: Bool
 
+    public static let inProgress = try! WorkflowState(id: "in-progress", name: "In Progress", isTerminal: false)
+
+    public var isInProgress: Bool { id == Self.inProgress.id && !isTerminal }
+
     public init(id: String, name: String, isTerminal: Bool) throws {
         try DomainValidation.validateStateID(id, field: "state.id")
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {

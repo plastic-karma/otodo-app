@@ -78,6 +78,10 @@ struct TaskEditorView: View {
     private let onSave: @MainActor (TaskEditorDraft) async -> String?
     private let defaultDueDate: CivilDate?
 
+    private var workflowStates: [WorkflowState] {
+        attachmentModel?.configuration?.states ?? configuration.states
+    }
+
     @State private var draft: TaskEditorDraft
     @State private var projectsText: String
     @State private var tagsText: String
@@ -113,6 +117,8 @@ struct TaskEditorView: View {
     @State private var isDetailsExpanded = false
     @State private var childEditorPresentation: EditorPresentation?
     @State private var childReschedulePresentation: ReschedulePresentation?
+    @State private var isAddingInProgressState = false
+    @State private var workflowError: String?
 
     init(
         draft: TaskEditorDraft,
@@ -313,6 +319,8 @@ struct TaskEditorView: View {
                         ))
                     }
 
+                    workflowSetupSection
+
                     Section("Link") {
                         TaskEditorLinkFields(url: $draft.url, onFocus: {
                             requestsNameFocus = false
@@ -452,6 +460,24 @@ struct TaskEditorView: View {
                 .presentationDetents([.large])
             }
         }
+        .confirmationDialog(
+            "Add In Progress to this workspace?",
+            isPresented: $isAddingInProgressState,
+            titleVisibility: .visible
+        ) {
+            if let attachmentModel {
+                Button("Add state") {
+                    Task { @MainActor in
+                        await attachmentModel.addInProgressState()
+                        workflowError = attachmentModel.errorMessage
+                    }
+                }
+                .accessibilityIdentifier("workflow-enable-in-progress-confirm")
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This adds a nonterminal in-progress state to the selected store’s shared .todo/config.toml on GitHub. Existing states, their order, the default state, and this todo stay unchanged. An internet connection and repository write access are required.")
+        }
     }
 
     private func dismissKeyboard() {
@@ -478,7 +504,7 @@ struct TaskEditorView: View {
     }
 
     private var detailsSummary: String {
-        var parts = [configuration.states.first(where: { $0.id == draft.state })?.name ?? draft.state]
+        var parts = [workflowStates.first(where: { $0.id == draft.state })?.name ?? draft.state]
         parts.append(contentsOf: projectsIncludingMentions)
         parts.append(contentsOf: TaskEditorDraft.parseCommaSeparated(tagsText).map { "#\($0)" })
         if let parentID = draft.parentID {
@@ -537,10 +563,36 @@ struct TaskEditorView: View {
         }
     }
 
+    @ViewBuilder
+    private var workflowSetupSection: some View {
+        if attachmentModel != nil, !workflowStates.contains(where: \.isInProgress) {
+            Section("Workspace workflow") {
+                Button {
+                    dismissKeyboard()
+                    workflowError = nil
+                    isAddingInProgressState = true
+                } label: {
+                    Text("Add In Progress state…")
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityIdentifier("task-editor-enable-in-progress")
+                .buttonStyle(.borderless)
+                .foregroundStyle(OTodoTheme.accent)
+                if let workflowError {
+                    Text(workflowError)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("task-editor-workflow-error")
+                }
+            }
+        }
+    }
+
     private var detailFields: some View {
         Group {
             Picker("State", selection: $draft.state) {
-                ForEach(configuration.states, id: \.id) { state in
+                ForEach(workflowStates, id: \.id) { state in
                     Text(state.name).tag(state.id)
                 }
             }
@@ -627,7 +679,7 @@ struct TaskEditorView: View {
                     if let model = attachmentModel {
                         TaskRowView(
                             task: child,
-                            workflowState: configuration.states.first { $0.id == child.state },
+                            workflowState: workflowStates.first { $0.id == child.state },
                             today: TodayWidgetSnapshotBuilder.dateKey(for: .now),
                             isCompletionDisabled: model.isBusy || TaskRowActions.completionTarget(for: child, in: model) == nil,
                             onOpen: { childEditorPresentation = .edit(child) },
@@ -642,7 +694,7 @@ struct TaskEditorView: View {
                     } else {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(child.name)
-                            Text(configuration.states.first(where: { $0.id == child.state })?.name ?? child.state)
+                            Text(workflowStates.first(where: { $0.id == child.state })?.name ?? child.state)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -847,7 +899,7 @@ struct TaskEditorView: View {
         if draft.name.contains("\n") || draft.name.contains("\r") {
             return "The name must be a single line."
         }
-        if !configuration.states.contains(where: { $0.id == draft.state }) {
+        if !workflowStates.contains(where: { $0.id == draft.state }) {
             return "Choose a configured state."
         }
         do {

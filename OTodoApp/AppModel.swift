@@ -511,6 +511,40 @@ final class AppModel {
         }
     }
 
+    func addInProgressState() async {
+        guard !isBusy, !isEndingSession else {
+            errorMessage = "Wait for the current operation to finish before adding a workflow state."
+            return
+        }
+        guard rootState == .workspace, let selection = workspaceSelection else {
+            errorMessage = "No todo workspace is selected."
+            return
+        }
+        guard isOnline, let syncEngine else {
+            errorMessage = "Connect to GitHub to add the In Progress state to this workspace."
+            return
+        }
+        let operationSession = sessionID
+
+        beginLocalMutation()
+        defer { finishLocalMutation() }
+        errorMessage = nil
+        statusMessage = "Adding In Progress to the shared workflow…"
+        isBusy = true
+        do {
+            let workspace = try await syncEngine.addInProgressState(selection: selection)
+            guard sessionID == operationSession else { return }
+            apply(workspace)
+            errorMessage = nil
+            statusMessage = "In Progress is available in this workspace."
+            isBusy = false
+        } catch {
+            guard sessionID == operationSession else { return }
+            isBusy = false
+            await handleNetworkError(error, session: operationSession)
+        }
+    }
+
     func discardAttachmentDrafts(_ drafts: [AttachmentDraft], selection: RepositorySelection) async {
         // The store refuses to remove bytes referenced by a durable operation or cache entry.
         try? await attachmentStore.discard(drafts: drafts, selection: selection, persistence: workspaceStore)
@@ -1250,16 +1284,20 @@ final class AppModel {
                 branch: "main",
                 storePath: ""
             )
+            var workflowStates = [
+                try WorkflowState(id: "todo", name: "Pending", isTerminal: false),
+                try WorkflowState(id: "done", name: "Done", isTerminal: true),
+            ]
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-in-progress") {
+                workflowStates.append(.inProgress)
+            }
             let configuration = try StoreConfiguration(
                 schemaVersion: includesSubtaskFixtures ? 2 : 1,
                 tasksDirectory: "todos",
                 projectsDirectory: "projects",
                 obsidianLinkPrefix: "",
                 defaultState: "todo",
-                states: [
-                    try WorkflowState(id: "todo", name: "Pending", isTerminal: false),
-                    try WorkflowState(id: "done", name: "Done", isTerminal: true),
-                ]
+                states: workflowStates
             )
             let restored: WorkspaceState
             if let existing = try await taskService.load(selection: selection) {

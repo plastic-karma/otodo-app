@@ -44,6 +44,94 @@ public actor SyncEngine {
         return workspace
     }
 
+    /// Explicit, connected setup after user confirmation. Publishes only the shared configuration;
+    /// task outbox entries remain ordinary offline edits and are never pushed by this operation.
+    public func addInProgressState(selection: RepositorySelection) async throws -> WorkspaceState {
+        let configPath = repositoryPath(storePath: selection.storePath, relativePath: ".todo/config.toml")
+        _ = try await workspaceForConfigurationSetup(selection: selection, configPath: configPath)
+        var snapshot = try await gitHub.fetchSnapshot(selection: selection)
+        guard let configFile = snapshot.files.first(where: { $0.path == configPath }) else {
+            throw OTodoError.notFound(resource: configPath)
+        }
+        let configuration = try configCodec.parseConfiguration(configFile.content)
+        if let existing = configuration.states.first(where: { $0.id == WorkflowState.inProgress.id }) {
+            guard existing.isInProgress else {
+                throw OTodoError.conflict(
+                    message: "The shared configuration already uses 'in-progress' for a terminal state. Resolve that state ID before enabling In Progress."
+                )
+            }
+        } else {
+            let newline = configFile.content.contains("\r\n") ? "\r\n" : "\n"
+            let separator = configFile.content.hasSuffix("\n") ? newline : newline + newline
+            let content = configFile.content + separator + [
+                "[[states]]", "id = \"in-progress\"", "name = \"In Progress\"", "terminal = false", "",
+            ].joined(separator: newline)
+            _ = try configCodec.parseConfiguration(content)
+
+            // Validate reconciliation before publishing, including pending local records and
+            // schema-transition protections. The candidate is not saved or sent as a task edit.
+            let candidate = try GitSnapshot(
+                headCommitSHA: snapshot.headCommitSHA,
+                rootTreeSHA: snapshot.rootTreeSHA,
+                files: snapshot.files.map { file in
+                    if file.path == configPath {
+                        return try RemoteFile(path: configPath, blobSHA: file.blobSHA, content: content)
+                    }
+                    return file
+                },
+                attachments: snapshot.attachments
+            )
+            let local = try await workspaceForConfigurationSetup(selection: selection, configPath: configPath)
+            let preview = try workspace(
+                selection: selection, snapshot: candidate, pendingChanges: local.pendingChanges,
+                existingConflicts: local.conflicts, previousWorkspace: local
+            ).workspace
+            guard preview.configuration.states.contains(where: \.isInProgress) else {
+                throw OTodoError.conflict(
+                    message: "Resolve the workspace's blocked schema transition before enabling In Progress."
+                )
+            }
+            let commitSHA = try await gitHub.commit(
+                selection: selection,
+                changes: [try RemoteChange(path: configPath, content: content)],
+                against: snapshot,
+                message: "Enable In Progress workflow state"
+            )
+            _ = try await workspaceForConfigurationSetup(selection: selection, configPath: configPath)
+            try await gitHub.updateReference(
+                selection: selection, to: commitSHA, expectedHead: snapshot.headCommitSHA
+            )
+            snapshot = try await gitHub.fetchSnapshot(selection: selection)
+        }
+
+        guard try parse(snapshot: snapshot, selection: selection).configuration.states.contains(where: \.isInProgress) else {
+            throw OTodoError.conflict(
+                message: "The shared configuration changed during setup. Sync and review it before enabling In Progress again."
+            )
+        }
+        _ = try await workspaceForConfigurationSetup(selection: selection, configPath: configPath)
+        let refreshed = try await reconcileAndSave(selection: selection, snapshot: snapshot, confirming: []).workspace
+        guard refreshed.configuration.states.contains(where: \.isInProgress) else {
+            throw OTodoError.conflict(
+                message: "In Progress is configured remotely, but a blocked schema transition prevents loading it. Resolve the workspace's schema transition and sync."
+            )
+        }
+        return refreshed
+    }
+
+    private func workspaceForConfigurationSetup(
+        selection: RepositorySelection, configPath: String
+    ) async throws -> WorkspaceState {
+        let local = try await loadWorkspace(selection: selection)
+        guard !local.pendingChanges.contains(where: { $0.path == configPath }),
+              !local.conflicts.contains(where: { $0.path == configPath }) else {
+            throw OTodoError.conflict(
+                message: "Resolve or sync the local .todo/config.toml change before enabling In Progress."
+            )
+        }
+        return local
+    }
+
     /// Pulls the latest selected snapshot, replays safe local changes, and advances the branch
     /// only with a non-forced compare-and-swap update performed by `GitHubServing`.
     public func sync(selection: RepositorySelection) async throws -> SyncReport {

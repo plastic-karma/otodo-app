@@ -15,6 +15,19 @@ struct TaskRowActions: ViewModifier {
             && Self.completionTarget(for: task, in: model) != nil
     }
 
+    private var progressTarget: WorkflowState? {
+        guard let configuration = model.configuration,
+              let current = configuration.states.first(where: { $0.id == task.state }),
+              !current.isTerminal,
+              let inProgress = configuration.states.first(where: \.isInProgress)
+        else { return nil }
+        if current.isInProgress {
+            guard configuration.defaultState != inProgress.id else { return nil }
+            return configuration.states.first(where: { $0.id == configuration.defaultState })
+        }
+        return inProgress
+    }
+
     func body(content: Content) -> some View {
         content
             .contextMenu {
@@ -30,6 +43,18 @@ struct TaskRowActions: ViewModifier {
                         }
                         .disabled(model.isBusy)
                         .accessibilityIdentifier("task-context-complete-\(task.id.rawValue)")
+                    }
+                    if let target = progressTarget {
+                        Button { setState(target.id) } label: {
+                            Label(
+                                target.isInProgress ? "Start" : "Move to \(target.name)",
+                                systemImage: target.isInProgress ? "play.fill" : "arrow.uturn.backward"
+                            )
+                        }
+                        .disabled(model.isBusy)
+                        .accessibilityIdentifier(
+                            "task-context-\(target.isInProgress ? "start" : "reset-state")-\(task.id.rawValue)"
+                        )
                     }
                     if canComplete, task.recurrence != nil {
                         Button(action: finishSeries) {
@@ -112,6 +137,10 @@ struct TaskRowActions: ViewModifier {
     private func finishSeries() {
         guard canComplete, task.recurrence != nil,
               let targetState = Self.completionTarget(for: task, in: model) else { return }
+        setState(targetState)
+    }
+
+    private func setState(_ targetState: String) {
         Task { @MainActor in
             guard !model.isBusy else { return }
             var draft = TaskEditorDraft(task: task)

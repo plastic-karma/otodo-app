@@ -16,6 +16,10 @@ Sidebar badges count only open todos across all dates, independent of the select
 
 Touch and hold a todo for **Done**, **Reschedule**, **Add Subtask**, and **Delete**. Done is available only for open todos; Delete is available for both open and completed todos but refuses tasks that still have children.
 
+With a nonterminal `in-progress` state configured, touch and hold an open todo and choose **Start**, or select the state under **Details → State**. A custom name for that state is respected. In-progress work shows a play indicator and its state name, remains active, and saves offline like other edits. The context menu can move it back to the configured default state; Done still completes it.
+
+If that state is missing, open a todo and choose **Workspace workflow → Add In Progress state…**. Confirm before OTodo adds the definition to the selected store's shared `.todo/config.toml` on GitHub. Setup requires an internet connection and repository write access, preserves existing states, their order, and the default state, and does not save the editor draft or publish pending todo edits. Failed setup leaves the definition unchanged. An existing nonterminal `in-progress` definition is reused; a terminal definition or unresolved configuration conflict must be fixed rather than overwritten.
+
 Update and sync information stays pinned beside **+** at the bottom of the workspace. Todo scrolling does not move it, and the list reserves space so the final todo remains reachable without overlapping the status or quick-add controls.
 
 At accessibility text sizes, the pinned status becomes a compact **Offline**, sync, or **Needs attention** control. Tap it to expand scrollable details and the existing sync and repair actions without permanently crowding out the todo list. Conflict, relationship, and attachment-update warnings remain available.

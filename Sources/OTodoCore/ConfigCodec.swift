@@ -126,7 +126,7 @@ private struct TOMLDocument {
         var result = TOMLDocument()
         var section = Section.topLevel
         var unknownValues: [[String: TOMLValue]] = []
-        let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
+        let lines = source.unicodeScalars.split(separator: "\n", omittingEmptySubsequences: false)
 
         for (offset, rawSubstring) in lines.enumerated() {
             var rawLine = String(rawSubstring)
