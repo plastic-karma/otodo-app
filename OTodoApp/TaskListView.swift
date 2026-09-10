@@ -30,6 +30,9 @@ struct TaskListView: View {
     @State private var bulkCreationDefaults: (projectSlugs: [String], tags: [String], dueDate: CivilDate?) = ([], [], nil)
     @State private var reschedulePresentation: ReschedulePresentation?
     @State private var isUpcoming = false
+    @State private var showsCalendar = false
+    @State private var selectedCalendarDate: CivilDate? = TaskSchedule.civilDate(from: .now)
+    @State private var calendarTasks: [CivilDate?: [TodoTask]] = [:]
     @State private var agendaSections: [TaskAgendaSection] = []
     @State private var collapsedAgendaGroups: Set<TaskAgendaGroup> = [.noDate]
     @State private var dates = TaskDateContext()
@@ -58,6 +61,20 @@ struct TaskListView: View {
                                 )
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(Color.clear)
+                        }
+
+                        if isUpcoming {
+                            Section {
+                                Picker("Upcoming layout", selection: $showsCalendar) {
+                                    Text("Agenda").tag(false)
+                                    Text("Calendar").tag(true)
+                                }
+                                .pickerStyle(.segmented)
+                                .accessibilityIdentifier("upcoming-layout")
+                                .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 8, trailing: 20))
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                            }
                         }
 
                         if filterLibrary.filters.contains(where: \.isStarred) {
@@ -110,6 +127,8 @@ struct TaskListView: View {
 
                         if model.isBusy && model.tasks.isEmpty {
                             Section { loadingRow }
+                        } else if isCalendar {
+                            calendarContent
                         } else if displayedTasks.isEmpty {
                             Section { emptyRow }
                         } else if isUpcoming {
@@ -190,7 +209,7 @@ struct TaskListView: View {
                                 selectedTaskIDs.removeAll()
                                 isSelecting.toggle()
                             }
-                            .disabled(model.isBusy || (!isSelecting && (isFiltering || displayedTasks.isEmpty)))
+                            .disabled(model.isBusy || (!isSelecting && (isFiltering || scopedTasks.isEmpty)))
                             .accessibilityIdentifier("upcoming-select")
                         }
                     }
@@ -217,7 +236,7 @@ struct TaskListView: View {
                             hierarchy: model.hierarchy,
                             workspaceTasks: model.tasks,
                             attachmentModel: model,
-                            defaultsToToday: !isUpcoming && selectedFilterID == "today"
+                            defaultDueDate: creationDueDate
                         ) { value in
                             switch presentation {
                             case .create:
@@ -341,10 +360,14 @@ struct TaskListView: View {
         .task(id: model.workspaceSelection.map(FileWorkspaceStore.selectionKey(for:))) {
             selectedFilterID = "today"
             isUpcoming = false
+            showsCalendar = false
+            selectedCalendarDate = TaskSchedule.civilDate(from: .now)
             collapsedAgendaGroups = [.noDate]
             clearSelection()
             await filterLibrary.load(selection: model.workspaceSelection)
         }
+        .onChange(of: showsCalendar) { _, _ in clearSelection() }
+        .onChange(of: selectedCalendarDate) { _, _ in clearSelection() }
         .task(id: input) {
             await updateVisibleTasks(input: input)
         }
@@ -535,6 +558,7 @@ struct TaskListView: View {
     }
 
     private var creationDueDate: CivilDate? {
+        if isCalendar { return selectedCalendarDate }
         guard !isUpcoming, selectedFilterID == "today" else { return nil }
         return TaskSchedule.civilDate(from: .now)
     }
@@ -1102,6 +1126,50 @@ struct TaskListView: View {
         }
     }
 
+    private var isCalendar: Bool { isUpcoming && showsCalendar }
+
+    private var scopedTasks: [TodoTask] {
+        isCalendar ? calendarTasks[selectedCalendarDate] ?? [] : displayedTasks
+    }
+
+    @ViewBuilder
+    private var calendarContent: some View {
+        Section {
+            TaskCalendarView(
+                selectedDate: $selectedCalendarDate,
+                tasksByDate: calendarTasks,
+                today: try! CivilDate(rawValue: dates.today)
+            )
+            .disabled(model.isBusy || isFiltering)
+            .listRowInsets(EdgeInsets(top: 4, leading: 20, bottom: 12, trailing: 20))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+        }
+        Section {
+            if isFiltering {
+                ProgressView("Loading todos")
+            } else if scopedTasks.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(selectedCalendarDate == nil ? "No undated todos in this scope." : "No active todos on this date.")
+                        .foregroundStyle(.secondary)
+                    Button("Add a Todo", systemImage: "plus") { presentNewTodo() }
+                        .disabled(model.isBusy || model.configuration == nil)
+                }
+                .padding(.vertical, 12)
+                .listRowBackground(Color.clear)
+            } else {
+                ForEach(scopedTasks, id: \.id) { task in taskRow(task) }
+            }
+        } header: {
+            Text(selectedCalendarDate.map {
+                TaskSchedule.date(from: $0, time: nil).formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
+            } ?? "No date")
+            .textCase(nil)
+            .accessibilityIdentifier("calendar-selected-date")
+        }
+        .listSectionSeparator(.hidden)
+    }
+
     private var filterInput: TaskFilterInput {
         TaskFilterInput(
             tasks: model.tasks,
@@ -1122,6 +1190,7 @@ struct TaskListView: View {
         filterError = nil
         displayedTasks = []
         agendaSections = []
+        calendarTasks = [:]
         displayedDepths = [:]
         displayedTaskIDs = []
         guard let query = filterLibrary.query(for: input.filterID) else {
@@ -1143,7 +1212,8 @@ struct TaskListView: View {
             displayedDepths = result.depths
             displayedTaskIDs = Set(result.tasks.map(\.id))
             agendaSections = result.sections
-            selectedTaskIDs.formIntersection(result.tasks.map(\.id))
+            calendarTasks = result.calendarTasks
+            selectedTaskIDs.formIntersection(scopedTasks.map(\.id))
             isFiltering = false
         } catch is CancellationError {
             // A newer input owns the next result and loading state.
@@ -1181,7 +1251,8 @@ struct TaskListView: View {
             depths: Dictionary(uniqueKeysWithValues: rows.map { ($0.task.id, $0.depth) }),
             sections: input.isUpcoming
                 ? TaskAgenda.sections(tasks: result, terminalStateIDs: terminalStates, dates: input.dates)
-                : []
+                : [],
+            calendarTasks: input.isUpcoming ? Dictionary(grouping: result, by: \.dueDate) : [:]
         )
     }
 
@@ -1249,11 +1320,11 @@ struct TaskListView: View {
 
     private var selectionActions: some View {
         HStack(spacing: 8) {
-            Button(selectedTaskIDs.count == displayedTasks.count ? "Deselect all" : "Select all") {
-                if selectedTaskIDs.count == displayedTasks.count {
+            Button(selectedTaskIDs.count == scopedTasks.count ? "Deselect all" : "Select all") {
+                if selectedTaskIDs.count == scopedTasks.count {
                     selectedTaskIDs.removeAll()
                 } else {
-                    selectedTaskIDs = Set(displayedTasks.map(\.id))
+                    selectedTaskIDs = Set(scopedTasks.map(\.id))
                 }
             }
             .accessibilityIdentifier("upcoming-select-all")
@@ -1266,7 +1337,7 @@ struct TaskListView: View {
 
             Button("Reschedule", systemImage: "calendar.badge.clock") {
                 reschedulePresentation = ReschedulePresentation(
-                    tasks: displayedTasks.filter { selectedTaskIDs.contains($0.id) }
+                    tasks: scopedTasks.filter { selectedTaskIDs.contains($0.id) }
                 )
             }
             .buttonStyle(.borderedProminent)
@@ -1429,6 +1500,7 @@ private struct TaskFilterResult: Sendable {
     let tasks: [TodoTask]
     let depths: [TaskID: Int]
     let sections: [TaskAgendaSection]
+    let calendarTasks: [CivilDate?: [TodoTask]]
 }
 
 enum EditorPresentation: Identifiable {

@@ -76,7 +76,7 @@ struct TaskEditorView: View {
     private let hierarchy: TaskHierarchy
     private let workspaceTasks: [TodoTask]
     private let onSave: @MainActor (TaskEditorDraft) async -> String?
-    private let defaultsToToday: Bool
+    private let defaultDueDate: CivilDate?
 
     @State private var draft: TaskEditorDraft
     @State private var projectsText: String
@@ -122,7 +122,7 @@ struct TaskEditorView: View {
         hierarchy: TaskHierarchy = TaskHierarchy(tasks: []),
         workspaceTasks: [TodoTask] = [],
         attachmentModel: AppModel? = nil,
-        defaultsToToday: Bool = false,
+        defaultDueDate: CivilDate? = nil,
         onSave: @escaping @MainActor (TaskEditorDraft) async -> String?
     ) {
         self.attachmentModel = attachmentModel
@@ -134,7 +134,7 @@ struct TaskEditorView: View {
         self.hierarchy = hierarchy
         self.workspaceTasks = workspaceTasks
         self.onSave = onSave
-        self.defaultsToToday = defaultsToToday
+        self.defaultDueDate = defaultDueDate
         _draft = State(initialValue: draft)
         _projectsText = State(initialValue: draft.projectSlugs.joined(separator: ", "))
         _tagsText = State(initialValue: draft.tags.joined(separator: ", "))
@@ -931,7 +931,7 @@ struct TaskEditorView: View {
                 draft.url = nil
                 draft.subtaskNames = []
                 hasPendingSubtask = false
-                draft.dueDate = defaultsToToday ? TaskSchedule.civilDate(from: .now) : nil
+                draft.dueDate = defaultDueDate
                 draft.dueTime = nil
                 draft.recurrence = nil
                 draft.recurrenceFrom = nil
