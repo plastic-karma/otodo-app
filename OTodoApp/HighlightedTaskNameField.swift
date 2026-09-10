@@ -21,6 +21,7 @@ struct HighlightedTaskNameField: UIViewRepresentable {
         textField.borderStyle = .none
         textField.placeholder = "Todo name"
         textField.backgroundColor = .clear
+        textField.textColor = .label
         textField.clearButtonMode = .whileEditing
         textField.autocapitalizationType = .sentences
         textField.autocorrectionType = .default
@@ -49,43 +50,16 @@ struct HighlightedTaskNameField: UIViewRepresentable {
         defer { context.coordinator.isUpdating = false }
         textField.isEnabled = context.environment.isEnabled
         textField.wantsFocus = requestsFocus
-        if requestsFocus {
+        if requestsFocus || !textField.highlightRanges.isEmpty {
             textField.setNeedsLayout()
         }
-        // Replacing attributed text also replaces the IME's marked text.
+        // Leave the IME's marked text and selection entirely under UIKit's control.
         guard textField.markedTextRange == nil else { return }
 
-        let validHighlightRanges = validatedHighlightRanges
+        textField.highlightRanges = validatedHighlightRanges
         let font = context.coordinator.nameFont(for: textField.traitCollection)
-        if context.coordinator.appliedText != text
-            || textField.attributedText?.string != text
-            || context.coordinator.appliedHighlightRanges != validHighlightRanges
-            || textField.font != font
-        {
-            let baseAttributes: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: UIColor.label,
-            ]
-            let attributedText = NSMutableAttributedString(
-                string: text,
-                attributes: baseAttributes
-            )
-            for validHighlightRange in validHighlightRanges {
-                attributedText.addAttributes(
-                    [
-                        .backgroundColor: UIColor.systemPurple.withAlphaComponent(0.18),
-                        .foregroundColor: UIColor.systemPurple,
-                    ],
-                    range: validHighlightRange
-                )
-            }
-
-            textField.font = font
-            textField.defaultTextAttributes = baseAttributes
-            textField.attributedText = attributedText
-            context.coordinator.appliedHighlightRanges = validHighlightRanges
-            context.coordinator.appliedText = text
-        }
+        if textField.font != font { textField.font = font }
+        if textField.text != text { textField.text = text }
 
         // Never restore a selection while another editor owns the keyboard.
         // The binding also carries the new caret when a completion changes the text.
@@ -111,6 +85,14 @@ struct HighlightedTaskNameField: UIViewRepresentable {
     final class NameTextField: UITextField {
         var wantsFocus = false
         var didFulfillFocusRequest: (() -> Void)?
+        var highlightRanges: [NSRange] = [] {
+            didSet {
+                if oldValue != highlightRanges { setNeedsLayout() }
+            }
+        }
+        private var decorationLayer: CAShapeLayer?
+        private var decorationTraits: UITraitCollection?
+        private static let decorationColor = UIColor.systemPurple.withAlphaComponent(0.18)
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
@@ -119,6 +101,7 @@ struct HighlightedTaskNameField: UIViewRepresentable {
 
         override func layoutSubviews() {
             super.layoutSubviews()
+            defer { layoutHighlights() }
             // Form cells can be re-enabled or moved on screen without another window attachment.
             guard wantsFocus, isEnabled, window != nil else { return }
             guard isFirstResponder || becomeFirstResponder() else { return }
@@ -128,13 +111,53 @@ struct HighlightedTaskNameField: UIViewRepresentable {
                 self?.didFulfillFocusRequest?()
             }
         }
+
+        private func layoutHighlights() {
+            guard !highlightRanges.isEmpty, markedTextRange == nil else {
+                decorationLayer?.path = nil
+                return
+            }
+            if decorationLayer == nil {
+                let decoration = CAShapeLayer()
+                decoration.actions = [
+                    "path": NSNull(), "fillColor": NSNull(),
+                    "bounds": NSNull(), "position": NSNull(),
+                ]
+                layer.insertSublayer(decoration, at: 0)
+                decorationLayer = decoration
+            }
+            guard let decorationLayer else { return }
+            if traitCollection.hasDifferentColorAppearance(comparedTo: decorationTraits) {
+                decorationLayer.fillColor = Self.decorationColor.resolvedColor(with: traitCollection).cgColor
+                decorationTraits = traitCollection
+            }
+            // Decoration never rewrites text storage, typing attributes, or the native caret.
+            let path = CGMutablePath()
+            let clip = editingRect(forBounds: bounds)
+            func append(_ rect: CGRect) {
+                let visible = convert(rect, from: textInputView).intersection(clip)
+                if !visible.isNull, !visible.isEmpty { path.addRect(visible) }
+            }
+            for range in highlightRanges {
+                guard let start = position(from: beginningOfDocument, offset: range.location),
+                      let end = position(from: start, offset: range.length),
+                      let textRange = textRange(from: start, to: end)
+                else { continue }
+                let rectangles = selectionRects(for: textRange)
+                if rectangles.isEmpty {
+                    append(firstRect(for: textRange))
+                } else {
+                    for rectangle in rectangles { append(rectangle.rect) }
+                }
+            }
+            decorationLayer.frame = bounds
+            decorationLayer.path = path
+        }
     }
 
     @MainActor
     final class Coordinator: NSObject, UITextFieldDelegate {
         var parent: HighlightedTaskNameField
-        var appliedHighlightRanges: [NSRange] = []
-        var appliedText: String?
         var isUpdating = false
         private var preferredNameFont: UIFont?
         private var roundedNameFont: UIFont?
