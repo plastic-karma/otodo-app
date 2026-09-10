@@ -57,7 +57,8 @@ struct HighlightedTaskNameField: UIViewRepresentable {
 
         let validHighlightRanges = validatedHighlightRanges
         let font = context.coordinator.nameFont(for: textField.traitCollection)
-        if textField.attributedText?.string != text
+        if context.coordinator.appliedText != text
+            || textField.attributedText?.string != text
             || context.coordinator.appliedHighlightRanges != validHighlightRanges
             || textField.font != font
         {
@@ -83,6 +84,7 @@ struct HighlightedTaskNameField: UIViewRepresentable {
             textField.defaultTextAttributes = baseAttributes
             textField.attributedText = attributedText
             context.coordinator.appliedHighlightRanges = validHighlightRanges
+            context.coordinator.appliedText = text
         }
 
         // Never restore a selection while another editor owns the keyboard.
@@ -132,6 +134,7 @@ struct HighlightedTaskNameField: UIViewRepresentable {
     final class Coordinator: NSObject, UITextFieldDelegate {
         var parent: HighlightedTaskNameField
         var appliedHighlightRanges: [NSRange] = []
+        var appliedText: String?
         var isUpdating = false
         private var preferredNameFont: UIFont?
         private var roundedNameFont: UIFont?
