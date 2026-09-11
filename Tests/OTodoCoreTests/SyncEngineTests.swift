@@ -1179,7 +1179,11 @@ extension SyncEngineTests {
             let f = try Fixture(twoTasks: true)
             _ = try await f.engine.initialPull(selection: f.selection)
             let service = TaskWorkspaceService(persistence: f.store, taskCodec: ObsidianTaskCodec())
-            let archived = try await service.archiveProject(selection: f.selection, slug: "alpha", destination: .inbox)
+            let beforeEdit = try await service.archiveProject(selection: f.selection, slug: "alpha", destination: .inbox)
+            let archived = try await service.updateProject(
+                selection: f.selection, expectedProject: XCTUnwrap(beforeEdit.projects.first).project,
+                title: "Renamed Alpha", body: "Edited after archiving.\n"
+            )
             let independent = try PendingChange(id: UUID(), path: f.bPath, baseBlobSHA: "b1",
                 content: Fixture.record("Independent local", body: "Independent\n"), createdAt: Date(timeIntervalSince1970: 100))
             try await f.store.save(try f.applying(archived, pending: archived.pendingChanges + [independent]),
@@ -1209,6 +1213,8 @@ extension SyncEngineTests {
             XCTAssertEqual(saved.projects.first?.content, archived.projects.first?.content)
             XCTAssertEqual(saved.projects.first?.blobSHA, "project")
             XCTAssertTrue(try XCTUnwrap(saved.projects.first).project.isArchived)
+            XCTAssertEqual(saved.projects.first?.project.name, "Renamed Alpha")
+            XCTAssertEqual(saved.projects.first?.project.body, "Edited after archiving.\n")
             let conflict = try XCTUnwrap(saved.conflicts.first)
             XCTAssertEqual(conflict.remoteContent, remoteContent)
             XCTAssertEqual(conflict.remoteBlobSHA, "divergent-blob")

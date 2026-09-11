@@ -8,6 +8,77 @@ final class ProjectArchiveUITests: XCTestCase {
     private let futureID = "01ARZ3NDEKTSV4RRFFQ69G5FAX"
     private let completedID = "01ARZ3NDEKTSV4RRFFQ69G5FAZ"
 
+    func testProjectMetadataEditsPersistOfflineWithoutRenamingLinksOrRestoringArchives() {
+        continueAfterFailure = false
+        let app = launchWorkspace()
+        defer { app.terminate() }
+        let name = app.textFields["project-editor-name"]
+        let notes = app.textViews["project-editor-notes"]
+        let save = app.buttons["project-editor-save"]
+        let updatedNotes = "Research notes\n\n- Keep #work links"
+
+        openProjectEditor("work", in: app)
+        let originalName = name.value as? String
+        replaceText("", in: name)
+        XCTAssertFalse(save.isEnabled, "An empty project name must not be saved")
+        name.typeText("Discarded")
+        app.navigationBars["Edit Project"].buttons["Cancel"].tap()
+        XCTAssertTrue(name.waitForNonExistence(timeout: 8))
+        openProjectEditor("work", in: app)
+        XCTAssertEqual(name.value as? String, originalName, "Cancel must discard the draft")
+        replaceText("Field Research", in: name)
+        replaceText(updatedNotes, in: notes)
+        save.tap()
+        XCTAssertTrue(name.waitForNonExistence(timeout: 8))
+
+        openSidebar(in: app)
+        XCTAssertTrue(app.buttons["project-filter-work"].label.contains("Field Research"))
+        capture("Edited project · display name and stable links", in: app)
+        closeSidebar(in: app)
+        let future = taskRow(futureID, in: app)
+        XCTAssertTrue(future.label.contains("Projects: work"))
+        XCTAssertTrue(future.label.contains("Field Research"))
+        future.tap()
+        let details = app.buttons["task-editor-details"]
+        app.revealTaskEditorElement(details)
+        details.tap()
+        let work = app.buttons["task-project-work"]
+        app.revealTaskEditorElement(work)
+        XCTAssertEqual(work.value as? String, "Selected")
+        XCTAssertTrue(work.label.contains("Field Research"))
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.textFields["task-editor-name"].waitForNonExistence(timeout: 8))
+
+        relaunchOffline(app)
+        openProjectEditor("work", in: app)
+        XCTAssertEqual(name.value as? String, "Field Research")
+        XCTAssertEqual(notes.value as? String, updatedNotes)
+        capture("Project editor · Markdown notes restored offline", in: app)
+        app.navigationBars["Edit Project"].buttons["Cancel"].tap()
+        XCTAssertTrue(name.waitForNonExistence(timeout: 8))
+
+        openArchive("work", in: app)
+        saveArchive(in: app)
+        openArchivedProjects(in: app)
+        openProjectEditor("work", in: app)
+        replaceText("Research Archive", in: name)
+        save.tap()
+        XCTAssertTrue(name.waitForNonExistence(timeout: 8))
+
+        relaunchOffline(app)
+        openSidebar(in: app)
+        XCTAssertFalse(app.buttons["project-filter-work"].exists,
+                       "Editing archived metadata must not restore the project")
+        openArchivedProjects(in: app)
+        openProjectEditor("work", in: app)
+        XCTAssertEqual(name.value as? String, "Research Archive")
+        XCTAssertEqual(notes.value as? String, updatedNotes)
+        capture("Archived project · editable notes and unchanged identity", in: app)
+        app.navigationBars["Edit Project"].buttons["Cancel"].tap()
+        XCTAssertTrue(name.waitForNonExistence(timeout: 8))
+        XCTAssertTrue(taskRow(futureID, in: app).label.contains("Projects: work"))
+    }
+
     func testDefaultArchiveRetainsEditableTasksAndRestoresAcrossOfflineRelaunch() {
         continueAfterFailure = false
         let app = launchWorkspace()
@@ -191,6 +262,23 @@ final class ProjectArchiveUITests: XCTestCase {
         XCTAssertTrue(archive.waitForExistence(timeout: 8))
         archive.tap()
         XCTAssertTrue(app.buttons["project-archive-destination"].waitForExistence(timeout: 8))
+    }
+
+    private func openProjectEditor(_ slug: String, in app: XCUIApplication) {
+        openSidebar(in: app)
+        let actions = app.buttons["project-actions-\(slug)"]
+        revealSidebarControl(actions, in: app)
+        actions.tap()
+        let edit = app.buttons["project-edit-\(slug)"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 8))
+        edit.tap()
+        XCTAssertTrue(app.textFields["project-editor-name"].waitForExistence(timeout: 8))
+    }
+
+    private func replaceText(_ value: String, in control: XCUIElement) {
+        let existing = control.value as? String ?? ""
+        control.tap()
+        control.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count) + value)
     }
 
     private func chooseDestination(_ title: String, in app: XCUIApplication) {

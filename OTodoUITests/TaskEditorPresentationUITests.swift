@@ -24,7 +24,7 @@ final class TaskEditorPresentationUITests: XCTestCase {
             notes.tap()
             notes.typeText("## Make time\n- Walk by the water\n- Read a chapter")
             openPanel("details", revealing: "task-editor-tags", in: app)
-            app.buttons["work project"].tap()
+            app.buttons["task-project-work"].tap()
             let tags = app.textFields["task-editor-tags"]
             tags.tap()
             tags.typeText("focus")
@@ -59,7 +59,7 @@ final class TaskEditorPresentationUITests: XCTestCase {
             XCTAssertEqual(notes.value as? String, "## Make time\n- Walk by the water\n- Read a chapter")
             openPanel("details", revealing: "task-editor-tags", in: app)
             XCTAssertEqual(tags.value as? String, "focus")
-            XCTAssertEqual(app.buttons["work project"].value as? String, "Selected")
+            XCTAssertEqual(app.buttons["task-project-work"].value as? String, "Selected")
             app.buttons["Cancel"].tap()
             XCTAssertTrue(name.waitForNonExistence(timeout: 8))
             let row = app.buttons.matching(NSPredicate(

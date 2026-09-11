@@ -480,7 +480,7 @@ final class AppModel {
         }
     }
 
-    func createProject(title: String, slug: String) async {
+    func createProject(title: String, slug: String, body: String) async {
         guard rootState == .workspace, let selection = workspaceSelection else {
             errorMessage = "No todo workspace is selected."
             return
@@ -496,12 +496,45 @@ final class AppModel {
             _ = try await taskService.addProject(
                 selection: selection,
                 slug: slug,
-                title: title
+                title: title,
+                body: body
             )
             guard sessionID == operationSession else { return }
             syncFollowUpRequested = true
             let workspace = try await taskService.loadWorkspace(selection: selection)
             guard sessionID == operationSession else { return }
+            apply(workspace)
+            errorMessage = nil
+            publishLocalSaveStatus(
+                onlineMessage: "Project saved on this device; waiting to sync.",
+                offlineMessage: "Project saved on this device while offline."
+            )
+            isBusy = false
+        } catch {
+            guard sessionID == operationSession else { return }
+            isBusy = false
+            errorMessage = Self.message(for: error)
+            statusMessage = nil
+        }
+    }
+
+    func updateProject(title: String, expectedProject: TodoProject, body: String) async {
+        guard rootState == .workspace, let selection = workspaceSelection else {
+            errorMessage = "No todo workspace is selected."
+            return
+        }
+        let operationSession = sessionID
+        beginLocalMutation()
+        defer { finishLocalMutation() }
+        errorMessage = nil
+        statusMessage = "Saving project on this device…"
+        isBusy = true
+        do {
+            let workspace = try await taskService.updateProject(
+                selection: selection, expectedProject: expectedProject, title: title, body: body
+            )
+            guard sessionID == operationSession else { return }
+            syncFollowUpRequested = true
             apply(workspace)
             errorMessage = nil
             publishLocalSaveStatus(

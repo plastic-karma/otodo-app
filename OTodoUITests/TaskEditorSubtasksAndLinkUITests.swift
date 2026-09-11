@@ -95,18 +95,18 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         let details = app.buttons["task-editor-details"]
         app.revealTaskEditorElement(details)
         details.tap()
-        let work = app.buttons["work project"]
+        let work = app.buttons["task-project-work"]
         app.revealTaskEditorElement(work)
         XCTAssertEqual(work.value as? String, "Selected")
         work.tap()
-        app.buttons["home project"].tap()
+        app.buttons["task-project-home"].tap()
         queueChild("After project change", in: app)
         save(in: app)
 
         relaunch(app)
         for (child, selected, unselected) in [
-            ("Before project change", "work project", "home project"),
-            ("After project change", "home project", "work project"),
+            ("Before project change", "task-project-work", "task-project-home"),
+            ("After project change", "task-project-home", "task-project-work"),
         ] {
             openTask(child, in: app)
             app.revealTaskEditorElement(details)

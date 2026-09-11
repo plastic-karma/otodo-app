@@ -13,6 +13,7 @@ struct TaskRowView: View {
     var ancestry: String? = nil
     var hierarchyDepth: Int = 0
     var rowIdentifier: String? = nil
+    var projectName: String? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -175,7 +176,7 @@ struct TaskRowView: View {
             return (ancestry, "arrow.turn.down.right")
         }
         if let project = task.projectSlugs.first {
-            let name = project.replacingOccurrences(of: "-", with: " ").capitalized
+            let name = projectName ?? project.replacingOccurrences(of: "-", with: " ").capitalized
             let remainder = task.projectSlugs.count - 1
             return (remainder > 0 ? "\(name) +\(remainder)" : name, "folder")
         }
@@ -241,6 +242,7 @@ struct TaskRowView: View {
             let timeSuffix = task.dueTime.map { " at \($0.rawValue)" } ?? ""
             values.append("Due: \(dueDate.rawValue)\(timeSuffix)")
         }
+        if let projectName { values.append("Project name: \(projectName)") }
         if !task.projectSlugs.isEmpty {
             values.append("Projects: \(task.projectSlugs.joined(separator: ", "))")
         }

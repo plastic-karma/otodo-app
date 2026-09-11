@@ -22,7 +22,7 @@ struct TaskListView: View {
     @State private var filterError: String?
     @State private var selectedProject: String?
     @State private var isProjectSidebarPresented = false
-    @State private var isProjectEditorPresented = false
+    @State private var projectEditorPresentation: ProjectEditorPresentation?
     @State private var projectArchivePresentation: ProjectArchivePresentation?
     @State private var showsArchivedProjects = false
     @State private var isChangelogPresented = false
@@ -40,6 +40,13 @@ struct TaskListView: View {
     @State private var dates = TaskDateContext()
     @State private var isSelecting = false
     @State private var selectedTaskIDs: Set<TaskID> = []
+
+    private struct ProjectEditorPresentation: Identifiable {
+        let slug: String?
+        let project: TodoProject?
+
+        var id: String? { slug }
+    }
 
     private struct ProjectArchivePresentation: Identifiable {
         let id: String
@@ -238,6 +245,7 @@ struct TaskListView: View {
                             draft: presentation.draft,
                             configuration: configuration,
                             projectChoices: model.projectChoices,
+                            projectDetails: model.projectDetails,
                             tagChoices: model.tagChoices,
                             hierarchy: model.hierarchy,
                             workspaceTasks: model.tasks,
@@ -316,27 +324,8 @@ struct TaskListView: View {
             }
         }
         .animation(.snappy(duration: 0.24), value: isProjectSidebarPresented)
-        .sheet(isPresented: $isProjectEditorPresented, onDismiss: presentPendingNotificationRequest) {
-            if let configuration = model.configuration {
-                ProjectEditorView(
-                    existingSlugs: model.projectChoices,
-                    projectsDirectory: configuration.projectsDirectory
-                ) { title, slug in
-                    await model.createProject(title: title, slug: slug)
-                    guard model.errorMessage == nil else {
-                        return model.errorMessage
-                    }
-                    selectProject(slug)
-                    return nil
-                }
-                .presentationDetents([.medium])
-            } else {
-                ContentUnavailableView(
-                    "Todo configuration unavailable",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text("Close the editor and refresh the workspace.")
-                )
-            }
+        .sheet(item: $projectEditorPresentation, onDismiss: presentPendingNotificationRequest) { presentation in
+            projectEditor(for: presentation)
         }
         .sheet(item: $projectArchivePresentation, onDismiss: presentPendingNotificationRequest) { presentation in
             archiveProjectEditor(for: presentation)
@@ -535,7 +524,7 @@ struct TaskListView: View {
             .accessibilityIdentifier("task-add-menu-bulk")
 
             Button("New Project", systemImage: "folder.badge.plus") {
-                isProjectEditorPresented = true
+                projectEditorPresentation = ProjectEditorPresentation(slug: nil, project: nil)
             }
             .disabled(model.isBusy)
             .accessibilityIdentifier("project-add")
@@ -601,7 +590,7 @@ struct TaskListView: View {
         }
         isProjectSidebarPresented = false
         clearSelection()
-        isProjectEditorPresented = false
+        projectEditorPresentation = nil
         isFilterLibraryPresented = false
         isChangelogPresented = false
         isStatsPresented = false
@@ -619,7 +608,7 @@ struct TaskListView: View {
               editorPresentation == nil,
               !isBulkEditorPresented,
               reschedulePresentation == nil,
-              !isProjectEditorPresented,
+              projectEditorPresentation == nil,
               !isFilterLibraryPresented,
               !isChangelogPresented,
               !isStatsPresented,
@@ -723,7 +712,7 @@ struct TaskListView: View {
                         Spacer()
                         Button {
                             dismissProjectSidebar()
-                            isProjectEditorPresented = true
+                            projectEditorPresentation = ProjectEditorPresentation(slug: nil, project: nil)
                         } label: {
                             Image(systemName: "plus")
                                 .font(.body.weight(.medium))
@@ -794,6 +783,49 @@ struct TaskListView: View {
     }
 
     @ViewBuilder
+    private func projectEditor(for presentation: ProjectEditorPresentation) -> some View {
+        if presentation.slug != nil, presentation.project == nil {
+            NavigationStack {
+                ContentUnavailableView(
+                    "Project details need a sync",
+                    systemImage: "arrow.triangle.2.circlepath",
+                    description: Text("Connect and sync this workspace before editing. Its existing project notes must be cached first.")
+                )
+                .navigationTitle("Edit Project")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel", role: .cancel) { projectEditorPresentation = nil }
+                    }
+                }
+            }
+        } else if let configuration = model.configuration {
+            let project = presentation.project
+            ProjectEditorView(
+                existingSlugs: model.projectChoices,
+                projectsDirectory: configuration.projectsDirectory,
+                project: project
+            ) { title, slug, notes in
+                if let project {
+                    await model.updateProject(title: title, expectedProject: project, body: notes)
+                } else {
+                    await model.createProject(title: title, slug: slug, body: notes)
+                }
+                guard model.errorMessage == nil else { return model.errorMessage }
+                if project == nil { selectProject(slug) }
+                return nil
+            }
+            .presentationDetents([.large])
+        } else {
+            ContentUnavailableView(
+                "Todo configuration unavailable",
+                systemImage: "exclamationmark.triangle",
+                description: Text("Close the editor and refresh the workspace.")
+            )
+        }
+    }
+
+    @ViewBuilder
     private func archiveProjectEditor(for presentation: ProjectArchivePresentation) -> some View {
         if let project = model.projectDetails[presentation.id], let configuration = model.configuration {
             ProjectArchiveView(
@@ -834,6 +866,14 @@ struct TaskListView: View {
         HStack(spacing: 0) {
             projectFilterButton(project)
             Menu {
+                Button("Edit Project…", systemImage: "pencil") {
+                    dismissProjectSidebar()
+                    projectEditorPresentation = ProjectEditorPresentation(
+                        slug: project, project: model.projectDetails[project]
+                    )
+                }
+                .accessibilityIdentifier("project-edit-\(project)")
+
                 if model.projectDetails[project]?.isArchived == true {
                     Button("Restore Project", systemImage: "arrow.uturn.backward") {
                         Task { @MainActor in
@@ -1549,7 +1589,8 @@ struct TaskListView: View {
             },
             isSelected: isSelecting ? selectedTaskIDs.contains(task.id) : nil,
             ancestry: ancestryContext(for: task),
-            hierarchyDepth: displayedDepths[task.id] ?? 0
+            hierarchyDepth: displayedDepths[task.id] ?? 0,
+            projectName: task.projectSlugs.first.flatMap { model.projectDetails[$0]?.name }
         )
         .padding(.leading, CGFloat(min(displayedDepths[task.id] ?? 0, 8)) * 12)
         .modifier(TaskRowActions(

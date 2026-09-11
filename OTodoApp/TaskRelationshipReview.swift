@@ -56,6 +56,7 @@ struct TaskRelationshipReview: View {
                         draft: TaskEditorDraft(task: task),
                         configuration: configuration,
                         projectChoices: model.projectChoices,
+                        projectDetails: model.projectDetails,
                         tagChoices: model.tagChoices,
                         hierarchy: model.hierarchy,
                         workspaceTasks: model.tasks,

@@ -71,6 +71,7 @@ struct TaskEditorView: View {
     private let attachmentSelection: RepositorySelection?
     private let configuration: StoreConfiguration
     private let projectChoices: [String]
+    private let projectDetails: [String: TodoProject]
     private let projectChoiceSet: Set<String>
     private let tagChoices: [String]
     private let hierarchy: TaskHierarchy
@@ -124,6 +125,7 @@ struct TaskEditorView: View {
         draft: TaskEditorDraft,
         configuration: StoreConfiguration,
         projectChoices: [String],
+        projectDetails: [String: TodoProject],
         tagChoices: [String],
         hierarchy: TaskHierarchy = TaskHierarchy(tasks: []),
         workspaceTasks: [TodoTask] = [],
@@ -135,6 +137,7 @@ struct TaskEditorView: View {
         self.attachmentSelection = attachmentModel?.workspaceSelection
         self.configuration = configuration
         self.projectChoices = projectChoices
+        self.projectDetails = projectDetails
         self.projectChoiceSet = Set(projectChoices)
         self.tagChoices = tagChoices
         self.hierarchy = hierarchy
@@ -436,7 +439,8 @@ struct TaskEditorView: View {
             if let model = attachmentModel {
                 TaskEditorView(
                     draft: presentation.draft, configuration: configuration,
-                    projectChoices: model.projectChoices, tagChoices: model.tagChoices,
+                    projectChoices: model.projectChoices, projectDetails: model.projectDetails,
+                    tagChoices: model.tagChoices,
                     hierarchy: model.hierarchy, workspaceTasks: model.tasks, attachmentModel: model
                 ) { value in
                     switch presentation {
@@ -684,7 +688,8 @@ struct TaskEditorView: View {
                             isCompletionDisabled: model.isBusy || TaskRowActions.completionTarget(for: child, in: model) == nil,
                             onOpen: { childEditorPresentation = .edit(child) },
                             onToggleCompletion: { TaskRowActions.toggleCompletion(child, in: model) },
-                            rowIdentifier: "task-editor-existing-subtask-\(child.id.rawValue)"
+                            rowIdentifier: "task-editor-existing-subtask-\(child.id.rawValue)",
+                            projectName: child.projectSlugs.first.flatMap { model.projectDetails[$0]?.name }
                         )
                         .modifier(TaskRowActions(
                             task: child, model: model,
@@ -830,6 +835,7 @@ struct TaskEditorView: View {
     private func projectChoice(_ project: String) -> some View {
         let isDetected = detectedProjects.contains(project)
         let isSelected = isDetected || TaskEditorDraft.parseCommaSeparated(projectsText).contains(project)
+        let name = projectDetails[project]?.name ?? project
         Button {
             var projects = TaskEditorDraft.parseCommaSeparated(projectsText)
             if let index = projects.firstIndex(of: project) {
@@ -839,11 +845,23 @@ struct TaskEditorView: View {
             }
             projectsText = projects.joined(separator: ", ")
         } label: {
-            Label(project, systemImage: isSelected ? "checkmark.circle.fill" : "circle")
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                    if name != project {
+                        Text("#\(project)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } icon: {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+            }
         }
         .buttonStyle(.bordered)
         .tint(isSelected ? OTodoTheme.accent : .secondary)
-        .accessibilityLabel("\(project) project")
+        .accessibilityLabel("\(name) project, #\(project)")
+        .accessibilityIdentifier("task-project-\(project)")
         .accessibilityValue(isSelected ? "Selected" : "Not selected")
         .accessibilityHint(isDetected ? "Assigned by a #mention in the name or notes." : "")
         .disabled(isDetected)

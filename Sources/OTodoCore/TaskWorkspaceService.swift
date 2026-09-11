@@ -208,10 +208,11 @@ public actor TaskWorkspaceService {
     public func addProject(
         selection: RepositorySelection,
         slug: String,
-        title: String
+        title: String,
+        body: String = ""
     ) async throws -> String {
         let workspace = try await requireWorkspace(selection: selection)
-        let document = try newProject(slug: slug, name: title, in: workspace)
+        let document = try newProject(slug: slug, name: title, body: body, in: workspace)
         let repositoryPath = Self.repositoryPath(
             selection: selection, storeRelativePath: document.project.relativePath
         )
@@ -362,6 +363,39 @@ public actor TaskWorkspaceService {
         return updated
     }
 
+    public func updateProject(
+        selection: RepositorySelection,
+        expectedProject: TodoProject,
+        title: String,
+        body: String
+    ) async throws -> WorkspaceState {
+        let workspace = try await requireWorkspace(selection: selection)
+        let index = try Self.editableProjectIndex(slug: expectedProject.slug, in: workspace)
+        let original = workspace.projects[index]
+        guard original.project == expectedProject else {
+            throw OTodoError.conflict(message: "Project \(expectedProject.slug) changed since editing began")
+        }
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard name != original.project.name || body != original.project.body else { return workspace }
+        let project = try TodoProject(
+            slug: original.project.slug, relativePath: original.project.relativePath,
+            name: name, body: body, extraProperties: original.project.extraProperties
+        )
+        let content = try ObsidianProjectCodec().serializeProject(project)
+        var projects = workspace.projects
+        projects[index] = ProjectDocument(project: project, content: content, blobSHA: original.blobSHA)
+        let pendingChanges = try upsertingPendingChange(
+            path: Self.repositoryPath(selection: selection, storeRelativePath: project.relativePath),
+            content: content, baseBlobSHA: original.blobSHA, in: workspace.pendingChanges, at: now()
+        )
+        let updated = try Self.replacing(
+            workspace, tasks: workspace.tasks, pendingChanges: pendingChanges,
+            conflicts: workspace.conflicts, projects: projects
+        )
+        try await persistence.save(updated, expectedRevision: workspace.revision)
+        return updated
+    }
+
     public func restoreProject(
         selection: RepositorySelection,
         slug: String
@@ -387,11 +421,12 @@ public actor TaskWorkspaceService {
         return updated
     }
 
-    private func newProject(slug: String, name: String, in workspace: WorkspaceState) throws -> ProjectDocument {
+    private func newProject(slug: String, name: String, body: String = "", in workspace: WorkspaceState) throws -> ProjectDocument {
         _ = try workspace.configuration.projectLink(slug: slug)
         let project = try TodoProject(
             slug: slug, relativePath: "\(workspace.configuration.projectsDirectory)/\(slug).md",
-            name: name.trimmingCharacters(in: .whitespacesAndNewlines)
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            body: body
         )
         guard !workspace.knownProjectSlugs.contains(slug) else {
             throw OTodoError.validation(field: "projects", message: "Project \(slug) already exists")

@@ -950,8 +950,8 @@ final class OTodoUITests: XCTestCase {
         let name = app.textFields["task-editor-name"]
         guard require(name, in: app, description: "the context-prefilled todo editor") else { return }
         revealEditorControl("task-editor-tags", panel: "details", in: app)
-        XCTAssertEqual(app.buttons["home project"].value as? String, "Selected")
-        XCTAssertEqual(app.buttons["work project"].value as? String, "Selected")
+        XCTAssertEqual(app.buttons["task-project-home"].value as? String, "Selected")
+        XCTAssertEqual(app.buttons["task-project-work"].value as? String, "Selected")
         let editor = app.descendants(matching: .any)
             .matching(identifier: "task-editor").firstMatch
         let tags = app.textFields["task-editor-tags"]
@@ -1001,8 +1001,8 @@ final class OTodoUITests: XCTestCase {
             row.tap()
             guard require(name, in: app, description: "the saved labels on \(taskName)") else { return }
             revealEditorControl("task-editor-tags", panel: "details", in: app)
-            XCTAssertEqual(app.buttons["home project"].value as? String, "Selected")
-            XCTAssertEqual(app.buttons["work project"].value as? String, "Selected")
+            XCTAssertEqual(app.buttons["task-project-home"].value as? String, "Selected")
+            XCTAssertEqual(app.buttons["task-project-work"].value as? String, "Selected")
             XCTAssertEqual(tags.value as? String, "focus")
             app.buttons["Cancel"].tap()
             guard requireEditorDismissed(editor, after: "inspecting \(taskName)", in: app) else { return }
@@ -1536,8 +1536,8 @@ final class OTodoUITests: XCTestCase {
         XCTAssertTrue(sidebar.waitForNonExistence(timeout: 8), "Closing Projects must restore task interactions")
         pending.tap()
         guard require(editor, in: app, description: "the editor opened by tapping the todo title") else { return }
-        revealEditorControl("home project", panel: "details", in: app)
-        XCTAssertEqual(app.buttons["home project"].value as? String, "Selected")
+        revealEditorControl("task-project-home", panel: "details", in: app)
+        XCTAssertEqual(app.buttons["task-project-home"].value as? String, "Selected")
         app.buttons["Cancel"].tap()
     }
 
@@ -1863,8 +1863,8 @@ final class OTodoUITests: XCTestCase {
         guard require(name, in: app, description: "the new todo name") else { return }
         name.tap()
         name.typeText("Repeated first")
-        revealEditorControl("work project", panel: "details", in: app)
-        app.buttons["work project"].tap()
+        revealEditorControl("task-project-work", panel: "details", in: app)
+        app.buttons["task-project-work"].tap()
         revealEditorControl("task-editor-tags", panel: "details", in: app)
         let tags = app.textFields["task-editor-tags"]
         guard require(tags, in: app, description: "the shared tags input") else { return }
@@ -1922,7 +1922,7 @@ final class OTodoUITests: XCTestCase {
             XCTAssertEqual(app.textFields["task-editor-name"].value as? String, taskName)
             revealEditorControl("task-editor-tags", panel: "details", in: app)
             XCTAssertEqual(app.textFields["task-editor-tags"].value as? String, "focus")
-            XCTAssertEqual(app.buttons["work project"].value as? String, "Selected")
+            XCTAssertEqual(app.buttons["task-project-work"].value as? String, "Selected")
             revealEditorControl("task-editor-due-date-toggle", panel: "schedule", in: app)
             XCTAssertEqual(
                 app.switches["task-editor-due-date-toggle"].value as? String,
@@ -2000,8 +2000,8 @@ final class OTodoUITests: XCTestCase {
 
         undated.tap()
         guard require(editor, in: app, description: "the Inbox triage editor") else { return }
-        revealEditorControl("home project", panel: "details", in: app)
-        app.buttons["home project"].tap()
+        revealEditorControl("task-project-home", panel: "details", in: app)
+        app.buttons["task-project-home"].tap()
         revealEditorControl("task-editor-tags", panel: "details", in: app)
         let tags = app.textFields["task-editor-tags"]
         tags.tap()
@@ -2034,7 +2034,7 @@ final class OTodoUITests: XCTestCase {
         undated.tap()
         guard require(editor, in: app, description: "the saved triage fields") else { return }
         revealEditorControl("task-editor-tags", panel: "details", in: app)
-        XCTAssertEqual(app.buttons["home project"].value as? String, "Selected")
+        XCTAssertEqual(app.buttons["task-project-home"].value as? String, "Selected")
         XCTAssertEqual(tags.value as? String, "triaged")
         app.buttons["Cancel"].tap()
         app.buttons["project-sidebar-toggle"].tap()
@@ -2662,7 +2662,7 @@ final class OTodoUITests: XCTestCase {
         guard require(name, in: app, description: "a later global root draft") else { return }
         revealEditorControl("task-editor-parent", panel: "details", in: app)
         XCTAssertEqual(app.buttons["task-editor-parent"].value as? String, "No Parent")
-        XCTAssertEqual(app.buttons["work project"].value as? String, "Not selected")
+        XCTAssertEqual(app.buttons["task-project-work"].value as? String, "Not selected")
         name.tap()
         name.typeText("Global root after siblings")
         app.buttons["task-editor-save"].tap()
