@@ -499,7 +499,11 @@ The app build generates `Changelog.json` from those commits and a fixed historic
 
 ## CI and releases
 
-[`CI`](.github/workflows/ci.yml) runs automatically for pull requests. Delivery verification is explicitly dispatched for the intended branch; pushes no longer launch an equivalent second simulator run:
+[`CI`](.github/workflows/ci.yml) runs automatically when a pull request is opened, updated with new commits, or reopened. After **CI / full verification** passes, same-repository PRs automatically call [`Release IPA`](.github/workflows/release.yml) with TestFlight publishing enabled. The release archives the exact PR merge revision tested by CI. Fork and Dependabot PRs run verification without automatic signing or publishing.
+
+The PR's CI run includes the TestFlight release and its certificate cleanup, so it remains in progress after verification passes. Its release gate checks all seven completed verification jobs in that same run. Active PR runs finish rather than being cancelled by a newer commit, protecting signing and cleanup; pending runs may be superseded by newer requests. The global release queue still serializes signing across every branch.
+
+Manual CI remains available for branch verification and diagnosis; it does not automatically publish to TestFlight:
 
 ```sh
 gh workflow run ci.yml --ref <branch>

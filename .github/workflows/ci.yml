@@ -5,6 +5,7 @@ run-name: >-
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       export_ui_snapshots:
@@ -38,7 +39,9 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (inputs.test_filter || inputs.design_survey_only) && 'focused' || inputs.complete_diagnostics && 'diagnostics' || 'full' }}
-  cancel-in-progress: true
+  # A PR run includes signing/upload/cleanup after verification. Let an active
+  # run finish so a newer commit cannot interrupt certificate cleanup.
+  cancel-in-progress: ${{ github.event_name != 'pull_request' }}
 
 env:
   CI_MODE: ${{ (inputs.test_filter || inputs.design_survey_only) && 'focused' || inputs.complete_diagnostics && 'diagnostics' || 'full' }}
@@ -382,3 +385,23 @@ jobs:
           path: ${{ runner.temp }}/ios-coverage
       - name: Require all platforms and every compiled iOS test
         run: python3 .github/scripts/ios_ci.py verify --evidence "$RUNNER_TEMP/ios-coverage"
+
+  testflight:
+    name: TestFlight
+    needs: full-verification
+    # Fork and Dependabot PRs still receive CI, without signing credentials.
+    if: >-
+      ${{ github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.actor != 'dependabot[bot]' }}
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/release.yml
+    with:
+      publish_testflight: true
+      ci_run_id: ${{ github.run_id }}
+    secrets:
+      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+      APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
