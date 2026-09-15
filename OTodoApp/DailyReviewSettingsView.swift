@@ -10,42 +10,41 @@ struct DailyReviewRequest: Identifiable {
 
 struct DailyReviewPrompt: View {
     let model: AppModel
+    let date: Date
     var onPresentationChange: (Bool) -> Void = { _ in }
     @State private var store = DailyReviewStore.shared
     @State private var request: DailyReviewRequest?
 
     var body: some View {
         Group {
-            TimelineView(.periodic(from: .now, by: 60)) { context in
-                if let selection = model.workspaceSelection, model.configuration != nil {
-                    let workspace = DailyReviewContext.workspaceKey(selection)
-                    let due = DailyReviewKind.allCases.filter {
-                        store.preference($0, workspace: workspace).isDue(kind: $0, at: context.date)
-                    }
-                    if !due.isEmpty {
-                        Section("A moment for you") {
-                            ForEach(due) { kind in
-                                Button {
-                                    onPresentationChange(true)
-                                    request = DailyReviewRequest(kind: kind, selection: selection)
-                                } label: {
-                                    HStack(spacing: 14) {
-                                        Image(systemName: kind.symbol)
-                                            .font(.title2)
-                                            .foregroundStyle(OTodoTheme.accent)
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(kind.title).font(.headline)
-                                            Text(kind.invitation).font(.subheadline).foregroundStyle(.secondary)
-                                        }
-                                        Spacer(minLength: 0)
-                                        Image(systemName: "chevron.right").foregroundStyle(.secondary)
+            if let selection = model.workspaceSelection, model.configuration != nil {
+                let workspace = DailyReviewContext.workspaceKey(selection)
+                let due = DailyReviewKind.allCases.filter {
+                    store.preference($0, workspace: workspace).isDue(kind: $0, at: date)
+                }
+                if !due.isEmpty {
+                    Section("A moment for you") {
+                        ForEach(due) { kind in
+                            Button {
+                                onPresentationChange(true)
+                                request = DailyReviewRequest(kind: kind, selection: selection)
+                            } label: {
+                                HStack(spacing: 14) {
+                                    Image(systemName: kind.symbol)
+                                        .font(.title2)
+                                        .foregroundStyle(OTodoTheme.accent)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(kind.title).font(.headline)
+                                        Text(kind.invitation).font(.subheadline).foregroundStyle(.secondary)
                                     }
-                                    .padding(.vertical, 8)
+                                    Spacer(minLength: 0)
+                                    Image(systemName: "chevron.right").foregroundStyle(.secondary)
                                 }
-                                .buttonStyle(.plain)
-                                .disabled(model.isBusy)
-                                .accessibilityIdentifier("daily-review-prompt-\(kind.rawValue)")
+                                .padding(.vertical, 8)
                             }
+                            .buttonStyle(.plain)
+                            .disabled(model.isBusy)
+                            .accessibilityIdentifier("daily-review-prompt-\(kind.rawValue)")
                         }
                     }
                 }

@@ -64,146 +64,148 @@ struct TaskListView: View {
                 ZStack {
                     OTodoCanvas()
 
-                    List {
-                        Section {
-                            workspaceHeader(taskCount: displayedTasks.count)
-                                .listRowInsets(
-                                    EdgeInsets(top: 12, leading: 20, bottom: 10, trailing: 20)
-                                )
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(Color.clear)
-                        }
-
-                        DailyReviewPrompt(model: model) { presented in
-                            isDailyReviewPresented = presented
-                            if !presented {
-                                presentPendingNewTodoRequest()
-                                presentPendingNotificationRequest()
-                            }
-                        }
-
-                        if isUpcoming {
+                    TimelineView(.periodic(from: .now, by: 60)) { context in
+                        List {
                             Section {
-                                Picker("Upcoming layout", selection: $showsCalendar) {
-                                    Text("Agenda").tag(false)
-                                    Text("Calendar").tag(true)
+                                workspaceHeader(taskCount: displayedTasks.count)
+                                    .listRowInsets(
+                                        EdgeInsets(top: 12, leading: 20, bottom: 10, trailing: 20)
+                                    )
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
+                            }
+
+                            DailyReviewPrompt(model: model, date: context.date) { presented in
+                                isDailyReviewPresented = presented
+                                if !presented {
+                                    presentPendingNewTodoRequest()
+                                    presentPendingNotificationRequest()
                                 }
-                                .pickerStyle(.segmented)
-                                .accessibilityIdentifier("upcoming-layout")
-                                .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 8, trailing: 20))
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(Color.clear)
                             }
-                        }
 
-                        if filterLibrary.filters.contains(where: \.isStarred) {
-                            Section {
-                                favoriteFilters
-                                    .listRowInsets(
-                                        EdgeInsets(top: 0, leading: 20, bottom: 8, trailing: 20)
-                                    )
-                                    .listRowSeparator(.hidden)
-                                    .listRowBackground(Color.clear)
-                            }
-                        }
-
-                        if let message = filterError ?? filterLibrary.errorMessage {
-                            Section {
-                                Label(message, systemImage: "exclamationmark.triangle")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.red)
-                                    .accessibilityIdentifier("filter-error")
-                            }
-                        }
-
-                        if let errorMessage = model.errorMessage, !errorMessage.isEmpty {
-                            Section {
-                                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.red)
-                                    .padding(14)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(
-                                        Color.red.opacity(0.09),
-                                        in: RoundedRectangle(
-                                            cornerRadius: 16,
-                                            style: .continuous
-                                        )
-                                    )
-                                    .accessibilityLabel("Error. \(errorMessage)")
-                                    .listRowInsets(
-                                        EdgeInsets(
-                                            top: 4,
-                                            leading: 16,
-                                            bottom: 4,
-                                            trailing: 16
-                                        )
-                                    )
-                                    .listRowSeparator(.hidden)
-                                    .listRowBackground(Color.clear)
-                            }
-                        }
-
-                        if model.isBusy && model.tasks.isEmpty {
-                            Section { loadingRow }
-                        } else if isCalendar {
-                            calendarContent
-                        } else if displayedTasks.isEmpty {
-                            Section { emptyRow }
-                        } else if isUpcoming {
-                            ForEach(agendaSections, id: \.group) { section in
+                            if isUpcoming {
                                 Section {
-                                    if !collapsedAgendaGroups.contains(section.group) {
-                                        if section.tasks.isEmpty {
-                                            Text("No todos")
-                                                .font(.subheadline)
-                                                .foregroundStyle(.secondary)
-                                                .listRowBackground(Color.clear)
-                                        } else {
-                                            ForEach(section.tasks, id: \.id) { task in
-                                                taskRow(task)
+                                    Picker("Upcoming layout", selection: $showsCalendar) {
+                                        Text("Agenda").tag(false)
+                                        Text("Calendar").tag(true)
+                                    }
+                                    .pickerStyle(.segmented)
+                                    .accessibilityIdentifier("upcoming-layout")
+                                    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 8, trailing: 20))
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
+                                }
+                            }
+
+                            if filterLibrary.filters.contains(where: \.isStarred) {
+                                Section {
+                                    favoriteFilters
+                                        .listRowInsets(
+                                            EdgeInsets(top: 0, leading: 20, bottom: 8, trailing: 20)
+                                        )
+                                        .listRowSeparator(.hidden)
+                                        .listRowBackground(Color.clear)
+                                }
+                            }
+
+                            if let message = filterError ?? filterLibrary.errorMessage {
+                                Section {
+                                    Label(message, systemImage: "exclamationmark.triangle")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.red)
+                                        .accessibilityIdentifier("filter-error")
+                                }
+                            }
+
+                            if let errorMessage = model.errorMessage, !errorMessage.isEmpty {
+                                Section {
+                                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.red)
+                                        .padding(14)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(
+                                            Color.red.opacity(0.09),
+                                            in: RoundedRectangle(
+                                                cornerRadius: 16,
+                                                style: .continuous
+                                            )
+                                        )
+                                        .accessibilityLabel("Error. \(errorMessage)")
+                                        .listRowInsets(
+                                            EdgeInsets(
+                                                top: 4,
+                                                leading: 16,
+                                                bottom: 4,
+                                                trailing: 16
+                                            )
+                                        )
+                                        .listRowSeparator(.hidden)
+                                        .listRowBackground(Color.clear)
+                                }
+                            }
+
+                            if model.isBusy && model.tasks.isEmpty {
+                                Section { loadingRow }
+                            } else if isCalendar {
+                                calendarContent
+                            } else if displayedTasks.isEmpty {
+                                Section { emptyRow }
+                            } else if isUpcoming {
+                                ForEach(agendaSections, id: \.group) { section in
+                                    Section {
+                                        if !collapsedAgendaGroups.contains(section.group) {
+                                            if section.tasks.isEmpty {
+                                                Text("No todos")
+                                                    .font(.subheadline)
+                                                    .foregroundStyle(.secondary)
+                                                    .listRowBackground(Color.clear)
+                                            } else {
+                                                ForEach(section.tasks, id: \.id) { task in
+                                                    taskRow(task)
+                                                }
                                             }
                                         }
+                                    } header: {
+                                        agendaHeader(section)
                                     }
-                                } header: {
-                                    agendaHeader(section)
+                                    .listSectionSeparator(.hidden)
+                                }
+                            } else {
+                                Section {
+                                    ForEach(displayedTasks, id: \.id) { task in
+                                        taskRow(task)
+                                    }
                                 }
                                 .listSectionSeparator(.hidden)
                             }
-                        } else {
-                            Section {
-                                ForEach(displayedTasks, id: \.id) { task in
-                                    taskRow(task)
+                        }
+                        .listStyle(.plain)
+                        .listSectionSpacing(10)
+                        .scrollContentBackground(.hidden)
+                        .contentMargins(.top, 2, for: .scrollContent)
+                        .accessibilityIdentifier("task-list")
+                        .refreshable {
+                            await model.refresh()
+                        }
+                        .safeAreaInset(edge: .bottom, spacing: 0) {
+                            VStack(spacing: 12) {
+                                if isSelecting {
+                                    selectionActions
+                                }
+                                HStack(alignment: .bottom, spacing: 16) {
+                                    SyncStatusView(model: model)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    if !isSelecting {
+                                        addTodoButton
+                                    }
                                 }
                             }
-                            .listSectionSeparator(.hidden)
+                            .padding(.horizontal, 20)
+                            .padding(.top, 12)
+                            .padding(.bottom, 18)
+                            .background(OTodoCanvas())
                         }
-                    }
-                    .listStyle(.plain)
-                    .listSectionSpacing(10)
-                    .scrollContentBackground(.hidden)
-                    .contentMargins(.top, 2, for: .scrollContent)
-                    .accessibilityIdentifier("task-list")
-                    .refreshable {
-                        await model.refresh()
-                    }
-                    .safeAreaInset(edge: .bottom, spacing: 0) {
-                        VStack(spacing: 12) {
-                            if isSelecting {
-                                selectionActions
-                            }
-                            HStack(alignment: .bottom, spacing: 16) {
-                                SyncStatusView(model: model)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                if !isSelecting {
-                                    addTodoButton
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.top, 12)
-                        .padding(.bottom, 18)
-                        .background(OTodoCanvas())
                     }
                 }
                 .navigationTitle(isUpcoming ? "Upcoming" : selectedProject.map(projectDisplayName) ?? "Todos")

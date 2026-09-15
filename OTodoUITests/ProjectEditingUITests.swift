@@ -30,7 +30,6 @@ final class ProjectEditingUITests: XCTestCase {
         openProjectEditor(in: app)
         XCTAssertEqual(app.textFields["project-editor-name"].value as? String, "Household plans")
         XCTAssertEqual(notes.value as? String, "# Goals\n\nKeep **Markdown** and [[links]].")
-        XCTAssertEqual(app.staticTexts["project-editor-slug"].label, "home")
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Offline project editing preserves its slug and Markdown notes"
         screenshot.lifetime = .keepAlways

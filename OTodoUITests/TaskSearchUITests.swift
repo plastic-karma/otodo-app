@@ -45,7 +45,7 @@ final class TaskSearchUITests: XCTestCase {
         let empty = app.descendants(matching: .any).matching(identifier: "task-search-empty").firstMatch
         XCTAssertTrue(empty.waitForExistence(timeout: 8))
         replaceQuery("", in: search)
-        app.buttons["task-search-close"].tap()
+        app.buttons["Close"].tap()
         XCTAssertTrue(search.waitForNonExistence(timeout: 8))
         XCTAssertTrue(app.navigationBars["Work"].exists)
         XCTAssertTrue(app.buttons["task-filter-today"].isSelected)

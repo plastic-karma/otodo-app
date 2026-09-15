@@ -13,7 +13,8 @@ final class DailyReviewUITests: XCTestCase {
         let evening = app.switches["daily-review-enabled-evening"]
         XCTAssertEqual(morning.value as? String, "0", "Reviews require explicit opt-in")
         XCTAssertEqual(evening.value as? String, "0")
-        morning.tap()
+        morning.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(morning.value as? String, "1", "Explicit opt-in must take effect before starting a review")
         tap("daily-review-open-morning", in: app)
         capture("Kickstart opening summary", in: app)
         tap("daily-review-next", in: app)
