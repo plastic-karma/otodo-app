@@ -44,8 +44,11 @@ final class TaskSearchUITests: XCTestCase {
         replaceQuery("no-such-search-result", in: search)
         let empty = app.descendants(matching: .any).matching(identifier: "task-search-empty").firstMatch
         XCTAssertTrue(empty.waitForExistence(timeout: 8))
-        replaceQuery("", in: search)
+        // Native search cancellation restores the sheet toolbar before it can be dismissed.
         app.buttons["Close"].tap()
+        let close = app.buttons["task-search-close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 8))
+        close.tap()
         XCTAssertTrue(search.waitForNonExistence(timeout: 8))
         XCTAssertTrue(app.navigationBars["Work"].exists)
         XCTAssertTrue(app.buttons["task-filter-today"].isSelected)
@@ -54,7 +57,7 @@ final class TaskSearchUITests: XCTestCase {
 
     private func replaceQuery(_ value: String, in search: XCUIElement) {
         search.tap()
-        let previous = search.value as? String ?? ""
-        search.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: previous.count) + value)
+        search.buttons["Clear text"].tap()
+        search.typeText(value)
     }
 }

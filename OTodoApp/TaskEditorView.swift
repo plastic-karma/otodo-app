@@ -1208,19 +1208,14 @@ private struct TaskEditorSubtaskInput: View {
     let onPendingChange: (Bool) -> Void
     let onAdd: (String) -> Void
     @State private var name = ""
-    @FocusState private var isFocused: Bool
+    @State private var requestsFocus = false
 
     var body: some View {
         HStack(spacing: 8) {
-            TextField("New subtask name", text: $name)
-                .accessibilityLabel("New subtask name")
-                .accessibilityIdentifier("task-editor-subtask-name")
-                .focused($isFocused)
-                .submitLabel(.done)
-                .onSubmit(add)
-                .onChange(of: isFocused) { _, focused in
-                    if focused { onFocus() }
-                }
+            TaskEditorSubtaskNameField(
+                text: $name, requestsFocus: $requestsFocus,
+                onFocus: onFocus, onSubmit: add
+            )
                 .onChange(of: !name.isEmpty) { _, pending in
                     onPendingChange(pending)
                 }
@@ -1254,7 +1249,83 @@ private struct TaskEditorSubtaskInput: View {
         onAdd(name.trimmingCharacters(in: .whitespacesAndNewlines))
         name = ""
         onPendingChange(false)
-        isFocused = true
+        requestsFocus = true
+    }
+}
+
+private struct TaskEditorSubtaskNameField: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var requestsFocus: Bool
+    let onFocus: () -> Void
+    let onSubmit: () -> Void
+
+    @MainActor
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    @MainActor
+    func makeUIView(context: Context) -> HighlightedTaskNameField.NameTextField {
+        let field = HighlightedTaskNameField.NameTextField()
+        field.borderStyle = .none
+        field.placeholder = "New subtask name"
+        field.backgroundColor = .clear
+        field.textColor = .label
+        field.font = .preferredFont(forTextStyle: .body)
+        field.adjustsFontForContentSizeCategory = true
+        field.autocapitalizationType = .sentences
+        field.returnKeyType = .next
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        field.accessibilityLabel = "New subtask name"
+        field.accessibilityIdentifier = "task-editor-subtask-name"
+        field.delegate = context.coordinator
+        field.addTarget(context.coordinator, action: #selector(Coordinator.textDidChange(_:)), for: .editingChanged)
+        field.didFulfillFocusRequest = { [weak coordinator = context.coordinator] in
+            coordinator?.parent.requestsFocus = false
+        }
+        return field
+    }
+
+    @MainActor
+    func updateUIView(_ field: HighlightedTaskNameField.NameTextField, context: Context) {
+        context.coordinator.parent = self
+        field.isEnabled = context.environment.isEnabled
+        field.wantsFocus = requestsFocus
+        if requestsFocus { field.setNeedsLayout() }
+        guard field.markedTextRange == nil else { return }
+        if field.text != text { field.text = text }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: TaskEditorSubtaskNameField
+
+        init(parent: TaskEditorSubtaskNameField) {
+            self.parent = parent
+        }
+
+        @objc func textDidChange(_ field: UITextField) {
+            let text = field.text ?? ""
+            if parent.text != text { parent.text = text }
+        }
+
+        func textFieldDidBeginEditing(_ textField: UITextField) {
+            parent.onFocus()
+        }
+
+        func textFieldDidEndEditing(_ textField: UITextField) {
+            (textField as? HighlightedTaskNameField.NameTextField)?.wantsFocus = false
+            parent.requestsFocus = false
+        }
+
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            guard textField.markedTextRange == nil else { return false }
+            textDidChange(textField)
+            parent.onSubmit()
+            if textField.text != parent.text { textField.text = parent.text }
+            return false
+        }
     }
 }
 
