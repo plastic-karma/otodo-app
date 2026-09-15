@@ -2,6 +2,7 @@
 """Bounded release phases; credentials remain private and upload acceptance explicit."""
 
 import argparse
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -162,25 +163,57 @@ def export() -> None:
     ipas = list(export_dir.glob("*.ipa"))
     if len(ipas) != 1:
         raise RuntimeError(f"Export produced {len(ipas)} IPAs; expected exactly one for OTodo")
+    if os.environ.get("RELEASE_BUILDER") == "xtool":
+        from xtool_archive import verify_export
+
+        verification = verify_export(ipas[0], Path(required_environment("XTOOL_ARCHIVE_MANIFEST")))
+        validate_app(ipas[0])
+        verification["apple_validation_accepted"] = True
+        (Path(required_environment("RELEASE_LOG_DIR")) / "xtool-export.json").write_text(
+            json.dumps(verification, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     output("IPA_PATH", str(ipas[0]), "GITHUB_ENV")
     output("ipa_created", "true")
     print(f"Exported {ipas[0].name}.")
 
 
-def upload() -> None:
+@contextmanager
+def app_store_key():
     keys_dir = Path.home() / ".appstoreconnect/private_keys"
     keys_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     keys_dir.chmod(0o700)
     named_key = keys_dir / f"AuthKey_{required_environment('KEY_ID')}.p8"
-    log_path = Path(required_environment("RELEASE_LOG_DIR")) / "testflight-upload.log"
     try:
         shutil.copyfile(required_environment("API_KEY_PATH"), named_key)
         named_key.chmod(0o600)
-        output("attempted", "true")
+        yield
+    finally:
+        named_key.unlink(missing_ok=True)
+
+
+def validate_app(ipa: Path) -> None:
+    log_path = Path(required_environment("RELEASE_LOG_DIR")) / "testflight-validation.log"
+    with app_store_key():
         run_command([
-            "xcrun", "altool", "--upload-app", "--type", "ios", "--file", required_environment("IPA_PATH"),
+            "xcrun", "altool", "--validate-app", "--type", "ios", "--file", str(ipa),
             "--apiKey", required_environment("KEY_ID"), "--apiIssuer", required_environment("ISSUER_ID"),
-        ], stage="release-testflight-upload", timeout=600, log_path=log_path)
+        ], stage="release-testflight-validation", timeout=600, log_path=log_path)
+    text = log_path.read_text(encoding="utf-8", errors="replace")
+    if re.search(r"VALIDATION FAILED|Failed to validate", text, re.IGNORECASE):
+        raise RuntimeError("Apple IPA validation failed; see the preserved altool diagnostic")
+    if not re.search(r"VALIDATION SUCCEEDED|No errors validating", text, re.IGNORECASE):
+        raise RuntimeError("Apple IPA validation did not report acceptance")
+    print("Apple accepted IPA validation; xtool code identity was verified before upload.")
+
+
+def upload() -> None:
+    log_path = Path(required_environment("RELEASE_LOG_DIR")) / "testflight-upload.log"
+    try:
+        with app_store_key():
+            output("attempted", "true")
+            run_command([
+                "xcrun", "altool", "--upload-app", "--type", "ios", "--file", required_environment("IPA_PATH"),
+                "--apiKey", required_environment("KEY_ID"), "--apiIssuer", required_environment("ISSUER_ID"),
+            ], stage="release-testflight-upload", timeout=600, log_path=log_path)
         text = log_path.read_text(encoding="utf-8", errors="replace")
         if re.search(r"UPLOAD FAILED|Failed to upload package", text, re.IGNORECASE):
             raise RuntimeError("TestFlight upload reported failure; see the preserved altool diagnostic")
@@ -191,8 +224,6 @@ def upload() -> None:
     except BaseException:
         output("failed", "true")
         raise
-    finally:
-        named_key.unlink(missing_ok=True)
 
 
 def sanitize_diagnostics() -> None:
@@ -201,7 +232,7 @@ def sanitize_diagnostics() -> None:
     secrets = {os.environ.get(name, "") for name in ("KEY_ID", "ISSUER_ID", "API_KEY")}
     secrets.update(os.environ.get("API_KEY", "").splitlines())
     secrets.discard("")
-    for variable, pattern in (("RELEASE_LOG_DIR", "*.log"), ("CI_RESULTS_DIR", "*.json")):
+    for variable, pattern in (("RELEASE_LOG_DIR", "*.log"), ("RELEASE_LOG_DIR", "*.json"), ("CI_RESULTS_DIR", "*.json")):
         for path in Path(required_environment(variable)).glob(pattern):
             text = path.read_text(encoding="utf-8", errors="replace")
             for secret in sorted(secrets, key=len, reverse=True):
