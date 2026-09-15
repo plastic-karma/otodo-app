@@ -282,26 +282,6 @@ struct TaskEditorView: View {
                                 }
                         }
                         .listRowSeparator(.hidden)
-                        if notesFocused, !notesComposing {
-                            mentionSuggestions(
-                                notesMentions.suggestions(at: notesSelection, choices: projectChoices),
-                                field: "notes", kind: .project
-                            ) { suggestion in
-                                guard let result = suggestion.applying(to: draft.body) else { return }
-                                draft.body = result.text
-                                notesSelection = result.selection
-                                notesFocused = true
-                            }
-                            mentionSuggestions(
-                                notesTagMentions.suggestions(at: notesSelection, choices: tagChoices),
-                                field: "notes", kind: .tag
-                            ) { suggestion in
-                                guard let result = suggestion.applying(to: draft.body) else { return }
-                                draft.body = result.text
-                                notesSelection = result.selection
-                                notesFocused = true
-                            }
-                        }
                         if !detectedProjects.isEmpty {
                             let explanation = "Projects from #mentions: \(detectedProjects.joined(separator: ", "))"
                             Label(explanation, systemImage: "folder.badge.plus")
@@ -404,16 +384,39 @@ struct TaskEditorView: View {
                 .scrollDismissesKeyboard(.interactively)
                 .background(OTodoTheme.formCanvas.ignoresSafeArea())
                 .safeAreaInset(edge: .bottom, spacing: 0) {
-                    if draft.preservedTask == nil && !dynamicTypeSize.isAccessibilitySize {
-                        VStack(spacing: 0) {
+                    VStack(spacing: 0) {
+                        if notesFocused, !notesComposing {
+                            let projects = notesMentions.suggestions(at: notesSelection, choices: projectChoices)
+                            let tags = notesTagMentions.suggestions(at: notesSelection, choices: tagChoices)
+                            if !projects.isEmpty || !tags.isEmpty {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    mentionSuggestions(projects, field: "notes", kind: .project) { suggestion in
+                                        guard let result = suggestion.applying(to: draft.body) else { return }
+                                        draft.body = result.text
+                                        notesSelection = result.selection
+                                        notesFocused = true
+                                    }
+                                    mentionSuggestions(tags, field: "notes", kind: .tag) { suggestion in
+                                        guard let result = suggestion.applying(to: draft.body) else { return }
+                                        draft.body = result.text
+                                        notesSelection = result.selection
+                                        notesFocused = true
+                                    }
+                                }
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 8)
+                            }
+                        }
+                        if draft.preservedTask == nil && !dynamicTypeSize.isAccessibilitySize {
                             Divider()
                             saveAnotherButton
                                 .buttonStyle(.bordered)
                                 .padding(.horizontal, 20)
                                 .padding(.vertical, 8)
                         }
-                        .background(OTodoTheme.formCanvas)
                     }
+                    .background(OTodoTheme.formCanvas)
                 }
                 .navigationTitle(draft.preservedTask == nil ? "New Todo" : "Edit Todo")
                 .navigationBarTitleDisplayMode(.inline)

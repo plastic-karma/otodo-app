@@ -36,7 +36,13 @@ final class TaskProjectMentionsUITests: XCTestCase {
         notes.typeText(" @ho")
         let homeTag = app.buttons["task-editor-notes-tag-suggestion-home"]
         XCTAssertTrue(homeTag.waitForExistence(timeout: 8))
+        let completions = XCTAttachment(screenshot: app.screenshot())
+        completions.name = "Notes completions stay above repeat creation"
+        completions.lifetime = .keepAlways
+        add(completions)
         homeTag.tap()
+        XCTAssertEqual(name.value as? String, title,
+                       "Choosing a notes completion must not save or reset the draft")
         notes.typeText("\nKeep **Markdown**, person@example.com, #unknown and @unknown intact.")
         let body = "Café discussion #home @home\nKeep **Markdown**, person@example.com, #unknown and @unknown intact."
         XCTAssertEqual(notes.value as? String, body)
