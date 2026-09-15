@@ -156,7 +156,7 @@ jobs:
   ios-build:
     name: ${{ needs.preflight.outputs.mode == 'full' && 'iOS / build and smoke' || format('iOS / {0} diagnosis', needs.preflight.outputs.mode) }}
     needs: preflight
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 90
     env:
       CI_MODE: ${{ needs.preflight.outputs.mode }}
@@ -243,7 +243,7 @@ jobs:
       ${{ !cancelled() && needs.preflight.outputs.mode != 'focused' &&
           needs.ios-build.outputs.build_ready == 'true' &&
           (needs.ios-build.result == 'success' || needs.preflight.outputs.mode == 'diagnostics') }}
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 90
     strategy:
       fail-fast: ${{ needs.preflight.outputs.mode == 'full' }}
@@ -316,7 +316,7 @@ jobs:
     name: Apple Watch companion
     needs: preflight
     if: needs.preflight.outputs.mode != 'focused'
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 45
     env:
       PROJECT: OTodo.xcodeproj
