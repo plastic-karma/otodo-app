@@ -90,7 +90,11 @@ def prepare(output):
     phone_simulator = prepare_ios(output)
     if phone_simulator["runtime"] != phone_runtime["identifier"]:
         raise RuntimeError(f"A preinstalled iPhone on {phone_runtime['name']} is required for companion verification")
-    phone = phone_simulator["id"]
+    # Keep both sides independent of the runner image's preconfigured device state.
+    phone_name = "OTodo companion smoke iPhone"
+    phone = create_device(state, phone_runtime, "iPhone", phone_name)
+    phone_simulator.update(id=phone, name=phone_name)
+    save_json(output / "simulator.json", phone_simulator)
     # Retain partial preparation evidence even if Watch creation/pairing fails.
     save_json(output / "devices.json", {"phone": phone})
     watch = create_device(state, watch_runtime, "Apple Watch", "OTodo companion smoke Watch")

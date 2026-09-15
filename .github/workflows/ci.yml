@@ -331,7 +331,7 @@ jobs:
           apple: 'true'
       - name: Generate Xcode project
         run: python3 .github/scripts/ci_runtime.py run --stage watch-project --timeout 60 -- xcodegen generate --spec project.yml
-      - name: Select and pair compatible preinstalled simulators
+      - name: Create a fresh compatible simulator pair
         run: python3 .github/scripts/watch_smoke.py prepare --output "$RUNNER_TEMP/watch-smoke"
       - name: Verify simulator boots before building full companion graph
         run: |
