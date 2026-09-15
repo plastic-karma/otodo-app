@@ -23,11 +23,15 @@ struct TaskListView: View {
     @State private var selectedProject: String?
     @State private var isProjectSidebarPresented = false
     @State private var isProjectEditorPresented = false
-    @State private var projectArchivePresentation: ProjectArchivePresentation?
+    @State private var projectEditPresentation: ProjectPresentation?
+    @State private var isSearchPresented = false
+    @State private var projectArchivePresentation: ProjectPresentation?
     @State private var showsArchivedProjects = false
     @State private var isChangelogPresented = false
     @State private var isStatsPresented = false
     @State private var isReminderSettingsPresented = false
+    @State private var isDailyReviewSettingsPresented = false
+    @State private var isDailyReviewPresented = false
     @State private var isBulkEditorPresented = false
     @State private var bulkCreationDefaults: (projectSlugs: [String], tags: [String], dueDate: CivilDate?) = ([], [], nil)
     @State private var reschedulePresentation: ReschedulePresentation?
@@ -41,8 +45,9 @@ struct TaskListView: View {
     @State private var isSelecting = false
     @State private var selectedTaskIDs: Set<TaskID> = []
 
-    private struct ProjectArchivePresentation: Identifiable {
+    private struct ProjectPresentation: Identifiable {
         let id: String
+        var original: TodoProject? = nil
     }
 
     init(model: AppModel, notifications: TaskNotificationManager) {
@@ -67,6 +72,14 @@ struct TaskListView: View {
                                 )
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(Color.clear)
+                        }
+
+                        DailyReviewPrompt(model: model) { presented in
+                            isDailyReviewPresented = presented
+                            if !presented {
+                                presentPendingNewTodoRequest()
+                                presentPendingNotificationRequest()
+                            }
                         }
 
                         if isUpcoming {
@@ -209,6 +222,14 @@ struct TaskListView: View {
                         .accessibilityHint("Shows Upcoming, Inbox, project filters, Stats, and changelog")
                         .accessibilityIdentifier("project-sidebar-toggle")
                     }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Search", systemImage: "magnifyingglass") {
+                            isSearchPresented = true
+                        }
+                        .labelStyle(.iconOnly)
+                        .accessibilityHint("Searches the entire workspace, including completed todos and subtasks")
+                        .accessibilityIdentifier("task-search-open")
+                    }
                     if isUpcoming {
                         ToolbarItem(placement: .topBarTrailing) {
                             Button(isSelecting ? "Cancel" : "Select") {
@@ -321,15 +342,15 @@ struct TaskListView: View {
                 ProjectEditorView(
                     existingSlugs: model.projectChoices,
                     projectsDirectory: configuration.projectsDirectory
-                ) { title, slug in
-                    await model.createProject(title: title, slug: slug)
+                ) { title, slug, body in
+                    await model.createProject(title: title, slug: slug, body: body)
                     guard model.errorMessage == nil else {
                         return model.errorMessage
                     }
                     selectProject(slug)
                     return nil
                 }
-                .presentationDetents([.medium])
+                .presentationDetents([.large])
             } else {
                 ContentUnavailableView(
                     "Todo configuration unavailable",
@@ -337,6 +358,36 @@ struct TaskListView: View {
                     description: Text("Close the editor and refresh the workspace.")
                 )
             }
+        }
+        .sheet(item: $projectEditPresentation, onDismiss: presentPendingNotificationRequest) { presentation in
+            if let configuration = model.configuration, let project = presentation.original {
+                ProjectEditorView(
+                    existingSlugs: model.projectChoices,
+                    projectsDirectory: configuration.projectsDirectory,
+                    project: project
+                ) { name, _, body in
+                    await model.updateProject(expectedProject: project, name: name, body: body)
+                    return model.errorMessage
+                }
+                .presentationDetents([.large])
+            } else {
+                NavigationStack {
+                    ContentUnavailableView(
+                        "Project details need a sync", systemImage: "arrow.triangle.2.circlepath",
+                        description: Text("Connect and sync this workspace before editing. Its existing notes and properties must be cached first.")
+                    )
+                    .navigationTitle("Edit Project")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Cancel", role: .cancel) { projectEditPresentation = nil }
+                        }
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $isSearchPresented, onDismiss: presentPendingNotificationRequest) {
+            TaskSearchView(model: model)
         }
         .sheet(item: $projectArchivePresentation, onDismiss: presentPendingNotificationRequest) { presentation in
             archiveProjectEditor(for: presentation)
@@ -365,6 +416,12 @@ struct TaskListView: View {
                 tasks: model.tasks,
                 states: model.configuration?.states ?? []
             )
+        }
+        .sheet(isPresented: $isDailyReviewSettingsPresented, onDismiss: {
+            presentPendingNewTodoRequest()
+            presentPendingNotificationRequest()
+        }) {
+            DailyReviewSettingsView(model: model)
         }
         .task(id: model.workspaceSelection.map(FileWorkspaceStore.selectionKey(for:))) {
             selectedFilterID = "today"
@@ -595,6 +652,8 @@ struct TaskListView: View {
 
     private func presentPendingNewTodoRequest() {
         guard model.configuration != nil,
+              !isDailyReviewPresented,
+              !isDailyReviewSettingsPresented,
               quickActions.consumePendingNewTodoRequest()
         else {
             return
@@ -602,6 +661,8 @@ struct TaskListView: View {
         isProjectSidebarPresented = false
         clearSelection()
         isProjectEditorPresented = false
+        projectEditPresentation = nil
+        isSearchPresented = false
         isFilterLibraryPresented = false
         isChangelogPresented = false
         isStatsPresented = false
@@ -620,10 +681,15 @@ struct TaskListView: View {
               !isBulkEditorPresented,
               reschedulePresentation == nil,
               !isProjectEditorPresented,
+              projectEditPresentation == nil,
+              projectArchivePresentation == nil,
+              !isSearchPresented,
               !isFilterLibraryPresented,
               !isChangelogPresented,
               !isStatsPresented,
               !isReminderSettingsPresented,
+              !isDailyReviewPresented,
+              !isDailyReviewSettingsPresented,
               let taskID = notifications.consumePendingTaskRequest()
         else { return }
 
@@ -702,6 +768,18 @@ struct TaskListView: View {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     agendaModeButtons
                     inboxButton
+                    Button {
+                        dismissProjectSidebar()
+                        isSearchPresented = true
+                    } label: {
+                        Label("Search", systemImage: "magnifyingglass")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 13)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(OTodoTheme.accent)
+                    .accessibilityIdentifier("sidebar-search")
                     Button {
                         dismissProjectSidebar()
                         isStatsPresented = true
@@ -794,7 +872,7 @@ struct TaskListView: View {
     }
 
     @ViewBuilder
-    private func archiveProjectEditor(for presentation: ProjectArchivePresentation) -> some View {
+    private func archiveProjectEditor(for presentation: ProjectPresentation) -> some View {
         if let project = model.projectDetails[presentation.id], let configuration = model.configuration {
             ProjectArchiveView(
                 project: project, projects: model.projectDetails,
@@ -834,6 +912,11 @@ struct TaskListView: View {
         HStack(spacing: 0) {
             projectFilterButton(project)
             Menu {
+                Button("Edit Project", systemImage: "pencil") {
+                    dismissProjectSidebar()
+                    projectEditPresentation = ProjectPresentation(id: project, original: model.projectDetails[project])
+                }
+                .accessibilityIdentifier("project-edit-\(project)")
                 if model.projectDetails[project]?.isArchived == true {
                     Button("Restore Project", systemImage: "arrow.uturn.backward") {
                         Task { @MainActor in
@@ -844,7 +927,7 @@ struct TaskListView: View {
                 } else {
                     Button("Archive Project…", systemImage: "archivebox") {
                         dismissProjectSidebar()
-                        projectArchivePresentation = ProjectArchivePresentation(id: project)
+                        projectArchivePresentation = ProjectPresentation(id: project)
                     }
                     .accessibilityIdentifier("project-archive-\(project)")
                 }
@@ -865,6 +948,24 @@ struct TaskListView: View {
             Divider()
 
             notificationControl
+
+            Divider()
+                .padding(.horizontal, 16)
+
+            Button {
+                dismissProjectSidebar()
+                isDailyReviewSettingsPresented = true
+            } label: {
+                Label("Daily Review", systemImage: "sun.and.horizon")
+                    .font(.subheadline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("daily-review-settings-open")
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
 
             Divider()
                 .padding(.horizontal, 16)

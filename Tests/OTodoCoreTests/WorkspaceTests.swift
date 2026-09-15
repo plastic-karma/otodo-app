@@ -1083,7 +1083,8 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         let slug = try await service.addProject(
             selection: selection,
             slug: "side-project",
-            title: "  Side Project  "
+            title: "  Side Project  ",
+            body: "# Goals\n\nKeep [this link](https://example.com).\n"
         )
         XCTAssertEqual(slug, "side-project")
 
@@ -1102,6 +1103,7 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
             slug: slug, relativePath: "Projects/side-project.md", text: XCTUnwrap(pending.content)
         )
         XCTAssertEqual(project.name, "Side Project")
+        XCTAssertEqual(project.body, "# Goals\n\nKeep [this link](https://example.com).\n")
         XCTAssertFalse(project.isArchived)
         XCTAssertEqual(durable.projects, [ProjectDocument(project: project, content: try XCTUnwrap(pending.content), blobSHA: nil)])
         XCTAssertEqual(pending.createdAt, createdAt)
@@ -1119,6 +1121,97 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
 
         let unchanged = try await loadRequired(store, selection: selection)
         XCTAssertEqual(unchanged, durable)
+    }
+
+    func testProjectRenamePreservesReferencesMetadataAndArchiveOutboxAcrossOfflineReload() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let task = try makeDocument(
+            id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"), name: "Keep project reference",
+            projectSlugs: ["alpha"], configuration: configuration
+        )
+        let project = try makeProject(extras: [
+            YAMLProperty(name: "custom", value: .mapping([YAMLProperty(name: "priority", value: .integer(7))]))
+        ])
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(
+            makeWorkspace(selection: selection, configuration: configuration, tasks: [task], projects: [project]),
+            expectedRevision: nil
+        )
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+        let archived = try await service.archiveProject(selection: selection, slug: "alpha")
+        let original = try XCTUnwrap(archived.projects.first).project
+        let body = "\n# New goals\n\n- [ ] Keep **Markdown** and [[links]]\n\n"
+        let updated = try await service.updateProject(
+            selection: selection, expectedProject: original, name: "  Renamed project  ", body: body
+        )
+        let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+        XCTAssertEqual(durable, updated)
+        XCTAssertEqual(durable.tasks, archived.tasks)
+        XCTAssertEqual(durable.knownProjectSlugs, archived.knownProjectSlugs)
+        let saved = try XCTUnwrap(durable.projects.first)
+        XCTAssertEqual(saved.project.slug, "alpha")
+        XCTAssertEqual(saved.project.relativePath, original.relativePath)
+        XCTAssertEqual(saved.project.name, "Renamed project")
+        XCTAssertEqual(saved.project.body, body)
+        XCTAssertEqual(saved.project.extraProperties, original.extraProperties)
+        let pending = try XCTUnwrap(durable.pendingChanges.first)
+        XCTAssertEqual(pending.baseBlobSHA, "project-base")
+        XCTAssertEqual(pending.id, archived.pendingChanges.first?.id)
+        XCTAssertEqual(pending.groupID, archived.pendingChanges.first?.groupID)
+        XCTAssertEqual(
+            try ObsidianProjectCodec().parseProject(
+                slug: "alpha", relativePath: original.relativePath, text: XCTUnwrap(pending.content)
+            ), saved.project
+        )
+        await assertConflict {
+            _ = try await service.updateProject(
+                selection: selection, expectedProject: original, name: "Stale overwrite", body: ""
+            )
+        }
+        let afterStaleSave = try await loadRequired(store, selection: selection)
+        XCTAssertEqual(afterStaleSave, durable)
+    }
+
+    func testProjectEditRejectsInvalidNamesAndUnresolvedConflictsWithoutSaving() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let project = try makeProject()
+        let initial = try makeWorkspace(selection: selection, configuration: configuration, projects: [project])
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+        let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+        do {
+            _ = try await service.updateProject(
+                selection: selection, expectedProject: project.project, name: "Two\nlines", body: "Changed"
+            )
+            XCTFail("Expected invalid name rejection")
+        } catch let error as OTodoError {
+            guard case .validation = error else { return XCTFail("Expected validation, got \(error)") }
+        }
+        let afterInvalidSave = try await loadRequired(store, selection: selection)
+        XCTAssertEqual(afterInvalidSave, initial)
+        let conflict = try SyncConflict(
+            path: repositoryPath(selection, project.project.relativePath),
+            baseBlobSHA: project.blobSHA, remoteBlobSHA: "remote-project",
+            localContent: project.content, remoteContent: "---\nname: Remote\n---\n"
+        )
+        let conflicted = try makeWorkspace(
+            selection: selection, configuration: configuration, conflicts: [conflict],
+            revision: initial.revision + 1, projects: [project]
+        )
+        try await store.save(conflicted, expectedRevision: initial.revision)
+        await assertConflict {
+            _ = try await service.updateProject(
+                selection: selection, expectedProject: project.project, name: "Overwrite conflict", body: ""
+            )
+        }
+        let afterConflict = try await loadRequired(store, selection: selection)
+        XCTAssertEqual(afterConflict, conflicted)
     }
 
     func testReschedulingPreservesMixedTimesAndUneditedTaskDataDurably() async throws {

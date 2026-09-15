@@ -23,7 +23,15 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         let remove = app.buttons["task-editor-remove-subtask-0"]
         app.revealTaskEditorElement(remove)
         remove.tap()
-        queueChild("First child", in: app)
+        queueChild("First child", usingReturn: true, in: app)
+        let rapidInput = app.textFields["task-editor-subtask-name"]
+        rapidInput.typeText("Rapid child\n")
+        XCTAssertTrue(app.buttons["task-editor-save"].isEnabled)
+        rapidInput.typeText("   ")
+        XCTAssertFalse(app.buttons["task-editor-subtask-add"].isEnabled)
+        XCTAssertFalse(app.buttons["task-editor-save"].isEnabled)
+        app.buttons["task-editor-subtask-clear"].tap()
+        XCTAssertTrue(app.buttons["task-editor-save"].isEnabled)
         attachScreenshot(in: app, name: "New parent with queued subtask and link")
 
         // Repeat entry must persist the first family without leaking it into the next draft.
@@ -61,6 +69,9 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         app.revealTaskEditorElement(firstChild)
         XCTAssertTrue(firstChild.exists, "The saved child must be a direct child of this parent")
         XCTAssertFalse(existingChild("Discarded child", in: app).exists)
+        app.revealTaskEditorElement(existingChild("Rapid child", in: app))
+        XCTAssertTrue(existingChild("Rapid child", in: app).exists,
+                      "Return must retain focus for immediate entry of the next child")
         queueChild("Second child", in: app)
         app.revealTaskEditorElement(url)
         app.buttons["task-editor-clear-url"].tap()
@@ -260,16 +271,20 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
     }
 
     @MainActor
-    private func queueChild(_ title: String, in app: XCUIApplication) {
+    private func queueChild(_ title: String, usingReturn: Bool = false, in app: XCUIApplication) {
         let input = app.textFields["task-editor-subtask-name"]
         app.revealTaskEditorElement(input)
         input.tap()
         input.typeText(title)
         XCTAssertFalse(app.buttons["task-editor-save"].isEnabled,
                        "Unqueued typing must be added or cleared before saving")
-        let add = app.buttons["task-editor-subtask-add"]
-        app.revealTaskEditorElement(add)
-        add.tap()
+        if usingReturn {
+            input.typeText("\n")
+        } else {
+            let add = app.buttons["task-editor-subtask-add"]
+            app.revealTaskEditorElement(add)
+            add.tap()
+        }
         let readyToSave = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "enabled == true"),
             object: app.buttons["task-editor-save"]

@@ -21,14 +21,17 @@ final class TaskTextMentionsTests: XCTestCase {
             "https://@work", "https://user:@work/path", "https://example.test/@work",
             "https://example.test?q=(@work)", "//example.test?(@work)", "www.example.test?(@work)", "mailto:@work",
         ]
-        for excludedText in excluded {
-            let text = excludedText + "\n(@home)"
-            let mentions = TaskTextMentions(in: text, marker: "@")
-            XCTAssertEqual(mentions.recognizedValues(from: ["work", "home"]), ["home"], excludedText)
-            let mentionRange = (text as NSString).range(of: "@work")
-            XCTAssertTrue(mentions.suggestions(
-                at: NSRange(location: NSMaxRange(mentionRange), length: 0), choices: ["work-app"]
-            ).isEmpty, excludedText)
+        for marker in ["@", "#"] as [Character] {
+            for excludedText in excluded {
+                let excludedText = excludedText.replacingOccurrences(of: "@", with: String(marker))
+                let text = excludedText + "\n(\(marker)home)"
+                let mentions = TaskTextMentions(in: text, marker: marker)
+                XCTAssertEqual(mentions.recognizedValues(from: ["work", "home"]), ["home"], excludedText)
+                let mentionRange = (text as NSString).range(of: "\(marker)work")
+                XCTAssertTrue(mentions.suggestions(
+                    at: NSRange(location: NSMaxRange(mentionRange), length: 0), choices: ["work-app"]
+                ).isEmpty, excludedText)
+            }
         }
     }
 
@@ -110,6 +113,24 @@ final class TaskTextMentionsTests: XCTestCase {
             at: NSRange(location: 5, length: 0), choices: ["Work"]
         ).first?.applying(to: "@work"))
         XCTAssertEqual(canonical.text, "@Work")
+    }
+
+    func testProjectAndTagMarkersStayDistinctInMixedProse() throws {
+        let (text, selection) = caret("\u{1D11E} #wo¦rong @focus #focus @work #unknown @unknown")
+        let projects = TaskTextMentions(in: text, marker: "#")
+        let tags = TaskTextMentions(in: text, marker: "@")
+        XCTAssertTrue(projects.recognizedValues(from: ["work"]).isEmpty)
+        XCTAssertEqual(tags.recognizedValues(from: ["focus"]), ["focus"])
+        XCTAssertTrue(tags.suggestions(at: selection, choices: ["focus"]).isEmpty)
+        let completed = try XCTUnwrap(projects.suggestions(
+            at: selection, choices: ["work"]
+        ).first?.applying(to: text))
+        XCTAssertEqual(completed.text, "\u{1D11E} #work @focus #focus @work #unknown @unknown")
+        XCTAssertEqual(completed.selection, NSRange(location: "\u{1D11E} #work".utf16.count, length: 0))
+        XCTAssertEqual(
+            TaskTextMentions(in: completed.text, marker: "#").recognizedValues(from: ["work"]),
+            ["work"]
+        )
     }
 
     private func caret(_ markedText: String) -> (String, NSRange) {

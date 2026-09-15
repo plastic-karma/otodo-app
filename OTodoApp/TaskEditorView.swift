@@ -73,6 +73,7 @@ struct TaskEditorView: View {
     private let projectChoices: [String]
     private let projectChoiceSet: Set<String>
     private let tagChoices: [String]
+    private let tagChoiceSet: Set<String>
     private let hierarchy: TaskHierarchy
     private let workspaceTasks: [TodoTask]
     private let onSave: @MainActor (TaskEditorDraft) async -> String?
@@ -92,6 +93,9 @@ struct TaskEditorView: View {
     @State private var detectedDueDatePhrase: DetectedDueDatePhrase?
     @State private var nameMentions: TaskTextMentions
     @State private var notesMentions: TaskTextMentions
+    @State private var nameTagMentions: TaskTextMentions
+    @State private var notesTagMentions: TaskTextMentions
+    @State private var detectedTags: [String]
     @State private var detectedProjects: [String]
     @State private var nameHighlightRanges: [NSRange]
     @State private var nameSelection: NSRange
@@ -135,8 +139,11 @@ struct TaskEditorView: View {
         self.attachmentSelection = attachmentModel?.workspaceSelection
         self.configuration = configuration
         self.projectChoices = projectChoices
-        self.projectChoiceSet = Set(projectChoices)
+        let projectChoiceSet = Set(projectChoices)
+        self.projectChoiceSet = projectChoiceSet
         self.tagChoices = tagChoices
+        let tagChoiceSet = Set(tagChoices.map { $0.lowercased() })
+        self.tagChoiceSet = tagChoiceSet
         self.hierarchy = hierarchy
         self.workspaceTasks = workspaceTasks
         self.onSave = onSave
@@ -150,15 +157,24 @@ struct TaskEditorView: View {
         let duePhrase = Self.detectDueDatePhrase(in: draft.name)
         let nameMentions = TaskTextMentions(in: draft.name, marker: "#")
         let notesMentions = TaskTextMentions(in: draft.body, marker: "#")
+        let nameTagMentions = TaskTextMentions(in: draft.name, marker: "@")
+        let notesTagMentions = TaskTextMentions(in: draft.body, marker: "@")
         _detectedDueDatePhrase = State(initialValue: duePhrase)
         _nameMentions = State(initialValue: nameMentions)
         _notesMentions = State(initialValue: notesMentions)
+        _nameTagMentions = State(initialValue: nameTagMentions)
+        _notesTagMentions = State(initialValue: notesTagMentions)
+        _detectedTags = State(initialValue: Array(Set(
+            nameTagMentions.recognizedValues(from: tagChoices)
+                + notesTagMentions.recognizedValues(from: tagChoices)
+        )).sorted())
         _detectedProjects = State(initialValue: Array(Set(
             nameMentions.recognizedValues(from: projectChoices)
                 + notesMentions.recognizedValues(from: projectChoices)
         )).sorted())
         _nameHighlightRanges = State(initialValue: (duePhrase?.utf16Ranges ?? [])
-            + Self.projectHighlightRanges(nameMentions, choices: Set(projectChoices)))
+            + Self.mentionHighlightRanges(nameMentions, choices: projectChoiceSet)
+            + Self.mentionHighlightRanges(nameTagMentions, choices: tagChoiceSet))
         _nameSelection = State(initialValue: NSRange(location: draft.name.utf16.count, length: 0))
         _notesSelection = State(initialValue: NSRange(location: draft.body.utf16.count, length: 0))
         var parsedRule: RecurrenceRule?
@@ -197,17 +213,28 @@ struct TaskEditorView: View {
                         .onChange(of: draft.name) { _, name in
                             detectedDueDatePhrase = Self.detectDueDatePhrase(in: name)
                             nameMentions = TaskTextMentions(in: name, marker: "#")
+                            nameTagMentions = TaskTextMentions(in: name, marker: "@")
                             nameHighlightRanges = (detectedDueDatePhrase?.utf16Ranges ?? [])
-                                + Self.projectHighlightRanges(nameMentions, choices: projectChoiceSet)
-                            refreshDetectedProjects()
+                                + Self.mentionHighlightRanges(nameMentions, choices: projectChoiceSet)
+                                + Self.mentionHighlightRanges(nameTagMentions, choices: tagChoiceSet)
+                            refreshDetectedMentions()
                         }
                         .onChange(of: nameFocused) { _, focused in
                             if focused { notesFocused = false }
                         }
                         if nameFocused, !nameComposing {
-                            projectMentionSuggestions(
+                            mentionSuggestions(
                                 nameMentions.suggestions(at: nameSelection, choices: projectChoices),
-                                field: "name"
+                                field: "name", kind: .project
+                            ) { suggestion in
+                                guard let result = suggestion.applying(to: draft.name) else { return }
+                                draft.name = result.text
+                                nameSelection = result.selection
+                                requestsNameFocus = true
+                            }
+                            mentionSuggestions(
+                                nameTagMentions.suggestions(at: nameSelection, choices: tagChoices),
+                                field: "name", kind: .tag
                             ) { suggestion in
                                 guard let result = suggestion.applying(to: draft.name) else { return }
                                 draft.name = result.text
@@ -229,7 +256,7 @@ struct TaskEditorView: View {
 
                         ZStack(alignment: .topLeading) {
                             if draft.body.isEmpty {
-                                Text("Add notes…")
+                                Text("Add notes… #project, @tag")
                                     .foregroundStyle(.tertiary)
                                     .padding(.top, 8)
                                     .padding(.leading, 5)
@@ -244,7 +271,8 @@ struct TaskEditorView: View {
                                 .frame(height: notesHeight)
                                 .onChange(of: draft.body) { _, text in
                                     notesMentions = TaskTextMentions(in: text, marker: "#")
-                                    refreshDetectedProjects()
+                                    notesTagMentions = TaskTextMentions(in: text, marker: "@")
+                                    refreshDetectedMentions()
                                 }
                                 .onChange(of: notesFocused) { _, focused in
                                     if focused {
@@ -255,9 +283,18 @@ struct TaskEditorView: View {
                         }
                         .listRowSeparator(.hidden)
                         if notesFocused, !notesComposing {
-                            projectMentionSuggestions(
+                            mentionSuggestions(
                                 notesMentions.suggestions(at: notesSelection, choices: projectChoices),
-                                field: "notes"
+                                field: "notes", kind: .project
+                            ) { suggestion in
+                                guard let result = suggestion.applying(to: draft.body) else { return }
+                                draft.body = result.text
+                                notesSelection = result.selection
+                                notesFocused = true
+                            }
+                            mentionSuggestions(
+                                notesTagMentions.suggestions(at: notesSelection, choices: tagChoices),
+                                field: "notes", kind: .tag
                             ) { suggestion in
                                 guard let result = suggestion.applying(to: draft.body) else { return }
                                 draft.body = result.text
@@ -273,6 +310,15 @@ struct TaskEditorView: View {
                                 .accessibilityElement(children: .ignore)
                                 .accessibilityLabel(explanation)
                                 .accessibilityIdentifier("task-editor-detected-projects")
+                        }
+                        if !detectedTags.isEmpty {
+                            let explanation = "Tags from @mentions: \(detectedTags.joined(separator: ", "))"
+                            Label(explanation, systemImage: "tag")
+                                .font(.footnote)
+                                .foregroundStyle(OTodoTheme.accent)
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel(explanation)
+                                .accessibilityIdentifier("task-editor-detected-tags")
                         }
                     }
                     .id("task-editor-top")
@@ -505,8 +551,8 @@ struct TaskEditorView: View {
 
     private var detailsSummary: String {
         var parts = [workflowStates.first(where: { $0.id == draft.state })?.name ?? draft.state]
-        parts.append(contentsOf: projectsIncludingMentions)
-        parts.append(contentsOf: TaskEditorDraft.parseCommaSeparated(tagsText).map { "#\($0)" })
+        parts.append(contentsOf: projectsIncludingMentions.map { "#\($0)" })
+        parts.append(contentsOf: tagsIncludingMentions.map { "@\($0)" })
         if let parentID = draft.parentID {
             parts.append(hierarchy.task(for: parentID)?.name ?? "Missing parent")
         }
@@ -639,7 +685,7 @@ struct TaskEditorView: View {
                 .accessibilityLabel("Project choices")
             }
             if !detectedProjects.isEmpty {
-                Text("Mentioned projects are included automatically. Edit @mentions in the name or notes to change them; existing project assignments are kept.")
+                Text("Mentioned projects are included automatically. Edit #mentions in the name or notes to change them; existing project assignments are kept.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -666,7 +712,12 @@ struct TaskEditorView: View {
                 .scrollIndicators(.hidden)
                 .accessibilityLabel("Matching existing tags")
             }
-            Text("Projects and tags are comma-separated. Tags don't need #.")
+            if !detectedTags.isEmpty {
+                Text("Mentioned tags are included automatically. Edit @mentions in the name or notes to change them; existing tags are kept.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Text("Projects and tags are comma-separated here, without markers. In the name or notes, use #project and @tag.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -738,7 +789,7 @@ struct TaskEditorView: View {
                     onAdd: { draft.subtaskNames.append($0) }
                 )
                 .id(nameFocusRequest)
-                Text("Tap Add to queue each child. Save creates the parent and queued subtasks together with the parent's projects, without inheriting tags, dates, or links. Completing the parent also completes its active subtasks.")
+                Text("Tap + or press Return to queue each child. Save creates the parent and queued subtasks together with the parent's projects, without inheriting tags, dates, or links. Completing the parent also completes its active subtasks.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
@@ -763,22 +814,41 @@ struct TaskEditorView: View {
         return explicit + detectedProjects.filter { !selected.contains($0) }
     }
 
-    private func refreshDetectedProjects() {
+    private var tagsIncludingMentions: [String] {
+        let explicit = TaskEditorDraft.parseCommaSeparated(tagsText)
+        let selected = Set(explicit)
+        return explicit + detectedTags.filter { !selected.contains($0) }
+    }
+
+    private func refreshDetectedMentions() {
         detectedProjects = Array(Set(
             nameMentions.recognizedValues(from: projectChoices)
                 + notesMentions.recognizedValues(from: projectChoices)
         )).sorted()
+        detectedTags = Array(Set(
+            nameTagMentions.recognizedValues(from: tagChoices)
+                + notesTagMentions.recognizedValues(from: tagChoices)
+        )).sorted()
     }
 
-    private static func projectHighlightRanges(_ mentions: TaskTextMentions, choices: Set<String>) -> [NSRange] {
+    private static func mentionHighlightRanges(_ mentions: TaskTextMentions, choices: Set<String>) -> [NSRange] {
         mentions.tokens.compactMap { token in
             choices.contains(token.value.lowercased()) ? token.utf16Range : nil
         }
     }
 
+    private enum MentionKind: String {
+        case project
+        case tag
+
+        var marker: String { self == .project ? "#" : "@" }
+        var symbol: String { self == .project ? "folder" : "tag" }
+        var label: String { self == .project ? "Project" : "Tag" }
+    }
+
     @ViewBuilder
-    private func projectMentionSuggestions(
-        _ suggestions: [TaskTextMentions.Suggestion], field: String,
+    private func mentionSuggestions(
+        _ suggestions: [TaskTextMentions.Suggestion], field: String, kind: MentionKind,
         onSelect: @escaping (TaskTextMentions.Suggestion) -> Void
     ) -> some View {
         if !suggestions.isEmpty {
@@ -788,17 +858,17 @@ struct TaskEditorView: View {
                         Button {
                             onSelect(suggestion)
                         } label: {
-                            Label("#\(suggestion.value)", systemImage: "folder")
+                            Label("\(kind.marker)\(suggestion.value)", systemImage: kind.symbol)
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        .accessibilityLabel("Project: \(suggestion.value)")
-                        .accessibilityIdentifier("task-editor-\(field)-project-suggestion-\(suggestion.value)")
+                        .accessibilityLabel("\(kind.label): \(suggestion.value)")
+                        .accessibilityIdentifier("task-editor-\(field)-\(kind.rawValue)-suggestion-\(suggestion.value)")
                     }
                 }
             }
             .scrollIndicators(.hidden)
-            .accessibilityLabel("Matching existing projects")
+            .accessibilityLabel(kind == .project ? "Matching existing projects" : "Matching existing tags")
         }
     }
 
@@ -850,7 +920,7 @@ struct TaskEditorView: View {
     }
 
     private var matchingTagChoices: [String] {
-        let selected = Set(TaskEditorDraft.parseCommaSeparated(tagsText))
+        let selected = Set(tagsIncludingMentions)
         let fragment = currentTagFragment
         var matches: [String] = []
         matches.reserveCapacity(min(8, tagChoices.count))
@@ -957,7 +1027,7 @@ struct TaskEditorView: View {
         var value = draft
         value.name = detectedDueDatePhrase?.nameWithoutPhrase ?? draft.name
         value.projectSlugs = projectsIncludingMentions
-        value.tags = TaskEditorDraft.parseCommaSeparated(tagsText)
+        value.tags = tagsIncludingMentions
         value.dueDate = resolvedDueDate
         value.dueTime = resolvedDueTime
         value.url = normalizedURL
@@ -974,6 +1044,7 @@ struct TaskEditorView: View {
                 saveError = errorMessage
             } else if createAnother {
                 projectsText = value.projectSlugs.joined(separator: ", ")
+                tagsText = value.tags.joined(separator: ", ")
                 nameSelection = NSRange(location: 0, length: 0)
                 notesSelection = NSRange(location: 0, length: 0)
                 draft.attachments = []
@@ -1140,7 +1211,7 @@ private struct TaskEditorSubtaskInput: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 8) {
             TextField("New subtask name", text: $name)
                 .accessibilityLabel("New subtask name")
                 .accessibilityIdentifier("task-editor-subtask-name")
@@ -1153,19 +1224,23 @@ private struct TaskEditorSubtaskInput: View {
                 .onChange(of: !name.isEmpty) { _, pending in
                     onPendingChange(pending)
                 }
-            HStack {
-                Button("Add Subtask", systemImage: "plus", action: add)
-                    .buttonStyle(.borderless)
-                    .accessibilityIdentifier("task-editor-subtask-add")
-                    .disabled(!canAdd)
-                if !name.isEmpty {
-                    Spacer()
-                    Button("Clear") { name = "" }
-                        .buttonStyle(.borderless)
-                        .accessibilityLabel("Clear new subtask name")
-                        .accessibilityIdentifier("task-editor-subtask-clear")
+            if !name.isEmpty {
+                Button { name = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
                 }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Clear new subtask name")
+                .accessibilityIdentifier("task-editor-subtask-clear")
             }
+            Button(action: add) {
+                Image(systemName: "plus")
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Add Subtask")
+            .accessibilityIdentifier("task-editor-subtask-add")
+            .disabled(!canAdd)
         }
     }
 
@@ -1179,6 +1254,7 @@ private struct TaskEditorSubtaskInput: View {
         onAdd(name.trimmingCharacters(in: .whitespacesAndNewlines))
         name = ""
         onPendingChange(false)
+        isFocused = true
     }
 }
 

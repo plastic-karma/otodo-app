@@ -41,6 +41,7 @@ struct TaskTextEditor: UIViewRepresentable {
             view.autocorrectionType = .default
             view.accessibilityIdentifier = "task-editor-notes"
             view.accessibilityLabel = "Todo notes"
+            view.accessibilityHint = "Use a hashtag for an existing project and an at sign for an existing tag."
             let done = UIBarButtonItem(
                 barButtonSystemItem: .done, target: view,
                 action: #selector(UIResponder.resignFirstResponder)

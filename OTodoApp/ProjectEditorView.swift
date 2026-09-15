@@ -1,4 +1,5 @@
 import Foundation
+import OTodoCore
 import SwiftUI
 
 struct ProjectEditorView: View {
@@ -6,20 +7,26 @@ struct ProjectEditorView: View {
 
     private let existingSlugs: Set<String>
     private let projectsDirectory: String
-    private let onSave: @MainActor (String, String) async -> String?
+    private let project: TodoProject?
+    private let onSave: @MainActor (String, String, String) async -> String?
 
     @State private var name = ""
+    @State private var notes = ""
     @State private var isSaving = false
     @State private var saveError: String?
 
     init(
         existingSlugs: [String],
         projectsDirectory: String,
-        onSave: @escaping @MainActor (String, String) async -> String?
+        project: TodoProject? = nil,
+        onSave: @escaping @MainActor (String, String, String) async -> String?
     ) {
         self.existingSlugs = Set(existingSlugs)
         self.projectsDirectory = projectsDirectory
         self.onSave = onSave
+        self.project = project
+        _name = State(initialValue: project?.name ?? "")
+        _notes = State(initialValue: project?.body ?? "")
     }
 
     var body: some View {
@@ -41,6 +48,17 @@ struct ProjectEditorView: View {
                     Text(projectPathDescription)
                 }
 
+                Section {
+                    TextEditor(text: $notes)
+                        .frame(minHeight: 160)
+                        .accessibilityLabel("Project notes")
+                        .accessibilityIdentifier("project-editor-notes")
+                } header: {
+                    Text("Notes")
+                } footer: {
+                    Text("Markdown is preserved. Use notes for the project's goals, links, and context.")
+                }
+
                 if let message = validationMessage ?? saveError {
                     Section {
                         Label(message, systemImage: "exclamationmark.triangle")
@@ -52,7 +70,7 @@ struct ProjectEditorView: View {
             .accessibilityIdentifier("project-editor")
             .scrollContentBackground(.hidden)
             .background(OTodoTheme.formCanvas.ignoresSafeArea())
-            .navigationTitle("New Project")
+            .navigationTitle(project == nil ? "New Project" : "Edit Project")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(OTodoTheme.formCanvas, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
@@ -88,11 +106,18 @@ struct ProjectEditorView: View {
     }
 
     private var slug: String {
-        Self.slug(from: trimmedName)
+        project?.slug ?? Self.slug(from: trimmedName)
     }
 
     private var validationMessage: String? {
-        Self.creationValidationMessage(name: name, existingSlugs: existingSlugs)
+        if project != nil {
+            guard !trimmedName.isEmpty else { return "Enter a project name." }
+            guard !trimmedName.contains("\n"), !trimmedName.contains("\r") else {
+                return "Use a single line for the project name."
+            }
+            return nil
+        }
+        return Self.creationValidationMessage(name: name, existingSlugs: existingSlugs)
     }
 
     static func creationValidationMessage(name: String, existingSlugs: Set<String>) -> String? {
@@ -114,6 +139,9 @@ struct ProjectEditorView: View {
     }
 
     private var projectPathDescription: String {
+        if let project {
+            return "Saved in \(project.relativePath). The slug stays the same so existing task links keep working."
+        }
         guard !slug.isEmpty else {
             return "A lowercase project slug will be generated automatically."
         }
@@ -128,7 +156,7 @@ struct ProjectEditorView: View {
         isSaving = true
 
         Task { @MainActor in
-            let error = await onSave(title, projectSlug)
+            let error = await onSave(title, projectSlug, notes)
             isSaving = false
             if let error {
                 saveError = error

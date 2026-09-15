@@ -30,6 +30,7 @@ struct HighlightedTaskNameField: UIViewRepresentable {
         textField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         textField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textField.accessibilityLabel = "Todo name"
+        textField.accessibilityHint = "Use a hashtag for an existing project and an at sign for an existing tag."
         textField.accessibilityIdentifier = accessibilityIdentifier
         textField.delegate = context.coordinator
         textField.addTarget(
