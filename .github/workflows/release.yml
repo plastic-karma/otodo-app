@@ -14,6 +14,11 @@ on:
         required: false
         type: boolean
         default: false
+      use_xtool:
+        description: "Compile shipping binaries with xtool; use Apple tools only for packaging and distribution"
+        required: false
+        type: boolean
+        default: false
   push:
     tags:
       - "v*"
@@ -35,6 +40,7 @@ jobs:
       SCHEME: OTodo
       PROJECT: OTodo.xcodeproj
       CI_MODE: release
+      RELEASE_BUILDER: ${{ inputs.use_xtool && 'xtool' || 'xcode' }}
     outputs:
       version: ${{ steps.version.outputs.version }}
       build: ${{ steps.version.outputs.build }}
@@ -115,6 +121,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 .github/scripts/ci_runtime.py run --stage release-ci-verification --timeout 180 -- python3 .github/scripts/release.py verify-ci
 
+      - name: Compile with xtool and prepare distribution archive
+        if: ${{ inputs.use_xtool }}
+        env:
+          GITHUB_CLIENT_ID: ${{ vars.GH_OAUTH_CLIENT_ID }}
+        run: python3 .github/scripts/ci_runtime.py run --stage release-xtool-archive --timeout 2100 -- python3 .github/scripts/xtool_archive.py build
+
       - name: Validate and install App Store Connect API key
         env:
           API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
@@ -128,6 +140,7 @@ jobs:
         run: python3 .github/scripts/ci_runtime.py run --stage release-apple-preflight --timeout 240 -- python3 .github/scripts/manage_api_certificates.py preflight
 
       - name: Generate and validate Xcode project metadata
+        if: ${{ !inputs.use_xtool }}
         run: |
           set -euo pipefail
           python3 .github/scripts/ci_runtime.py run --stage release-project-generation --timeout 90 -- xcodegen generate --spec project.yml
@@ -142,6 +155,7 @@ jobs:
         run: python3 .github/scripts/ci_runtime.py run --stage release-signing-snapshot --timeout 180 -- python3 .github/scripts/manage_api_certificates.py prepare
 
       - name: Archive with cloud signing and validate effective bundle entitlements
+        if: ${{ !inputs.use_xtool }}
         env:
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
@@ -223,6 +237,7 @@ jobs:
           name: release-diagnostics-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/release-logs/*.log
+            ${{ runner.temp }}/release-logs/*.json
             ${{ runner.temp }}/release-metrics/*.json
           if-no-files-found: ignore
           retention-days: 14
@@ -291,6 +306,7 @@ jobs:
           VERSION: ${{ needs.release.outputs.version }}
           BUILD: ${{ needs.release.outputs.build }}
           VERIFIED_CI: ${{ needs.release.outputs.ci_url }}
+          BUILDER: ${{ inputs.use_xtool && 'xtool' || 'xcode' }}
           IPA_CREATED: ${{ needs.release.outputs.ipa_created }}
           REQUESTED: ${{ github.event_name == 'push' || inputs.publish_testflight }}
           ATTEMPTED: ${{ needs.release.outputs.upload_attempted }}
@@ -304,6 +320,7 @@ jobs:
             echo "## OTodo release"
             echo ""
             echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Compiler driver: $BUILDER"
             echo "- Version: \`${VERSION:-unresolved}\`; build: \`${BUILD:-unassigned}\`"
             echo "- Full exact-SHA CI: ${VERIFIED_CI:-not verified}"
             echo "- Archive/export job: $RELEASE_RESULT"

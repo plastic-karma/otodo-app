@@ -1,6 +1,6 @@
 # Release OTodo to an IPA or TestFlight
 
-The [`Release IPA`](../.github/workflows/release.yml) workflow generates `OTodo.xcodeproj`, archives OTodo, signs it through Apple cloud signing, exports one App Store `.ipa`, and always uploads the signed file as the `otodo-ipa` workflow artifact. A manual run uploads to TestFlight only when **publish_testflight** is selected, even if the selected ref is a tag. A pushed `v*` tag always uploads.
+The [`Release IPA`](../.github/workflows/release.yml) workflow builds, signs through Apple cloud signing, exports one App Store `.ipa`, and always uploads the signed file as the `otodo-ipa` workflow artifact. By default it generates and archives `OTodo.xcodeproj`; the manual **use_xtool** option instead compiles the shipping binaries through xtool as described below. A manual run uploads to TestFlight only when **publish_testflight** is selected, even if the selected ref is a tag. A pushed `v*` tag always uploads.
 
 The workflow cannot create the external Apple or GitHub registrations below. Complete every one-time user action before the first run.
 
@@ -187,6 +187,25 @@ This produces the same `otodo-ipa` artifact first, then uploads it to the existi
 The release summary distinguishes requested, attempted, accepted, and failed uploads from certificate cleanup. If upload was accepted but only **Revoke only this release's ephemeral certificates** failed, rerun that failed cleanup job after the workflow finishes; do not rebuild or upload again. Cleanup consumes an immutable allowlist captured by the signing job, skips already removed IDs, and cannot use a stale baseline to revoke certificates from intervening releases. The allowlist artifact contains certificate IDs only, never private signing material.
 
 Internal testers must be App Store Connect users with access to OTodo; an ordinary Apple ID cannot be added directly to an Internal Testing group. For each new tester, open **Users and Access**, select **+**, invite the person with a role eligible for internal testing, grant access to **OTodo**, and have them accept the invitation. Then open **My Apps → OTodo → TestFlight**, wait for the build to finish processing, open or create an Internal Testing group, select **Testers → +**, choose those App Store Connect users, and add the build. Internal testing does not require Beta App Review. External testing requires the usual TestFlight metadata and Beta App Review.
+
+## Run manually: xtool compilation and TestFlight
+
+Select **use_xtool** and **publish_testflight** on the same exact-SHA, fully verified ref:
+
+```sh
+gh workflow run release.yml --ref <branch> \
+  -f use_xtool=true \
+  -f publish_testflight=true
+```
+
+This path uses checksum-pinned xtool **1.19.2** on the hosted macOS runner with the selected Xcode Swift toolchain and SDKs. It does not upload the Linux development experiment's debug/ad-hoc IPA, and it does not run `xcodebuild archive`.
+
+- Three actual `xtool dev build -c release` invocations build iOS ARM64, watchOS ARM64, and watchOS ARM64_32. A narrow adapter corrects xtool's generated Watch platform recipe and keeps the native single-triple SwiftPM backend; Swift 6 source files and XcodeGen target membership are preserved. The original Core package remains the dependency, including its resources.
+- The Watch binaries retain both architectures. ARM64 has a watchOS 26 deployment floor; ARM64_32 preserves the project's watchOS 10 compatibility.
+- Apple tools compile the original asset catalogs, extract AppIntents and train App Shortcuts language assets, generate dSYMs, and copy required Swift compatibility libraries. All five bundles retain their effective App Group entitlements.
+- The assembled archive is initially ad-hoc signed only for structural verification. Existing `xcodebuild -exportArchive` cloud signing produces the actual App Store signatures and provisioning profiles. The exported IPA must pass bundle/profile checks, exact compiled code/data comparisons, and authenticated `altool --validate-app` before upload. Export never substitutes an Xcode compilation if xtool fails.
+
+The `release-diagnostics-*` artifact retains `xtool-archive.json` (source/toolchain/SDK provenance, compiled slice hashes, resources, dSYMs) and `xtool-export.json` (exported code identity, distribution checks, and Apple validation outcome), plus bounded command logs. Signing and symbol stripping may change signatures and link-edit data; machine code and application data sections must remain identical to the xtool products. Apple upload acceptance and subsequent TestFlight processing remain separate outcomes.
 
 ## Release by tag: artifact and TestFlight
 

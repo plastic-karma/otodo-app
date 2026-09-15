@@ -198,11 +198,14 @@ class DiagnosticPrivacyTests(unittest.TestCase):
             log.write_text("key-id=SECRETKEY issuer=SECRETISSUER\nsecret-base64-key-fragment\nfile.swift:42: error: missing member\n")
             metric = metrics / "command.json"
             metric.write_text(json.dumps({"first_issue": {"message": "SECRETKEY: forbidden"}}))
+            provenance = logs / "xtool-export.json"
+            provenance.write_text(json.dumps({"native_error": "SECRETISSUER: profile expired"}))
             with patch.dict(os.environ, {"KEY_ID": "SECRETKEY", "ISSUER_ID": "SECRETISSUER", "API_KEY": key,
                                         "RELEASE_LOG_DIR": str(logs), "CI_RESULTS_DIR": str(metrics)}):
                 release.sanitize_diagnostics()
             self.assertEqual(log.read_text(), "key-id=*** issuer=***\n***\nfile.swift:42: error: missing member\n")
             self.assertEqual(json.loads(metric.read_text())["first_issue"]["message"], "***: forbidden")
+            self.assertEqual(json.loads(provenance.read_text())["native_error"], "***: profile expired")
 
 
 if __name__ == "__main__":
