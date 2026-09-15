@@ -146,9 +146,9 @@ The Watch companion job installs the embedded watchOS app and its complication o
 
 For simulators, Xcode can leave the ordinary codesign entitlement dictionary empty: effective simulator permissions are linked into each executable's `__TEXT,__entitlements` Mach-O section. CI verifies the code signature and those sections for every architecture, then runs the hosted/live App Group checks. Physical-device archives use their actual codesign entitlement dictionary. Neither path accepts only a source-plist declaration as proof.
 
-Watch CI clones the preinstalled iPhone selected by iOS CI, preserving the runner's preseeded bootstrap data under a fresh device identity. It pairs the clone with a fresh compatible Watch and completes both simulator boots before compilation. It requires `bootstatus` to report `Finished`: a zero exit status alone is insufficient because CoreSimulator can return zero after `Data Migration Failed`. A failed migration stops the job before app installation or connectivity checks; inspect the retained `boot-phone.log` and `boot-watch.log` before retrying on a fresh runner.
+Watch CI uses the same preinstalled iPhone selection as iOS CI, pairs it with a fresh compatible Watch, and completes both simulator boots before compilation. It requires `bootstatus` to report `Finished`: a zero exit status alone is insufficient because CoreSimulator can return zero after `Data Migration Failed`. A failed migration stops the job before app installation or connectivity checks; inspect the retained `boot-phone.log` and `boot-watch.log` before retrying on a fresh runner.
 
-The Watch snapshot wait has a fixed ten-minute deadline, including cold-pair readiness and actual request/reply delivery; progress never resets that deadline. Full iOS partitions have a 75-minute execution budget for the complete compiled suite, separate from their simulator preparation and retained diagnostics. XCTest retains a six-minute default and ten-minute maximum per-test allowance.
+The Watch snapshot wait has a fixed ten-minute deadline, including cold-pair readiness and actual request/reply delivery; progress never resets that deadline. Full iOS partitions have a one-hour execution budget for the complete compiled suite, separate from their simulator preparation and retained diagnostics.
 
 ## Run manually: artifact only
 
