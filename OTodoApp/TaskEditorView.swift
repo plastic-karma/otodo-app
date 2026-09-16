@@ -1220,6 +1220,7 @@ private struct TaskEditorSubtaskInput: View {
                 onFocus: onFocus, onSubmit: add
             )
                 .simultaneousGesture(TapGesture().onEnded {
+                    NSLog("EDITOR_FOCUS subtask SwiftUI tap")
                     onFocus()
                     requestsFocus = true
                 })
@@ -1300,6 +1301,7 @@ private struct TaskEditorSubtaskNameField: UIViewRepresentable {
         field.isEnabled = context.environment.isEnabled
         field.wantsFocus = requestsFocus
         if requestsFocus { field.setNeedsLayout() }
+        field.traceEditorFocus("subtask update text=\(text.debugDescription) requested=\(requestsFocus) environmentEnabled=\(context.environment.isEnabled)")
         guard field.markedTextRange == nil else { return }
         if field.text != text { field.text = text }
     }
@@ -1318,10 +1320,12 @@ private struct TaskEditorSubtaskNameField: UIViewRepresentable {
         }
 
         func textFieldDidBeginEditing(_ textField: UITextField) {
+            (textField as? HighlightedTaskNameField.NameTextField)?.traceEditorFocus("delegate began")
             parent.onFocus()
         }
 
         func textFieldDidEndEditing(_ textField: UITextField) {
+            (textField as? HighlightedTaskNameField.NameTextField)?.traceEditorFocus("delegate ended")
             (textField as? HighlightedTaskNameField.NameTextField)?.wantsFocus = false
             parent.requestsFocus = false
         }

@@ -95,8 +95,42 @@ struct HighlightedTaskNameField: UIViewRepresentable {
         private var decorationTraits: UITraitCollection?
         private static let decorationColor = UIColor.systemPurple.withAlphaComponent(0.18)
 
+        func traceEditorFocus(_ event: String) {
+            var ancestors: [String] = []
+            var current: UIView? = self
+            while let view = current {
+                ancestors.append("\(type(of: view)) frame=\(view.frame) presentation=\(String(describing: view.layer.presentation()?.frame)) alpha=\(view.alpha) hidden=\(view.isHidden) interactive=\(view.isUserInteractionEnabled)")
+                current = view.superview
+            }
+            let gestures = (gestureRecognizers ?? []).map {
+                "\(type(of: $0)) enabled=\($0.isEnabled) state=\($0.state.rawValue) cancels=\($0.cancelsTouchesInView)"
+            }
+            NSLog("EDITOR_FOCUS %@", "\(accessibilityIdentifier ?? "unnamed") \(ObjectIdentifier(self)) \(event) first=\(isFirstResponder) requested=\(wantsFocus) enabled=\(isEnabled) animations=\(UIView.areAnimationsEnabled) gestures=\(gestures) ancestors=\(ancestors)")
+        }
+
+        override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+            let result = super.hitTest(point, with: event)
+            traceEditorFocus("hit point=\(point) result=\(String(describing: result))")
+            return result
+        }
+
+        override func becomeFirstResponder() -> Bool {
+            traceEditorFocus("become begin")
+            let result = super.becomeFirstResponder()
+            traceEditorFocus("become end result=\(result)")
+            return result
+        }
+
+        override func resignFirstResponder() -> Bool {
+            traceEditorFocus("resign begin stack=\(Thread.callStackSymbols.prefix(18))")
+            let result = super.resignFirstResponder()
+            traceEditorFocus("resign end result=\(result)")
+            return result
+        }
+
         override func didMoveToWindow() {
             super.didMoveToWindow()
+            traceEditorFocus("moved window")
             if wantsFocus { setNeedsLayout() }
         }
 
@@ -105,6 +139,7 @@ struct HighlightedTaskNameField: UIViewRepresentable {
             defer { layoutHighlights() }
             // Form cells can be re-enabled or moved on screen without another window attachment.
             guard wantsFocus, isEnabled, window != nil else { return }
+            traceEditorFocus("requested layout")
             guard isFirstResponder || becomeFirstResponder() else { return }
             wantsFocus = false
             // Report fulfillment after UIKit finishes layout; later user focus changes are independent.
