@@ -55,6 +55,7 @@ final class TaskProjectMentionsUITests: XCTestCase {
         done.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
         let tags = app.textFields["task-editor-tags"]
+        let expectedTags: Set<String> = ["manual", "focus", "home"]
         revealTags(in: app)
         tags.tap()
         tags.typeText("manual\n")
@@ -82,7 +83,7 @@ final class TaskProjectMentionsUITests: XCTestCase {
         app.revealTaskEditorElement(notes)
         XCTAssertEqual(notes.value as? String, body)
         revealTags(in: app)
-        XCTAssertEqual(tags.value as? String, "manual, focus, home")
+        XCTAssertEqual(Set((tags.value as? String ?? "").components(separatedBy: ", ")), expectedTags)
         XCTAssertEqual(app.buttons["work project"].value as? String, "Selected")
         XCTAssertEqual(app.buttons["home project"].value as? String, "Selected")
         let restored = XCTAttachment(screenshot: app.screenshot())
@@ -114,7 +115,7 @@ final class TaskProjectMentionsUITests: XCTestCase {
         edited.tap()
         XCTAssertTrue(name.waitForExistence(timeout: 8))
         revealTags(in: app)
-        XCTAssertEqual(tags.value as? String, "manual, focus, home")
+        XCTAssertEqual(Set((tags.value as? String ?? "").components(separatedBy: ", ")), expectedTags)
         XCTAssertEqual(app.buttons["work project"].value as? String, "Selected")
         XCTAssertEqual(app.buttons["home project"].value as? String, "Selected")
     }
