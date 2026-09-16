@@ -510,9 +510,14 @@ final class OTodoUITests: XCTestCase {
             description: "the optional due-time control"
         ) else { return }
         timeToggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        // Native switch state settles asynchronously after touch dispatch.
+        let timeEnabled = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "1"),
+            object: timeToggle
+        )
         XCTAssertEqual(
-            timeToggle.value as? String,
-            "1",
+            XCTWaiter.wait(for: [timeEnabled], timeout: 8),
+            .completed,
             "Enabling exact time should update the due-time control"
         )
         editor.swipeUp()
