@@ -463,6 +463,20 @@ python3 -m venv /tmp/otodo-ci-python
 /tmp/otodo-ci-python/bin/python -m unittest discover -s .github/scripts -p 'test_*.py'
 ```
 
+### Codex cloud development without the desktop app
+
+`.codex/setup.sh` provisions Ubuntu 24.04 (x86_64 or aarch64) with Git, the official GitHub CLI, Swift **6.3.3**, SourceKit-LSP, and xtool **1.19.2**. `.codex/maintenance.sh` runs the same idempotent installation and checks. Tools are discoverable from a fresh non-login shell; setup does not rely on a temporary `export PATH`.
+
+Create a private, repository-scoped environment in [Codex cloud settings](https://chatgpt.com/codex/settings/environments), select the universal image, and use manual setup. For this repository, use `bash .codex/setup.sh` for setup and `bash .codex/maintenance.sh` for maintenance. For another iOS repository without these files, such as `lead-track`, copy the verified setup script into both settings rather than depending on files absent from that checkout. Leave the image's built-in Swift runtime selector at its default: `CODEX_ENV_SWIFT_VERSION=6.3.3` fails before custom setup if that version is not already installed. The script installs and selects the pinned version itself.
+
+For Linux Swift development and xtool command availability without a licensed Darwin SDK, set the environment variable `CODEX_SKIP_DARWIN_SDK=1`. This deliberately reports that iOS compilation is **not** configured. To cross-compile iOS code, omit that opt-out and provide exactly one licensed source documented by `bash .codex/setup.sh --help`: an Xcode 26 `.app`/`.xip`, a host-architecture-matched `darwin.xtoolsdk`, or a private HTTPS SDK archive with its SHA-256. Never publish Apple SDK archives. xtool does not provide a Linux iOS Simulator; native UI execution still needs Apple hardware or the repository's macOS CI.
+
+GitHub authorization is a separate prerequisite, not proof supplied by installing `gh` or selecting a repository. Verify `gh auth status` and `gh api repos/OWNER/REPOSITORY --jq .permissions` **during the agent phase** before claiming push or workflow-dispatch access. Prefer repository-scoped authorization with Contents and Actions write permissions; add Workflows write permission only when workflow files must be changed. Setup-only secrets are removed before the agent runs. Where available, Codex's domain-scoped secrets can restrict a GitHub credential to `github.com` and `api.github.com` without exposing its real value to the model. Do not copy a workstation token or persist setup secrets into agent-readable files.
+
+Allow the required GitHub domains in agent network access and permit write HTTP methods for pushes and workflow dispatch; an allowlist is not authentication. The installed bootstrap does not change Git identity, remotes, credentials, or Apple signing. Check the checkout's remotes before using `git push`; a cloud snapshot may have no `origin`. Add only the explicitly selected repository's HTTPS remote, and never overwrite a different repository's remote.
+
+Validate a configured environment with `CODEX_SKIP_DARWIN_SDK=1 bash .codex/setup.sh --check` (omit the opt-out when an SDK is configured), a real throwaway Swift executable, and an authorized disposable-branch push plus exact-ref **non-release** workflow dispatch. Tool installation alone does not establish those write capabilities. See the official [cloud lifecycle](https://learn.chatgpt.com/docs/environments/cloud-environment) and [network policy](https://learn.chatgpt.com/docs/cloud/internet-access) documentation.
+
 ### Generate and build the iOS app on macOS
 
 Install the pinned XcodeGen binary without relying on a floating Homebrew version:
