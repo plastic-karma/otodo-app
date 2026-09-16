@@ -615,6 +615,42 @@ final class AppModel {
         }
     }
 
+    func editProject(slug: String, name: String, body: String) async {
+        guard rootState == .workspace, let selection = workspaceSelection else {
+            errorMessage = "No todo workspace is selected."
+            return
+        }
+        let operationSession = sessionID
+
+        beginLocalMutation()
+        defer { finishLocalMutation() }
+        errorMessage = nil
+        statusMessage = "Saving project changes on this device…"
+        isBusy = true
+        do {
+            let workspace = try await taskService.editProject(
+                selection: selection,
+                slug: slug,
+                name: name,
+                body: body
+            )
+            guard sessionID == operationSession else { return }
+            syncFollowUpRequested = true
+            apply(workspace)
+            errorMessage = nil
+            publishLocalSaveStatus(
+                onlineMessage: "Project changes saved on this device; waiting to sync.",
+                offlineMessage: "Project changes saved on this device while offline."
+            )
+            isBusy = false
+        } catch {
+            guard sessionID == operationSession else { return }
+            isBusy = false
+            errorMessage = Self.message(for: error)
+            statusMessage = nil
+        }
+    }
+
     func archiveProject(
         slug: String,
         destination: ProjectArchiveDestination,

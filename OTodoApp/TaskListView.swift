@@ -24,6 +24,7 @@ struct TaskListView: View {
     @State private var isProjectSidebarPresented = false
     @State private var isProjectEditorPresented = false
     @State private var projectArchivePresentation: ProjectArchivePresentation?
+    @State private var projectEditPresentation: ProjectEditPresentation?
     @State private var showsArchivedProjects = false
     @State private var isChangelogPresented = false
     @State private var isStatsPresented = false
@@ -42,6 +43,10 @@ struct TaskListView: View {
     @State private var selectedTaskIDs: Set<TaskID> = []
 
     private struct ProjectArchivePresentation: Identifiable {
+        let id: String
+    }
+
+    private struct ProjectEditPresentation: Identifiable {
         let id: String
     }
 
@@ -337,6 +342,9 @@ struct TaskListView: View {
                     description: Text("Close the editor and refresh the workspace.")
                 )
             }
+        }
+        .sheet(item: $projectEditPresentation, onDismiss: presentPendingNotificationRequest) { presentation in
+            projectEditor(for: presentation)
         }
         .sheet(item: $projectArchivePresentation, onDismiss: presentPendingNotificationRequest) { presentation in
             archiveProjectEditor(for: presentation)
@@ -794,6 +802,32 @@ struct TaskListView: View {
     }
 
     @ViewBuilder
+    private func projectEditor(for presentation: ProjectEditPresentation) -> some View {
+        if let project = model.projectDetails[presentation.id] {
+            ProjectEditorView(project: project) { name, body in
+                await model.editProject(slug: project.slug, name: name, body: body)
+                return model.errorMessage
+            }
+            .presentationDetents([.large])
+        } else {
+            NavigationStack {
+                ContentUnavailableView(
+                    "Project details need a sync",
+                    systemImage: "arrow.triangle.2.circlepath",
+                    description: Text("Connect and sync this workspace before editing. Its existing project notes must be cached first.")
+                )
+                .navigationTitle("Edit Project")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel", role: .cancel) { projectEditPresentation = nil }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
     private func archiveProjectEditor(for presentation: ProjectArchivePresentation) -> some View {
         if let project = model.projectDetails[presentation.id], let configuration = model.configuration {
             ProjectArchiveView(
@@ -834,6 +868,11 @@ struct TaskListView: View {
         HStack(spacing: 0) {
             projectFilterButton(project)
             Menu {
+                Button("Edit Project…", systemImage: "pencil") {
+                    dismissProjectSidebar()
+                    projectEditPresentation = ProjectEditPresentation(id: project)
+                }
+                .accessibilityIdentifier("project-edit-\(project)")
                 if model.projectDetails[project]?.isArchived == true {
                     Button("Restore Project", systemImage: "arrow.uturn.backward") {
                         Task { @MainActor in

@@ -235,6 +235,52 @@ public actor TaskWorkspaceService {
         return slug
     }
 
+    public func editProject(
+        selection: RepositorySelection,
+        slug: String,
+        name: String,
+        body: String
+    ) async throws -> WorkspaceState {
+        let workspace = try await requireWorkspace(selection: selection)
+        let index = try Self.editableProjectIndex(slug: slug, in: workspace)
+        let original = workspace.projects[index]
+        let project = try TodoProject(
+            slug: original.project.slug,
+            relativePath: original.project.relativePath,
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            body: body,
+            extraProperties: original.project.extraProperties
+        )
+        guard project != original.project else { return workspace }
+
+        let content = try ObsidianProjectCodec().serializeProject(project)
+        var projects = workspace.projects
+        projects[index] = ProjectDocument(
+            project: project,
+            content: content,
+            blobSHA: original.blobSHA
+        )
+        let pendingChanges = try upsertingPendingChange(
+            path: Self.repositoryPath(
+                selection: selection,
+                storeRelativePath: project.relativePath
+            ),
+            content: content,
+            baseBlobSHA: original.blobSHA,
+            in: workspace.pendingChanges,
+            at: now()
+        )
+        let updated = try Self.replacing(
+            workspace,
+            tasks: workspace.tasks,
+            pendingChanges: pendingChanges,
+            conflicts: workspace.conflicts,
+            projects: projects
+        )
+        try await persistence.save(updated, expectedRevision: workspace.revision)
+        return updated
+    }
+
     public func archiveProject(
         selection: RepositorySelection,
         slug: String,

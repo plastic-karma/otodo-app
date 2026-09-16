@@ -28,6 +28,8 @@ Touch and hold OTodo's Home Screen icon and choose **New Todo** to open task cre
 Tap **+** to add a todo. Touch and hold **+** to choose **New Todo**, **Bulk Add**, or **New Project**.
 The sidebar separates **Todos**, **Upcoming**, and **Inbox** from project scope. Tap **+** beside its **Projects** heading to create a project directly. At accessibility text sizes, it uses the full width and scrolls utility controls with its content.
 
+Open a project's **… → Edit Project…** menu to change its display name and Markdown notes. The filename-backed slug stays fixed so existing todo links remain valid; edits save offline and sync through the normal outbox.
+
 Open a project's **… → Archive Project…** menu to review its todo count and disposition before saving. **Leave in project** is the default and preserves every task's memberships and state; archived projects do not hide their open todos from ordinary views. **Move to project** replaces only the archived project's link with an active existing or new project, preserving other memberships. **Move to Inbox** removes all project links. Moves include already-finished todos and never remove tags or notes.
 
 **Complete open todos** is opt-in. It uses the terminal `done` state, or the first configured terminal state if none is named `done`. It ends recurring todos without rescheduling them, leaves already-terminal todos unchanged, and does not cascade to descendants outside the project. The project marker, optional destination creation, and task changes save atomically offline.

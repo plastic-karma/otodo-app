@@ -1121,6 +1121,72 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(unchanged, durable)
     }
 
+    func testEditProjectPreservesIdentityReferencesAndCustomMetadataDurably() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let selection = try makeSelection()
+        let configuration = try makeConfiguration()
+        let project = try makeProject(
+            body: "Original notes\n",
+            extras: [YAMLProperty(name: "priority", value: .integer(7))]
+        )
+        let task = try makeDocument(
+            id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            name: "Linked todo",
+            projectSlugs: ["alpha"],
+            configuration: configuration
+        )
+        let initial = try makeWorkspace(
+            selection: selection,
+            configuration: configuration,
+            tasks: [task],
+            projects: [project]
+        )
+        let store = FileWorkspaceStore(rootURL: directory)
+        try await store.save(initial, expectedRevision: nil)
+
+        let editedAt = Date(timeIntervalSince1970: 1_700_000_400)
+        let pendingID = UUID(uuidString: "34343434-3434-3434-3434-343434343434")!
+        let service = makeService(
+            store: store,
+            id: taskID("01ARZ3NDEKTSV4RRFFQ69G5FAW"),
+            now: editedAt,
+            uuid: pendingID
+        )
+        let edited = try await service.editProject(
+            selection: selection,
+            slug: "alpha",
+            name: "  Personal  ",
+            body: "# Shared plans\n"
+        )
+
+        XCTAssertEqual(edited.tasks, initial.tasks)
+        XCTAssertEqual(edited.knownProjectSlugs, initial.knownProjectSlugs)
+        let document = try XCTUnwrap(edited.projects.first)
+        XCTAssertEqual(document.project.slug, "alpha")
+        XCTAssertEqual(document.project.relativePath, "Projects/alpha.md")
+        XCTAssertEqual(document.project.name, "Personal")
+        XCTAssertEqual(document.project.body, "# Shared plans\n")
+        XCTAssertEqual(
+            document.project.extraProperties,
+            [YAMLProperty(name: "priority", value: .integer(7))]
+        )
+        let pending = try XCTUnwrap(edited.pendingChanges.first)
+        XCTAssertEqual(edited.pendingChanges.count, 1)
+        XCTAssertEqual(pending.id, pendingID)
+        XCTAssertEqual(pending.path, repositoryPath(selection, "Projects/alpha.md"))
+        XCTAssertEqual(pending.baseBlobSHA, "project-base")
+        XCTAssertEqual(pending.content, document.content)
+        XCTAssertEqual(pending.createdAt, editedAt)
+
+        let durable = try await loadRequired(
+            FileWorkspaceStore(rootURL: directory),
+            selection: selection
+        )
+        XCTAssertEqual(durable, edited)
+    }
+
     func testReschedulingPreservesMixedTimesAndUneditedTaskDataDurably() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
