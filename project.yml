@@ -299,6 +299,15 @@ schemes:
     archive:
       config: Release
 
+  OTodoHostedTests:
+    build:
+      targets:
+        OTodo: all
+    test:
+      config: Debug
+      targets:
+        - OTodoAppTests
+
   OTodoWatch:
     build:
       targets:

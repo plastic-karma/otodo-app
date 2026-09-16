@@ -175,24 +175,23 @@ def make_plan(tests, disabled, weights, *, mode, test_filter):
 
 def build(output, derived_data):
     mode, test_filter = os.environ.get("CI_MODE", "full"), os.environ.get("CI_FILTER", "")
-    test_targets = ["-only-testing:OTodoAppTests"] if mode == "full" else []
+    scheme = "OTodoHostedTests" if mode == "full" else "OTodo"
     state = prepare(output)
     results = output / "results"
     results.mkdir(exist_ok=True)
     source_packages = derived_data / "SourcePackages"
     source_packages.mkdir(parents=True, exist_ok=True)
     run_command([
-        "xcodebuild", "-resolvePackageDependencies", "-project", "OTodo.xcodeproj", "-scheme", "OTodo",
+        "xcodebuild", "-resolvePackageDependencies", "-project", "OTodo.xcodeproj", "-scheme", scheme,
         "-derivedDataPath", str(derived_data), "-clonedSourcePackagesDirPath", str(source_packages),
     ], stage="ios-package-resolution", timeout=600, log_path=output / "logs/packages.log")
     arguments = [
-        "xcodebuild", "build-for-testing", "-project", "OTodo.xcodeproj", "-scheme", "OTodo",
+        "xcodebuild", "build-for-testing", "-project", "OTodo.xcodeproj", "-scheme", scheme,
         "-destination", f"platform=iOS Simulator,id={state['id']}", "-destination-timeout", "60",
         "-derivedDataPath", str(derived_data), "-resultBundlePath", str(results / "build.xcresult"),
         "-clonedSourcePackagesDirPath", str(source_packages), "-disableAutomaticPackageResolution",
         "-showBuildTimingSummary", "CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-",
         f"GITHUB_CLIENT_ID={os.environ.get('GH_OAUTH_CLIENT_ID', '')}",
-        *test_targets,
     ]
     with cancellation_scope() as cancelled:
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -222,7 +221,6 @@ def build(output, derived_data):
         "-destination", f"platform=iOS Simulator,id={state['id']}", "-destination-timeout", "60",
         "-parallel-testing-enabled", "NO", "-enumerate-tests", "-test-enumeration-style", "flat",
         "-test-enumeration-format", "json", "-test-enumeration-output-path", str(enumeration_path),
-        *test_targets,
     ], stage="ios-compiled-test-inventory", timeout=600, log_path=output / "logs/enumeration.log")
     tests, disabled = enumerated_tests(json.loads(enumeration_path.read_text()))
     weights = json.loads((ROOT / ".github/ci-test-durations.json").read_text())["seconds"]
