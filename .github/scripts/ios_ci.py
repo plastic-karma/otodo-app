@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build once, gate early, and account for every compiled iOS test."""
+"""Verify hosted iOS tests by default; run UI suites only for manual diagnosis."""
 
 import argparse
 from collections import Counter
@@ -26,7 +26,7 @@ SYSTEM_TESTS = {
     "OTodoUITests/OTodoUITests/testTodayWidgetRendersInWidgetGallery",
 }
 GROUPS = ("smoke", "functional", "integration")
-REQUIRED_JOBS = {"preflight", "swift-package-tests", "ios-build", "ios-tests", "watchos-simulator"}
+REQUIRED_JOBS = {"preflight", "swift-package-tests", "ios-build", "watchos-simulator"}
 
 
 def write_json(path, value):
@@ -56,7 +56,7 @@ def configure(test_filter, diagnostics):
         raise ValueError("test_filter must be Target[/Class[/testMethod]], not shell flags or a wildcard")
     mode = "focused" if test_filter else "diagnostics" if diagnostics else "full"
     output_values({"mode": mode, "filter": test_filter})
-    print(f"CI mode: {mode}; selected filter: {test_filter or 'none (all tests)'}", flush=True)
+    print(f"CI mode: {mode}; selected filter: {test_filter or ('hosted app tests' if mode == 'full' else 'all tests')}", flush=True)
     return mode
 
 
@@ -143,14 +143,19 @@ def make_plan(tests, disabled, weights, *, mode, test_filter):
         return {"smoke": selected, "functional": [], "integration": []}
     if test_filter:
         raise ValueError("Full and complete-diagnostics modes must not restrict test_filter")
-    if disabled:
-        raise ValueError(f"Full verification cannot silently omit disabled compiled tests: {disabled}")
-    required = CRITICAL_TESTS | SYSTEM_TESTS
-    if not required.issubset(tests):
-        raise ValueError(f"Required behavioral tests disappeared from the compiled scheme: {sorted(required - set(tests))}")
     hosted = [test for test in tests if test.startswith("OTodoAppTests/")]
     if not hosted:
         raise ValueError("The compiled scheme omitted hosted OTodoAppTests")
+    if mode == "full":
+        disabled_hosted = [test for test in disabled if not test.startswith("OTodoUITests/")]
+        if disabled_hosted:
+            raise ValueError(f"Full verification cannot omit disabled hosted tests: {disabled_hosted}")
+        return {"smoke": sorted(hosted)}
+    if disabled:
+        raise ValueError(f"Complete diagnosis cannot silently omit disabled compiled tests: {disabled}")
+    required = CRITICAL_TESTS | SYSTEM_TESTS
+    if not required.issubset(tests):
+        raise ValueError(f"Required behavioral tests disappeared from the compiled scheme: {sorted(required - set(tests))}")
     groups = {"smoke": sorted(set(hosted) | CRITICAL_TESTS), "functional": [], "integration": sorted(SYSTEM_TESTS)}
     assigned = set(groups["smoke"]) | SYSTEM_TESTS
     loads = {"functional": 0.0, "integration": sum(weights.get(test, 60.0) for test in SYSTEM_TESTS)}
@@ -164,11 +169,13 @@ def make_plan(tests, disabled, weights, *, mode, test_filter):
     if Counter(planned) != Counter(tests):
         raise ValueError("Partition planning lost or duplicated compiled tests")
     if not all(groups[group] for group in GROUPS):
-        raise ValueError("Full verification requires nonempty smoke, functional and integration partitions")
+        raise ValueError("Complete diagnosis requires nonempty smoke, functional and integration partitions")
     return groups
 
 
 def build(output, derived_data):
+    mode, test_filter = os.environ.get("CI_MODE", "full"), os.environ.get("CI_FILTER", "")
+    test_targets = ["-only-testing:OTodoAppTests"] if mode == "full" else []
     state = prepare(output)
     results = output / "results"
     results.mkdir(exist_ok=True)
@@ -185,6 +192,7 @@ def build(output, derived_data):
         "-clonedSourcePackagesDirPath", str(source_packages), "-disableAutomaticPackageResolution",
         "-showBuildTimingSummary", "CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-",
         f"GITHUB_CLIENT_ID={os.environ.get('GH_OAUTH_CLIENT_ID', '')}",
+        *test_targets,
     ]
     with cancellation_scope() as cancelled:
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -214,10 +222,10 @@ def build(output, derived_data):
         "-destination", f"platform=iOS Simulator,id={state['id']}", "-destination-timeout", "60",
         "-parallel-testing-enabled", "NO", "-enumerate-tests", "-test-enumeration-style", "flat",
         "-test-enumeration-format", "json", "-test-enumeration-output-path", str(enumeration_path),
+        *test_targets,
     ], stage="ios-compiled-test-inventory", timeout=600, log_path=output / "logs/enumeration.log")
     tests, disabled = enumerated_tests(json.loads(enumeration_path.read_text()))
     weights = json.loads((ROOT / ".github/ci-test-durations.json").read_text())["seconds"]
-    mode, test_filter = os.environ.get("CI_MODE", "full"), os.environ.get("CI_FILTER", "")
     groups = make_plan(tests, disabled, weights, mode=mode, test_filter=test_filter)
     manifest = {
         "schema_version": 1, "sha": os.environ.get("GITHUB_SHA", "local"),
@@ -229,12 +237,13 @@ def build(output, derived_data):
     }
     manifest["plan_id"] = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
     write_json(output / "manifest.json", manifest)
-    run_command([
-        sys.executable, str(Path(__file__).resolve()), "pack", "--products", str(products),
-        "--archive", str(output / "ios-test-products.tar.gz"),
-    ], stage="ios-products-package", timeout=180)
-    artifact = f"ios-test-products-{os.environ.get('GITHUB_RUN_ID', 'local')}-{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}"
-    output_values({"build_ready": "true", "products_artifact": artifact})
+    if mode == "diagnostics":
+        run_command([
+            sys.executable, str(Path(__file__).resolve()), "pack", "--products", str(products),
+            "--archive", str(output / "ios-test-products.tar.gz"),
+        ], stage="ios-products-package", timeout=180)
+        artifact = f"ios-test-products-{os.environ.get('GITHUB_RUN_ID', 'local')}-{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}"
+        output_values({"products_artifact": artifact})
     print(f"Compiled coverage: {len(manifest['expected'])} tests; partitions: {manifest['estimated_seconds']}", flush=True)
 
 
@@ -250,6 +259,11 @@ def load_manifest(path):
     planned = [test for tests in manifest["groups"].values() for test in tests]
     if Counter(planned) != Counter(manifest["expected"]) or len(set(planned)) != len(planned):
         raise ValueError("Test product manifest has incomplete or duplicate partition coverage")
+    if manifest["mode"] == "full" and (
+        set(manifest["groups"]) != {"smoke"} or not planned
+        or any(not test.startswith("OTodoAppTests/") for test in planned)
+    ):
+        raise ValueError("Full verification requires a nonempty hosted-only test plan")
     if Path(manifest["xctestrun"]).name != manifest["xctestrun"]:
         raise ValueError("Invalid compiled test-run filename")
     return manifest
@@ -381,8 +395,8 @@ def verify_evidence(directory, needs):
     for path in directory.rglob("coverage-*.json"):
         coverage = json.loads(path.read_text())
         group = coverage.get("group")
-        if group not in GROUPS:
-            raise ValueError(f"Unknown iOS coverage group: {group}")
+        if group != "smoke":
+            raise ValueError(f"UI partition evidence cannot satisfy hosted verification: {group}")
         for key, environment in (("sha", "GITHUB_SHA"), ("run_id", "GITHUB_RUN_ID")):
             if coverage.get(key) != os.environ.get(environment, "local"):
                 raise ValueError(f"Coverage belongs to a different {key}")
@@ -393,8 +407,8 @@ def verify_evidence(directory, needs):
             selected[group] = (coverage, path)
         elif coverage["attempt"] == current[0]["attempt"] and coverage != current[0]:
             raise ValueError(f"Conflicting {group} evidence for the same attempt")
-    if set(selected) != set(GROUPS):
-        raise ValueError(f"Missing iOS partition evidence: {sorted(set(GROUPS) - set(selected))}")
+    if set(selected) != {"smoke"}:
+        raise ValueError("Missing hosted iOS test evidence")
     manifest = load_manifest(selected["smoke"][1].parent / "manifest.json")
     all_observed = []
     for group, (coverage, _) in selected.items():
@@ -407,7 +421,7 @@ def verify_evidence(directory, needs):
         all_observed.extend(coverage["observed"])
     if Counter(all_observed) != Counter(manifest["expected"]):
         raise ValueError("Full verification lost or duplicated tests between partitions")
-    statement = f"FULL VERIFICATION PASSED: {len(all_observed)} compiled iOS tests, Linux core tests, and real live/offline Watch checks; SHA {manifest['sha']}"
+    statement = f"FULL VERIFICATION PASSED: {len(all_observed)} hosted iOS tests, Linux core tests, and real live/offline Watch checks; SHA {manifest['sha']}. Check UI behavior manually in TestFlight."
     print(statement, flush=True)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:

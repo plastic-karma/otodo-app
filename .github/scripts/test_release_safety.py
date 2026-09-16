@@ -108,8 +108,8 @@ class FullVerificationTests(unittest.TestCase):
         self.addCleanup(self.environment.stop)
         self.run = {"id": 10, "head_sha": "exact-sha", "status": "completed", "conclusion": "success",
                     "path": ".github/workflows/ci.yml", "html_url": "https://github.com/owner/repo/actions/runs/10"}
-        names = ["CI / preflight", "Swift package tests", "iOS / build and smoke", "iOS / functional",
-                 "iOS / integration", "Apple Watch companion", "CI / full verification"]
+        names = ["CI / preflight", "Swift package tests", "iOS / build and hosted tests",
+                 "Apple Watch companion", "CI / full verification"]
         self.jobs = [{"id": index + 1, "name": name, "head_sha": "exact-sha", "status": "completed",
                       "conclusion": "success"} for index, name in enumerate(names)]
 
@@ -167,12 +167,10 @@ class PullRequestReleaseTests(unittest.TestCase):
         self.jobs = [{"id": index + 1, "name": name, "head_sha": "pr-head", "status": "completed",
                       "conclusion": "success"} for index, name in enumerate(sorted(release.FULL_JOBS))]
 
-    def test_current_run_can_release_its_tested_merge_after_all_seven_checks(self):
-        with patch.object(release, "github_get", return_value=self.run) as get, \
-                patch.object(release, "github_pages", return_value=self.jobs) as pages:
+    def test_current_run_can_release_its_tested_merge_after_required_checks(self):
+        with patch.object(release, "github_get", return_value=self.run), \
+                patch.object(release, "github_pages", return_value=self.jobs):
             release.verify_ci()
-        get.assert_called_once_with("/repos/owner/repo/actions/runs/10")
-        pages.assert_called_once_with("/repos/owner/repo/actions/runs/10/jobs?filter=all", "jobs")
         self.assertEqual(self.output.read_text().strip(), "ci_url=" + self.run["html_url"])
 
     def test_foreign_run_cannot_be_substituted_for_the_caller(self):

@@ -485,7 +485,7 @@ gh workflow run ci.yml --ref your-branch \
   -f design_survey_only=true -f export_ui_snapshots=true
 ```
 
-Download the run's `ui-snapshots` artifact for full-resolution images and its attachment manifest. This focused run is not the full CI gate: omit `design_survey_only` (or set it to `false`) to run the complete core, iOS, and Watch checks. `export_ui_snapshots=true` also works with full CI.
+Download the run's `ui-snapshots-*` artifact for full-resolution images and its attachment manifest. This focused run is not the release gate. Normal CI runs core, hosted iOS, and Watch checks without UI tests; `export_ui_snapshots=true` only exports attachments from the selected tests and does not enable UI coverage.
 
 ### Product changelog entries
 
@@ -501,7 +501,7 @@ The app build generates `Changelog.json` from those commits and a fixed historic
 
 [`CI`](.github/workflows/ci.yml) runs automatically when a pull request is opened, updated with new commits, or reopened. After **CI / full verification** passes, same-repository PRs automatically call [`Release IPA`](.github/workflows/release.yml) with TestFlight publishing enabled. The release archives the exact PR merge revision tested by CI. Fork and Dependabot PRs run verification without automatic signing or publishing.
 
-The PR's CI run includes the TestFlight release and its certificate cleanup, so it remains in progress after verification passes. Its release gate checks all seven completed verification jobs in that same run. Active PR runs finish rather than being cancelled by a newer commit, protecting signing and cleanup; pending runs may be superseded by newer requests. The global release queue still serializes signing across every branch.
+The PR's CI run includes the TestFlight release and its certificate cleanup, so it remains in progress after verification passes. Its release gate checks all five completed verification jobs in that same run. Active PR runs finish rather than being cancelled by a newer commit, protecting signing and cleanup; pending runs may be superseded by newer requests. The global release queue still serializes signing across every branch.
 
 Manual CI remains available for branch verification and diagnosis; it does not automatically publish to TestFlight:
 
@@ -509,25 +509,25 @@ Manual CI remains available for branch verification and diagnosis; it does not a
 gh workflow run ci.yml --ref <branch>
 ```
 
-The canonical **CI / full verification** check requires portable metadata checks, the complete Linux Swift suite, real live/offline Watch verification, and every enabled compiled iOS test. iOS builds once, checks effective signed App Groups, and runs hosted application tests plus critical add/edit/attachment behavior first. Remaining tests run on two isolated simulator runners using that exact run's executable products; the real SpringBoard/widget scenarios stay together in the integration partition. The planner discovers tests from Xcode, uses `.github/ci-test-durations.json` only for load balancing, and assigns new tests even without a recorded timing. The final check rejects missing, skipped, duplicate, foreign-SHA, or stale failed-attempt coverage.
+The canonical **CI / full verification** check requires portable metadata checks, the complete Linux Swift suite, an iOS build with every hosted application test, and real live/offline Watch verification. Normal CI excludes `OTodoUITests` from compilation, test discovery, and execution; it does not publish executable products or start UI partition runners. iOS still checks effective signed App Groups and discovers hosted tests from Xcode. The final check rejects missing, skipped, duplicate, foreign-SHA, or stale failed-attempt hosted coverage. UI behavior is checked manually in TestFlight so automated UI suites do not delay iteration or publishing.
 
 Native compiler/XCTest errors become immediate file/test annotations. Commands have explicit deadlines, a separate native-test startup allowance, and bounded cancellation; per-test native limits do not replace whole-phase limits. Watch boot and build run concurrently, retain the absolute 300-second snapshot budgets, expose opt-in app-owned readiness/reply state, and preserve phone logs before offline shutdown. No fake snapshot replaces real delivery.
 
 Modes have separate run identities and concurrency groups. A superseded full run cannot be cancelled by a focused diagnostic:
 
 ```sh
-# Full coverage; screenshot export does not reduce the test plan.
-gh workflow run ci.yml --ref <branch> -f export_ui_snapshots=true
-# Keep running remaining partitions after a smoke assertion fails.
+# Normal release gate: core, hosted app, bundle, and Watch checks; no UI tests.
+gh workflow run ci.yml --ref <branch>
+# Explicitly run all UI suites; continue partitions after a smoke assertion fails.
 gh workflow run ci.yml --ref <branch> -f complete_diagnostics=true
 # Focused diagnosis cannot satisfy the full release check.
 gh workflow run ci.yml --ref <branch> \
   -f test_filter=OTodoUITests/OTodoUITests/testAttachmentSelectionSavesOfflineAndClearsForAnotherTodo
 ```
 
-Complete-diagnostics mode preserves later independent failures but never substitutes for canonical full verification. Ordinary full mode stops remaining iOS work after a definite smoke failure and cancels sibling matrix work on partition failure. Hosted, functional, integration, and Watch coverage remain mandatory for a successful release.
+Complete-diagnostics mode is opt-in: it builds all tests once, runs hosted and critical UI smoke tests, then runs the remaining functional and integration UI partitions on isolated simulators. The planner discovers new tests even without recorded timings; `.github/ci-test-durations.json` only balances the partitions. Focused and complete-diagnostics runs never authorize a release. UI test sources remain available for local testing, targeted diagnosis, and design surveys, but are not part of the normal CI or TestFlight gate.
 
-Every attempt retains small `*-evidence-*`/`watch-smoke-*` timing and coverage artifacts for seven days. Failed iOS jobs retain attempt/partition-specific `iOS-test-results-*` bundles; requested/failure screenshots use `ui-snapshots-*`. Metrics distinguish command elapsed time, native test startup, build milestones, and the first actionable issue. Downloaded test products are bound to the exact run, SHA, Xcode/SDK/architecture, and simulator type; archive transport preserves executable bits and safe internal links. A rerun may reuse prior successful partitions, but a newer failed observation cannot be replaced by older green evidence.
+Every attempt retains small `*-evidence-*`/`watch-smoke-*` timing and coverage artifacts for seven days. Failed iOS jobs retain attempt/partition-specific `iOS-test-results-*` bundles; requested/failure screenshots use `ui-snapshots-*`. Metrics distinguish command elapsed time, native test startup, build milestones, and the first actionable issue. Only complete-diagnostics runs transport test products between runners; these are bound to the exact run, SHA, Xcode/SDK/architecture, and simulator type. A rerun may reuse prior successful required jobs, but a newer failed observation cannot be replaced by older green evidence.
 
 Exact-input Linux `.build` cache reuse is enabled by default; use `use_build_cache=false` for cold comparisons. Keys include the pinned Swift 6.1.3 container digest, actual compiler identity, architecture, package inputs, sources and tests; there is no stale-prefix restore or signed-product/keychain cache. In the initial same-commit experiment, core job time fell from 86 to 58 seconds with identical 37-second container initialization: the core command fell from 31 to 12 seconds, warm restore cost one second, and the cold save cost nine seconds. These are measured samples, not a guaranteed hit rate or whole-CI speedup. All Actions are pinned to full commit SHAs; shared setup uses an isolated Python environment and checksum-verified XcodeGen 2.46.0. Apple package resolution runs as its own bounded preflight before simulator boot/build overlap, rather than hiding package fetching in a concurrent build.
 

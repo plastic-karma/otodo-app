@@ -134,7 +134,7 @@ The release job checks these names before doing expensive work. A missing value 
 
 ## Before every release
 
-1. Ensure the exact commit has a successful canonical **CI / full verification** check, including preflight, Linux, iOS build/smoke, both iOS partitions, and Watch. Manual and tag releases require a completed successful CI run for their exact SHA. An automatic PR release instead verifies all seven completed checks in its current CI run, which remains in progress during publishing. Focused or complete-diagnostics runs cannot authorize publishing.
+1. Ensure the exact commit has a successful canonical **CI / full verification** check, including preflight, Linux core tests, iOS build and hosted tests, and Watch verification. Manual and tag releases require a completed successful CI run for their exact SHA. An automatic PR release instead verifies all five completed checks in its current CI run, which remains in progress during publishing. UI tests are excluded from this gate; check UI behavior manually in TestFlight. Focused or complete-diagnostics runs cannot authorize publishing.
 2. Confirm the Apple Developer membership and App Store Connect agreements are current.
 3. Confirm all five App IDs in **Exact identities** use `group.plastickarma.otodo`, and that the main app's App Store Connect record still belongs to team `9492A97LWY`.
 4. Choose a marketing version containing one to three dot-separated integers, such as `1.2.0`. Do not reuse an App Store Connect version train that is closed.
@@ -148,13 +148,13 @@ For simulators, Xcode can leave the ordinary codesign entitlement dictionary emp
 
 Watch CI uses the same preinstalled iPhone selection as iOS CI, pairs it with a fresh compatible Watch, and completes both simulator boots before compilation. It requires `bootstatus` to report `Finished`: a zero exit status alone is insufficient because CoreSimulator can return zero after `Data Migration Failed`. A failed migration stops the job before app installation or connectivity checks; inspect the retained `boot-phone.log` and `boot-watch.log` before retrying on a fresh runner.
 
-The Watch snapshot wait has a fixed ten-minute deadline, including cold-pair readiness and actual request/reply delivery; progress never resets that deadline. Full iOS partitions have a one-hour execution budget for the complete compiled suite, separate from their simulator preparation and retained diagnostics.
+The Watch snapshot wait has a fixed ten-minute deadline, including cold-pair readiness and actual request/reply delivery; progress never resets that deadline. UI partitions run only when `complete_diagnostics=true` is explicitly dispatched, with an 80-minute execution budget per partition, separate from simulator preparation and retained diagnostics. They are not required before TestFlight upload.
 
 ## Automatic PR delivery to TestFlight
 
 Opening, updating, or reopening a same-repository PR starts full CI. When **CI / full verification** succeeds, its **TestFlight** job calls this workflow with `publish_testflight=true`; no CLI dispatch, tag, or separate approval is required. Fork and Dependabot PRs receive CI only.
 
-CI and release use the same `github.sha`: the PR's tested merge revision, not a later moving branch tip. The reusable workflow runs inside the caller's CI run and checks that run's seven canonical verification jobs through the Actions API before installing the signing key. The run ID must match the current execution, the event must be a same-repository PR, and the workflow must be `.github/workflows/ci.yml`. GitHub's API may identify the PR by its branch head SHA while the checkouts use its synthetic merge SHA; the shared run identity binds verification and release to the same execution. Missing, unfinished, skipped, failed, or foreign-SHA checks prevent publishing.
+CI and release use the same `github.sha`: the PR's tested merge revision, not a later moving branch tip. The reusable workflow runs inside the caller's CI run and checks that run's five canonical non-UI verification jobs through the Actions API before installing the signing key. The run ID must match the current execution, the event must be a same-repository PR, and the workflow must be `.github/workflows/ci.yml`. GitHub's API may identify the PR by its branch head SHA while the checkouts use its synthetic merge SHA; the shared run identity binds verification and release to the same execution. Missing, unfinished, skipped, failed, or foreign-SHA required checks prevent publishing.
 
 The PR's Checks tab and CI run show both verification and the nested TestFlight jobs, including the IPA artifact and release summary. Apple acceptance is reported separately from asynchronous processing. A manual CI dispatch remains verification-only; use the manual release controls below when you need an artifact-only build or a marketing-version override.
 

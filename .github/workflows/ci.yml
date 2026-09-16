@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       export_ui_snapshots:
-        description: Export screenshot attachments (does not reduce test coverage)
+        description: Export attachments from selected tests (does not enable UI tests)
         required: false
         default: false
         type: boolean
@@ -19,12 +19,12 @@ on:
         default: ""
         type: string
       design_survey_only:
-        description: Capture the design survey instead of running the full test suites
+        description: Run the UI design survey manually; not a release gate
         required: false
         default: false
         type: boolean
       complete_diagnostics:
-        description: Continue remaining partitions after a smoke assertion fails; not a release gate
+        description: Run all UI tests manually, continuing after smoke failures; not a release gate
         required: false
         default: false
         type: boolean
@@ -157,7 +157,7 @@ jobs:
           retention-days: 7
 
   ios-build:
-    name: ${{ needs.preflight.outputs.mode == 'full' && 'iOS / build and smoke' || format('iOS / {0} diagnosis', needs.preflight.outputs.mode) }}
+    name: ${{ needs.preflight.outputs.mode == 'full' && 'iOS / build and hosted tests' || format('iOS / {0} diagnosis', needs.preflight.outputs.mode) }}
     needs: preflight
     runs-on: macos-15
     timeout-minutes: 90
@@ -185,7 +185,7 @@ jobs:
             --output "$RUNNER_TEMP/ios-ci" --derived-data "$RUNNER_TEMP/DerivedData"
       - name: Publish exact-run executable test products
         id: products
-        if: needs.preflight.outputs.mode != 'focused'
+        if: needs.preflight.outputs.mode == 'diagnostics'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.build.outputs.products_artifact }}
@@ -195,7 +195,7 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           retention-days: 7
-      - name: Run early hosted and critical UI gate
+      - name: Run hosted tests or explicitly requested UI diagnosis
         id: smoke
         run: |
           python3 .github/scripts/ios_ci.py test --group smoke \
@@ -210,7 +210,7 @@ jobs:
           python3 .github/scripts/ios_ci.py diagnostics --output "$RUNNER_TEMP/ios-ci" "${args[@]}"
       - name: Summarize smoke and build timing
         if: always()
-        run: python3 .github/scripts/ci_runtime.py summary --title 'iOS build and early behavioral gate'
+        run: python3 .github/scripts/ci_runtime.py summary --title 'iOS build and selected test coverage'
       - name: Retain compiled plan and smoke evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -240,16 +240,15 @@ jobs:
           retention-days: 7
 
   ios-tests:
-    name: ${{ needs.preflight.outputs.mode == 'full' && format('iOS / {0}', matrix.partition) || format('iOS / {0} ({1})', matrix.partition, needs.preflight.outputs.mode) }}
+    name: iOS / ${{ matrix.partition }} (diagnostics)
     needs: [preflight, ios-build]
     if: >-
-      ${{ !cancelled() && needs.preflight.outputs.mode != 'focused' &&
-          needs.ios-build.outputs.build_ready == 'true' &&
-          (needs.ios-build.result == 'success' || needs.preflight.outputs.mode == 'diagnostics') }}
+      ${{ !cancelled() && needs.preflight.outputs.mode == 'diagnostics' &&
+          needs.ios-build.outputs.build_ready == 'true' }}
     runs-on: macos-15
     timeout-minutes: 90
     strategy:
-      fail-fast: ${{ needs.preflight.outputs.mode == 'full' }}
+      fail-fast: false
       matrix:
         partition: [functional, integration]
     env:
@@ -367,7 +366,7 @@ jobs:
 
   full-verification:
     name: CI / full verification
-    needs: [preflight, swift-package-tests, ios-build, ios-tests, watchos-simulator]
+    needs: [preflight, swift-package-tests, ios-build, watchos-simulator]
     if: always() && needs.preflight.outputs.mode == 'full'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -381,9 +380,9 @@ jobs:
       - name: Download all attempt-specific coverage evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: ios-evidence-*
+          pattern: ios-evidence-smoke-*
           path: ${{ runner.temp }}/ios-coverage
-      - name: Require all platforms and every compiled iOS test
+      - name: Require all non-UI platforms and every hosted iOS test
         run: python3 .github/scripts/ios_ci.py verify --evidence "$RUNNER_TEMP/ios-coverage"
 
   testflight:

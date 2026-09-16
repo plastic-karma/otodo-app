@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regressions for full coverage, diagnosis isolation, and failed rerun evidence."""
+"""Regressions for hosted coverage, manual UI diagnosis, and failed rerun evidence."""
 
 from collections import Counter
 import os
@@ -24,8 +24,11 @@ class CoverageTests(unittest.TestCase):
         })
         environment.start()
         self.addCleanup(environment.stop)
-        self.tests = sorted(ios_ci.CRITICAL_TESTS | ios_ci.SYSTEM_TESTS | {
+        self.tests = [
             "OTodoAppTests/HostedTests/testSharedContainer",
+            "OTodoAppTests/HostedTests/testNewHostedBehavior",
+        ]
+        self.ui_tests = sorted(ios_ci.CRITICAL_TESTS | ios_ci.SYSTEM_TESTS | {
             "OTodoUITests/OTodoUITests/testNewBehavior",
             "OTodoUITests/OtherTests/testNewScene",
         })
@@ -55,16 +58,17 @@ class CoverageTests(unittest.TestCase):
         return directory
 
     def complete_evidence(self):
-        for group in ios_ci.GROUPS:
+        for group in self.groups:
             self.evidence(group)
 
     def test_compiled_discovery_preserves_new_tests_once_and_groups_system_interactions(self):
+        all_tests = self.tests + self.ui_tests
         document = {"errors": [], "values": [{
-            "enabledTests": [{"identifier": test + "()"} for test in self.tests], "disabledTests": [],
+            "enabledTests": [{"identifier": test + "()"} for test in all_tests], "disabledTests": [],
         }]}
         tests, disabled = ios_ci.enumerated_tests(document)
-        groups = ios_ci.make_plan(tests, disabled, {}, mode="full", test_filter="")
-        self.assertEqual(Counter(test for group in groups.values() for test in group), Counter(self.tests))
+        groups = ios_ci.make_plan(tests, disabled, {}, mode="diagnostics", test_filter="")
+        self.assertEqual(Counter(test for group in groups.values() for test in group), Counter(all_tests))
         self.assertTrue(ios_ci.SYSTEM_TESTS.issubset(groups["integration"]))
         self.assertIn("OTodoAppTests/HostedTests/testSharedContainer", groups["smoke"])
         self.assertNotIn("OTodoUITests/OTodoUITests/testNewBehavior", groups["smoke"])
@@ -73,8 +77,16 @@ class CoverageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ios_ci.enumerated_tests({"errors": [], "values": []})
 
+    def test_default_plan_excludes_ui_but_requires_hosted_coverage(self):
+        groups = ios_ci.make_plan(self.tests + self.ui_tests, [self.ui_tests[0]], {}, mode="full", test_filter="")
+        self.assertEqual(sorted(test for group in groups.values() for test in group), sorted(self.tests))
+        with self.assertRaises(ValueError):
+            ios_ci.make_plan(self.ui_tests, [], {}, mode="full", test_filter="")
+        with self.assertRaises(ValueError):
+            ios_ci.make_plan(self.tests, [self.tests[0]], {}, mode="full", test_filter="")
+
     def test_focused_success_cannot_be_used_as_full_verification(self):
-        focused = ios_ci.make_plan(self.tests, [], {}, mode="focused", test_filter="OTodoUITests/OtherTests")
+        focused = ios_ci.make_plan(self.tests + self.ui_tests, [], {}, mode="focused", test_filter="OTodoUITests/OtherTests")
         self.assertEqual(focused["smoke"], ["OTodoUITests/OtherTests/testNewScene"])
         self.complete_evidence()
         self.assertEqual(ios_ci.verify_evidence(self.directory, self.needs), len(self.tests))
@@ -94,18 +106,18 @@ class CoverageTests(unittest.TestCase):
             ios_ci.verify_evidence(self.directory, self.needs)
         self.assertIn("watchos-simulator", str(error.exception))
         self.needs["watchos-simulator"]["result"] = "success"
-        self.evidence("functional", missing=True)
+        self.evidence("smoke", missing=True)
         with self.assertRaises(ValueError):
             ios_ci.verify_evidence(self.directory, self.needs)
 
     def test_newer_failed_attempt_cannot_reuse_older_passing_evidence(self):
         self.complete_evidence()
         self.assertEqual(ios_ci.verify_evidence(self.directory, self.needs), len(self.tests))
-        self.evidence("functional", attempt=2, missing=True)
+        self.evidence("smoke", attempt=2, missing=True)
         with self.assertRaises(ValueError) as error:
             ios_ci.verify_evidence(self.directory, self.needs)
-        self.assertIn("functional", str(error.exception))
-        self.evidence("functional", attempt=3)
+        self.assertIn("smoke", str(error.exception))
+        self.evidence("smoke", attempt=3)
         self.assertEqual(ios_ci.verify_evidence(self.directory, self.needs), len(self.tests))
         with patch.dict(os.environ, {"GITHUB_SHA": "b" * 40}):
             with self.assertRaises(ValueError):

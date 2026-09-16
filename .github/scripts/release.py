@@ -17,9 +17,8 @@ from manage_api_certificates import NoRedirects, required_environment
 from validate_bundles import VERSION_PATTERN, load_project, validate_built, validate_source
 
 FULL_JOBS = {
-    "CI / preflight", "Swift package tests", "iOS / build and smoke",
-    "iOS / functional", "iOS / integration", "Apple Watch companion",
-    "CI / full verification",
+    "CI / preflight", "Swift package tests", "iOS / build and hosted tests",
+    "Apple Watch companion", "CI / full verification",
 }
 
 
@@ -132,7 +131,7 @@ def verify_ci() -> None:
             return
     raise RuntimeError(
         f"No successful full .github/workflows/ci.yml verification exists for exact SHA {sha}; "
-        "all seven canonical jobs, including 'CI / full verification', must succeed. "
+        "all five canonical non-UI jobs, including 'CI / full verification', must succeed. "
         "Focused/diagnostic green runs cannot authorize release."
     )
 
