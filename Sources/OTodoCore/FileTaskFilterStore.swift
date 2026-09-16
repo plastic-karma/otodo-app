@@ -7,7 +7,7 @@ public actor FileTaskFilterStore {
 
     private struct Envelope: Codable {
         let version: Int
-        let selection: RepositorySelection
+        let selection: WorkspaceSelection
         let filters: [SavedTaskFilter]
     }
 
@@ -17,14 +17,14 @@ public actor FileTaskFilterStore {
         self.rootURL = rootURL.standardizedFileURL
     }
 
-    public func load(selection: RepositorySelection) async throws -> [SavedTaskFilter] {
+    public func load(selection: WorkspaceSelection) async throws -> [SavedTaskFilter] {
         try requireFileRoot()
         return try Self.persistenceLock.withLock {
             try loadPersistedFilters(selection: selection) ?? SavedTaskFilter.defaults
         }
     }
 
-    public func save(_ filters: [SavedTaskFilter], selection: RepositorySelection) async throws {
+    public func save(_ filters: [SavedTaskFilter], selection: WorkspaceSelection) async throws {
         try requireFileRoot()
         try Self.validate(filters)
         let encoder = JSONEncoder()
@@ -79,14 +79,14 @@ public actor FileTaskFilterStore {
         }
     }
 
-    private func filtersURL(for selection: RepositorySelection) -> URL {
+    private func filtersURL(for selection: WorkspaceSelection) -> URL {
         rootURL.appendingPathComponent(
             "\(FileWorkspaceStore.selectionKey(for: selection)).json",
             isDirectory: false
         )
     }
 
-    private func loadPersistedFilters(selection: RepositorySelection) throws -> [SavedTaskFilter]? {
+    private func loadPersistedFilters(selection: WorkspaceSelection) throws -> [SavedTaskFilter]? {
         let data: Data
         do {
             data = try Data(contentsOf: filtersURL(for: selection))

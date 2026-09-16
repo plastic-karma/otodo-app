@@ -11,7 +11,7 @@ final class TaskFilterLibrary {
     private(set) var errorMessage: String?
 
     @ObservationIgnored private let store: FileTaskFilterStore
-    @ObservationIgnored private var selection: RepositorySelection?
+    @ObservationIgnored private var selection: WorkspaceSelection?
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var queries: [String: TaskFilterQuery] = TaskFilterLibrary.builtInQueries
     @ObservationIgnored private var operationInProgress = false
@@ -25,7 +25,7 @@ final class TaskFilterLibrary {
         self.store = store
     }
 
-    func load(selection: RepositorySelection?) async {
+    func load(selection: WorkspaceSelection?) async {
         let requestedGeneration = UUID()
         generation = requestedGeneration
         if self.selection != selection {

@@ -5,7 +5,7 @@ import OTodoCore
 struct AddTodoIntent: AppIntent {
     static let title: LocalizedStringResource = "Add Todo"
     static let description = IntentDescription(
-        "Save text and an optional source link to your OTodo Inbox. Connect a workspace in OTodo first; captures also work offline."
+        "Save text and an optional source link to your OTodo Inbox. Choose a local or GitHub workspace in OTodo first; captures also work offline."
     )
     static let openAppWhenRun = false
 

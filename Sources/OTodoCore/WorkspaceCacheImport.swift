@@ -75,7 +75,8 @@ extension WorkspaceState {
             tasks: imported, baseHeadCommitSHA: baseHeadCommitSHA, baseRootTreeSHA: baseRootTreeSHA,
             pendingChanges: pendingChanges, conflicts: conflicts, revision: revision,
             relationshipBlocks: relationshipBlocks, attachments: attachments,
-            projects: projectsByPath.values.sorted { $0.project.relativePath < $1.project.relativePath }
+            projects: projectsByPath.values.sorted { $0.project.relativePath < $1.project.relativePath },
+            localAttachmentFiles: localAttachmentFiles
         )
     }
 }

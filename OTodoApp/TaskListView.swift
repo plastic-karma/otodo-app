@@ -996,7 +996,7 @@ struct TaskListView: View {
                     await model.signOut()
                 }
             } label: {
-                Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+                Label(model.workspaceSelection?.isLocal == true ? "Switch workspace" : "Sign out / Switch workspace", systemImage: "rectangle.portrait.and.arrow.right")
                     .font(.subheadline)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
@@ -1005,6 +1005,7 @@ struct TaskListView: View {
             .foregroundStyle(.secondary)
             .disabled(model.isBusy)
             .accessibilityIdentifier("sign-out")
+            .accessibilityHint("Keeps this workspace on this device. Choose local storage or GitHub on the welcome screen.")
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
         }

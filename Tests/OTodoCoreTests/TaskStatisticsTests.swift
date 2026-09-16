@@ -108,7 +108,7 @@ final class TaskStatisticsTests: XCTestCase, @unchecked Sendable {
         for schema in [1, 2] {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             defer { try? FileManager.default.removeItem(at: root) }
-            let selection = try RepositorySelection(owner: "test", name: "stats", branch: "main", storePath: "Todo")
+            let selection = try WorkspaceSelection(owner: "test", name: "stats", branch: "main", storePath: "Todo")
             let config = try configuration(schema: schema)
             let store = FileWorkspaceStore(rootURL: root)
             try await store.save(WorkspaceState(
@@ -163,7 +163,7 @@ final class TaskStatisticsTests: XCTestCase, @unchecked Sendable {
     func testAttachmentUsageUsesVaultPrefixRatherThanRepositoryStorePath() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let selection = try RepositorySelection(owner: "test", name: "stats", branch: "main", storePath: "repository/store")
+        let selection = try WorkspaceSelection(owner: "test", name: "stats", branch: "main", storePath: "repository/store")
         let config = try configuration(prefix: "Vault/Todos")
         let store = FileWorkspaceStore(rootURL: root)
         try await store.save(WorkspaceState(

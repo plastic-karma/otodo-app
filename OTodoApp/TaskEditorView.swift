@@ -68,7 +68,7 @@ struct TaskEditorView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private let attachmentModel: AppModel?
-    private let attachmentSelection: RepositorySelection?
+    private let attachmentSelection: WorkspaceSelection?
     private let configuration: StoreConfiguration
     private let projectChoices: [String]
     private let projectChoiceSet: Set<String>

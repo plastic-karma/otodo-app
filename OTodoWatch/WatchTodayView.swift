@@ -46,7 +46,7 @@ struct WatchTodayView: View {
                     taskSection("Today", tasks: day.today, overdue: false)
                 } else {
                     Section("Set up on iPhone") {
-                        Text("Open OTodo on your paired iPhone, sign in, and select a workspace.")
+                        Text("Open OTodo on your paired iPhone and choose a local or GitHub workspace.")
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }

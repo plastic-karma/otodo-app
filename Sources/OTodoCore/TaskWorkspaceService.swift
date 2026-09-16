@@ -94,8 +94,8 @@ public enum ProjectArchiveDestination: Sendable, Equatable {
     case newProject(slug: String, name: String)
 }
 
-/// Offline-first task operations. Every mutation is validated, reflected in the
-/// durable outbox, and saved before its result is returned.
+/// Offline-first operations. Mutations are durably finished locally; GitHub workspaces
+/// additionally retain an outbox for remote publication.
 public actor TaskWorkspaceService {
     private let attachmentStore: AttachmentStore?
     private let persistence: any WorkspacePersisting
@@ -123,7 +123,37 @@ public actor TaskWorkspaceService {
         self.calendar = calendar
     }
 
-    public func load(selection: RepositorySelection) async throws -> WorkspaceState? {
+    /// Creates an empty schema-2 workspace, or reopens the same durable local identity.
+    public func createLocalWorkspace(selection: WorkspaceSelection = .onDevice) async throws -> WorkspaceState {
+        guard selection.isLocal else {
+            throw OTodoError.validation(field: "workspace", message: "Local creation requires a local workspace identity")
+        }
+        if let existing = try await load(selection: selection) { return existing }
+        let configuration = try StoreConfiguration(
+            schemaVersion: 2, tasksDirectory: "Tasks", projectsDirectory: "Projects",
+            obsidianLinkPrefix: "", defaultState: "backlog",
+            states: [
+                WorkflowState(id: "backlog", name: "Backlog", isTerminal: false),
+                WorkflowState.inProgress,
+                WorkflowState(id: "done", name: "Done", isTerminal: true),
+                WorkflowState(id: "cancelled", name: "Cancelled", isTerminal: true),
+            ]
+        )
+        let workspace = try WorkspaceState(
+            selection: selection, configuration: configuration, tasks: [],
+            baseHeadCommitSHA: "", baseRootTreeSHA: "", pendingChanges: [], conflicts: []
+        )
+        do {
+            try await persistence.save(workspace, expectedRevision: nil)
+            return workspace
+        } catch let error as OTodoError {
+            guard case .conflict = error else { throw error }
+            // Another app-group process may have created the same identity concurrently.
+            return try await requireWorkspace(selection: selection)
+        }
+    }
+
+    public func load(selection: WorkspaceSelection) async throws -> WorkspaceState? {
         guard let workspace = try await persistence.load(selection: selection) else {
             return nil
         }
@@ -131,12 +161,12 @@ public actor TaskWorkspaceService {
         return workspace
     }
 
-    public func loadWorkspace(selection: RepositorySelection) async throws -> WorkspaceState {
+    public func loadWorkspace(selection: WorkspaceSelection) async throws -> WorkspaceState {
         try await requireWorkspace(selection: selection)
     }
 
     public func loadTask(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         id: TaskID
     ) async throws -> TodoTask {
         let workspace = try await requireWorkspace(selection: selection)
@@ -149,7 +179,7 @@ public actor TaskWorkspaceService {
     /// Returns nonterminal tasks by default, ordered by due date and time
     /// (date-only before timed, undated last), configured state order, exact UTF-8 name order, then ULID.
     public func listTasks(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         includeTerminal: Bool = false
     ) async throws -> [TodoTask] {
         let workspace = try await requireWorkspace(selection: selection)
@@ -203,10 +233,10 @@ public actor TaskWorkspaceService {
         return tasks
     }
 
-    /// Creates a direct Markdown project record and adds it to the durable outbox.
+    /// Creates and durably saves a direct Markdown project record.
     @discardableResult
     public func addProject(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         slug: String,
         title: String,
         body: String = ""
@@ -238,7 +268,7 @@ public actor TaskWorkspaceService {
 
     /// Edits presentation metadata without renaming the record or changing task memberships.
     public func updateProject(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         expectedProject: TodoProject,
         name: String,
         body: String
@@ -269,7 +299,7 @@ public actor TaskWorkspaceService {
     }
 
     public func archiveProject(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         slug: String,
         destination: ProjectArchiveDestination = .leaveInProject,
         completeOpenTasks: Bool = false
@@ -396,7 +426,7 @@ public actor TaskWorkspaceService {
     }
 
     public func restoreProject(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         slug: String
     ) async throws -> WorkspaceState {
         let workspace = try await requireWorkspace(selection: selection)
@@ -477,7 +507,7 @@ public actor TaskWorkspaceService {
     }
 
     public func addTask(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         name: String,
         state: String? = nil,
         projectSlugs: [String] = [],
@@ -585,7 +615,7 @@ public actor TaskWorkspaceService {
     /// Creates default-state todos from raw names in one durable mutation.
     /// Blank lines are ignored; due phrases are parsed before validating and saving the batch.
     public func addTasks(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         names: [String],
         projectSlugs: [String] = [],
         tags: [String] = [],
@@ -670,7 +700,7 @@ public actor TaskWorkspaceService {
     }
 
     public func editTask(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         id: TaskID,
         expectedTask: TodoTask,
         update: TaskUpdate,
@@ -693,7 +723,7 @@ public actor TaskWorkspaceService {
 
     /// Completes this task and all active descendants in one durable mutation.
     public func completeTask(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         expectedTask: TodoTask,
         completedOn: CivilDate
     ) async throws -> TodoTask {
@@ -911,7 +941,7 @@ public actor TaskWorkspaceService {
 
     /// Reschedules the complete selection in one optimistic, durable mutation.
     public func rescheduleTasks(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         expectedTasks: [TodoTask],
         dueDate: TaskDueDateChange,
         dueTime: TaskDueTimeChange
@@ -1017,7 +1047,7 @@ public actor TaskWorkspaceService {
     }
 
     public func editTask(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         id: TaskID,
         expectedTask: TodoTask,
         name: String,
@@ -1062,7 +1092,7 @@ public actor TaskWorkspaceService {
     }
 
     public func deleteTask(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         id: TaskID,
         expectedTask: TodoTask
     ) async throws {
@@ -1120,7 +1150,7 @@ public actor TaskWorkspaceService {
     }
 
     public func resolveConflict(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         path: String,
         resolution: WorkspaceConflictResolution
     ) async throws -> WorkspaceState {
@@ -1336,22 +1366,22 @@ public actor TaskWorkspaceService {
     }
 
     public func keepLocalConflict(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         path: String
     ) async throws -> WorkspaceState {
         try await resolveConflict(selection: selection, path: path, resolution: .keepLocal)
     }
 
     public func useRemoteConflict(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         path: String
     ) async throws -> WorkspaceState {
         try await resolveConflict(selection: selection, path: path, resolution: .useRemote)
     }
 
-    private func requireWorkspace(selection: RepositorySelection) async throws -> WorkspaceState {
+    private func requireWorkspace(selection: WorkspaceSelection) async throws -> WorkspaceState {
         guard let workspace = try await persistence.load(selection: selection) else {
-            throw OTodoError.notFound(resource: "workspace \(selection.owner)/\(selection.name)")
+            throw OTodoError.notFound(resource: "workspace \(selection.displayName)")
         }
         try Self.validateSelection(workspace, expected: selection)
         return workspace
@@ -1527,7 +1557,7 @@ public actor TaskWorkspaceService {
 
     private static func validateSelection(
         _ workspace: WorkspaceState,
-        expected selection: RepositorySelection
+        expected selection: WorkspaceSelection
     ) throws {
         guard workspace.selection == selection else {
             throw OTodoError.corruptLocalState(message: "Loaded workspace has the wrong repository selection")
@@ -1582,6 +1612,7 @@ public actor TaskWorkspaceService {
         guard let attachmentStore else { throw OTodoError.corruptLocalState(message: "Attachment storage is unavailable") }
         var result = body
         var paths = Set(workspace.pendingChanges.map(\.path) + workspace.attachments.map(\.path) + workspace.conflicts.map(\.path))
+        paths.formUnion(workspace.localAttachmentFiles.keys)
         for draft in drafts {
             let path = Self.repositoryPath(selection: workspace.selection, storeRelativePath: draft.path)
             guard paths.insert(path).inserted else { throw OTodoError.conflict(message: "Attachment path already exists; re-import under a fresh path") }
@@ -1591,7 +1622,7 @@ public actor TaskWorkspaceService {
         return result
     }
 
-    private func attachmentChanges(_ drafts: [AttachmentDraft], selection: RepositorySelection, at date: Date) throws -> [PendingChange] {
+    private func attachmentChanges(_ drafts: [AttachmentDraft], selection: WorkspaceSelection, at date: Date) throws -> [PendingChange] {
         try drafts.map { try PendingChange(id: $0.id, path: Self.repositoryPath(selection: selection, storeRelativePath: $0.path),
             baseBlobSHA: nil, payload: .binaryFile($0.localFile), createdAt: date) }
     }
@@ -1607,6 +1638,12 @@ public actor TaskWorkspaceService {
         guard workspace.revision < UInt64.max else {
             throw OTodoError.corruptLocalState(message: "Workspace revision cannot be incremented")
         }
+        var localFiles = workspace.localAttachmentFiles
+        if workspace.selection.isLocal {
+            for change in pendingChanges {
+                if let file = change.payload.binaryFile { localFiles[change.path] = file }
+            }
+        }
         return try WorkspaceState(
             selection: workspace.selection,
             configuration: workspace.configuration,
@@ -1614,12 +1651,13 @@ public actor TaskWorkspaceService {
             tasks: tasks,
             baseHeadCommitSHA: workspace.baseHeadCommitSHA,
             baseRootTreeSHA: workspace.baseRootTreeSHA,
-            pendingChanges: pendingChanges,
+            pendingChanges: workspace.selection.isLocal ? [] : pendingChanges,
             conflicts: conflicts,
             revision: workspace.revision + 1,
             relationshipBlocks: try relationshipBlocks(tasks: tasks, conflicts: conflicts, in: workspace),
             attachments: workspace.attachments,
-            projects: projects?.sorted { $0.project.relativePath < $1.project.relativePath } ?? workspace.projects
+            projects: projects?.sorted { $0.project.relativePath < $1.project.relativePath } ?? workspace.projects,
+            localAttachmentFiles: localFiles
         )
     }
 
@@ -1656,7 +1694,7 @@ public actor TaskWorkspaceService {
     }
 
     private static func repositoryPath(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         storeRelativePath: String
     ) -> String {
         selection.storePath.isEmpty
@@ -1666,7 +1704,7 @@ public actor TaskWorkspaceService {
 
     private static func storeRelativePath(
         for repositoryPath: String,
-        selection: RepositorySelection
+        selection: WorkspaceSelection
     ) throws -> String {
         if selection.storePath.isEmpty {
             return repositoryPath

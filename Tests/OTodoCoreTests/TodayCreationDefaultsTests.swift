@@ -6,7 +6,7 @@ final class TodayCreationDefaultsTests: XCTestCase, @unchecked Sendable {
     func testBulkDefaultDatePersistsWithoutOverridingPhrasesOrLeakingToOtherViews() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let selection = try RepositorySelection(owner: "test", name: "today", branch: "main", storePath: "")
+        let selection = try WorkspaceSelection(owner: "test", name: "today", branch: "main", storePath: "")
         let configuration = try StoreConfiguration(
             schemaVersion: 2, tasksDirectory: "Tasks", projectsDirectory: "Projects", obsidianLinkPrefix: "",
             defaultState: "open", states: [WorkflowState(id: "open", name: "Open", isTerminal: false)]

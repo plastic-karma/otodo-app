@@ -161,5 +161,5 @@ struct TaskSearchView: View {
 private struct SearchInput: Equatable, Sendable {
     let tasks: [TodoTask]
     let projects: [String: TodoProject]
-    let workspace: RepositorySelection?
+    let workspace: WorkspaceSelection?
 }

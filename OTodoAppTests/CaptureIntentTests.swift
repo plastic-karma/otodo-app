@@ -38,11 +38,60 @@ final class CaptureIntentTests: XCTestCase {
         XCTAssertTrue(capture.body.contains("me@example.com"))
     }
 
+    func testLocalSelectionSupportsIntentShareAttachmentsAndTokenlessAppRestore() async throws {
+        let directory = try SharedWorkspaceStorage.prepareForApplication(isUITesting: true)
+        let selectionStore = WorkspaceSelectionStore(directoryURL: directory)
+        let previous = try await selectionStore.load()
+        let selection = WorkspaceSelection.local(id: UUID())
+        let root = directory.appendingPathComponent("workspaces", isDirectory: true)
+        let key = FileWorkspaceStore.selectionKey(for: selection)
+        addTeardownBlock {
+            if let previous { try await selectionStore.save(previous) }
+            else { try await selectionStore.clear() }
+            for path in [root.appendingPathComponent(key + ".json"),
+                         root.appendingPathComponent("attachment-files").appendingPathComponent(key)] {
+                if FileManager.default.fileExists(atPath: path.path) { try FileManager.default.removeItem(at: path) }
+            }
+            _ = try SharedWorkspaceStorage.prepareForApplication(isUITesting: false)
+        }
+        let persistence = FileWorkspaceStore(rootURL: root)
+        let service = TaskWorkspaceService(persistence: persistence, taskCodec: ObsidianTaskCodec())
+        _ = try await service.createLocalWorkspace(selection: selection)
+        try await selectionStore.save(selection)
+
+        var intent = AddTodoIntent()
+        intent.text = "Captured without an account"
+        _ = try await intent.perform()
+        let context = try await SharedTaskCapture.attachmentContext()
+        let data = Data("Shared local attachment".utf8)
+        let attachment = try await context.store.stage(data: data, filename: "shared.txt", selection: context.selection)
+        let shared = try await SharedTaskCapture.save(name: "Local share", body: "Source context",
+                                                      url: "https://example.com/source", attachments: [attachment],
+                                                      expectedSelection: selection)
+        try await context.store.discard(drafts: [attachment], selection: selection, persistence: persistence)
+
+        let model = try AppModel(infoDictionary: [:], launchArguments: ["-ui-testing", "-ui-testing-local-onboarding"])
+        await model.start()
+        XCTAssertEqual(model.rootState, .workspace)
+        XCTAssertEqual(model.workspaceSelection, selection)
+        XCTAssertEqual(Set(model.tasks.map(\.name)), ["Captured without an account", "Local share"])
+        XCTAssertEqual(model.pendingChangeCount, 0)
+        XCTAssertNil(model.errorMessage)
+        let cached = try await model.openAttachment(path: attachment.path, imported: nil, selection: selection)
+        XCTAssertEqual(try Data(contentsOf: cached.url), data)
+        XCTAssertEqual(model.tasks.first(where: { $0.id == shared.id })?.url, "https://example.com/source")
+        await model.refresh()
+        XCTAssertNil(model.errorMessage, "Refreshing local storage must not ask for GitHub authorization")
+        let saved = try await service.loadWorkspace(selection: selection)
+        XCTAssertTrue(saved.pendingChanges.isEmpty)
+        XCTAssertEqual(saved.localAttachmentFiles[attachment.path], attachment.localFile)
+    }
+
     func testParameterizedIntentPersistsProjectlessUndatedMarkdownInNormalOutbox() async throws {
         let directory = try SharedWorkspaceStorage.prepareForApplication(isUITesting: true)
-        let selectionStore = RepositorySelectionStore(directoryURL: directory)
+        let selectionStore = WorkspaceSelectionStore(directoryURL: directory)
         let previousSelection = try await selectionStore.load()
-        let selection = try RepositorySelection(
+        let selection = try WorkspaceSelection(
             owner: "intent-testing", name: UUID().uuidString, branch: "main", storePath: ""
         )
         let root = directory.appendingPathComponent("workspaces", isDirectory: true)
@@ -151,9 +200,9 @@ final class CaptureIntentTests: XCTestCase {
 
     func testIntentAndSharedCaptureRemainRootsInVersionTwoHierarchy() async throws {
         let directory = try SharedWorkspaceStorage.prepareForApplication(isUITesting: true)
-        let selectionStore = RepositorySelectionStore(directoryURL: directory)
+        let selectionStore = WorkspaceSelectionStore(directoryURL: directory)
         let previousSelection = try await selectionStore.load()
-        let selection = try RepositorySelection(
+        let selection = try WorkspaceSelection(
             owner: "subtask-capture-testing", name: UUID().uuidString, branch: "main", storePath: ""
         )
         let root = directory.appendingPathComponent("workspaces", isDirectory: true)

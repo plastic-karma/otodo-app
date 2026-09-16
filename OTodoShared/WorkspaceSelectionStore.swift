@@ -2,7 +2,8 @@ import Darwin
 import Foundation
 import OTodoCore
 
-actor RepositorySelectionStore {
+actor WorkspaceSelectionStore {
+    // Keep the legacy filename so existing GitHub selections restore without moving data.
     private static let fileName = "repository-selection.json"
 
     private let directoryURL: URL
@@ -15,7 +16,7 @@ actor RepositorySelectionStore {
         fileURL = directoryURL.appendingPathComponent(Self.fileName, isDirectory: false)
     }
 
-    func load() async throws -> RepositorySelection? {
+    func load() async throws -> WorkspaceSelection? {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: fileURL.path) else {
             return nil
@@ -26,31 +27,24 @@ actor RepositorySelectionStore {
             data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
         } catch {
             throw OTodoError.corruptLocalState(
-                message: "The saved repository selection could not be read: \(error.localizedDescription)"
+                message: "The saved workspace selection could not be read: \(error.localizedDescription)"
             )
         }
 
         do {
-            return try JSONDecoder().decode(RepositorySelection.self, from: data)
+            return try JSONDecoder().decode(WorkspaceSelection.self, from: data)
         } catch {
-            throw OTodoError.corruptLocalState(message: "The saved repository selection is invalid")
+            throw OTodoError.corruptLocalState(message: "The saved workspace selection is invalid")
         }
     }
 
-    func save(_ selection: RepositorySelection) async throws {
-        let normalized: RepositorySelection
+    func save(_ selection: WorkspaceSelection) async throws {
         let data: Data
         do {
-            normalized = try RepositorySelection(
-                owner: selection.owner,
-                name: selection.name,
-                branch: selection.branch,
-                storePath: selection.storePath
-            )
-            data = try JSONEncoder().encode(normalized)
+            data = try JSONEncoder().encode(selection)
         } catch {
             throw OTodoError.corruptLocalState(
-                message: "The repository selection could not be encoded as valid local state"
+                message: "The workspace selection could not be encoded as valid local state"
             )
         }
 
@@ -67,7 +61,7 @@ actor RepositorySelectionStore {
             )
         } catch {
             throw OTodoError.corruptLocalState(
-                message: "The repository selection directory could not be secured: \(error.localizedDescription)"
+                message: "The workspace selection directory could not be secured: \(error.localizedDescription)"
             )
         }
 
@@ -91,7 +85,7 @@ actor RepositorySelectionStore {
             attributes: restrictiveAttributes
         ) else {
             throw OTodoError.corruptLocalState(
-                message: "The repository selection temporary file could not be created"
+                message: "The workspace selection temporary file could not be created"
             )
         }
         temporaryFileExists = true
@@ -118,7 +112,7 @@ actor RepositorySelectionStore {
             try fileManager.setAttributes(restrictiveAttributes, ofItemAtPath: fileURL.path)
         } catch {
             throw OTodoError.corruptLocalState(
-                message: "The repository selection could not be saved atomically: \(error.localizedDescription)"
+                message: "The workspace selection could not be saved atomically: \(error.localizedDescription)"
             )
         }
     }
@@ -133,7 +127,7 @@ actor RepositorySelectionStore {
             try fileManager.removeItem(at: fileURL)
         } catch {
             throw OTodoError.corruptLocalState(
-                message: "The repository selection could not be removed: \(error.localizedDescription)"
+                message: "The workspace selection could not be removed: \(error.localizedDescription)"
             )
         }
     }

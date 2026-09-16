@@ -29,26 +29,26 @@ public protocol GitHubServing: Sendable {
         branch: String
     ) async throws -> [String]
 
-    func fetchSnapshot(selection: RepositorySelection) async throws -> GitSnapshot
+    func fetchSnapshot(selection: WorkspaceSelection) async throws -> GitSnapshot
 
-    func fetchAttachment(selection: RepositorySelection, attachment: AttachmentMetadata) async throws -> Data
+    func fetchAttachment(selection: WorkspaceSelection, attachment: AttachmentMetadata) async throws -> Data
 
     func commit(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         changes: [RemoteChange],
         against snapshot: GitSnapshot,
         message: String
     ) async throws -> String
 
     func updateReference(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         to commitSHA: String,
         expectedHead: String
     ) async throws
 }
 
 public protocol WorkspacePersisting: Sendable {
-    func load(selection: RepositorySelection) async throws -> WorkspaceState?
+    func load(selection: WorkspaceSelection) async throws -> WorkspaceState?
     func save(_ workspace: WorkspaceState, expectedRevision: UInt64?) async throws
 }
 
@@ -63,7 +63,7 @@ public protocol ULIDGenerating: Sendable {
 }
 
 public extension GitHubServing {
-    func fetchAttachment(selection: RepositorySelection, attachment: AttachmentMetadata) async throws -> Data {
+    func fetchAttachment(selection: WorkspaceSelection, attachment: AttachmentMetadata) async throws -> Data {
         throw OTodoError.transport(statusCode: nil, message: "Attachment downloads are unavailable")
     }
 }

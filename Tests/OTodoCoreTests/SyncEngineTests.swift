@@ -651,7 +651,7 @@ private struct Fixture {
         "id = \"done\"", "name = \"Done\"", "terminal = true", "",
     ].joined(separator: "\n")
 
-    let selection: RepositorySelection
+    let selection: WorkspaceSelection
     let store: MemoryWorkspaceStore
     let gitHub: StatefulGitHub
     let engine: SyncEngine
@@ -659,7 +659,7 @@ private struct Fixture {
     let bOriginal: String
 
     init(twoTasks: Bool = false) throws {
-        let selection = try RepositorySelection(owner: "o", name: "r", branch: "main", storePath: "vault")
+        let selection = try WorkspaceSelection(owner: "o", name: "r", branch: "main", storePath: "vault")
         let store = MemoryWorkspaceStore()
         let aOriginal = Self.record("A", projects: ["alpha"], body: "A body\n")
         let bOriginal = Self.record("B", body: "B body\n")
@@ -703,7 +703,7 @@ private struct Fixture {
         try Self.makeSnapshot(selection, head: head, tree: tree, a: a, b: b, aSHA: aSHA, bSHA: bSHA)
     }
 
-    private static func makeSnapshot(_ selection: RepositorySelection, head: String, tree: String, a: String, b: String?, aSHA: String = "a1", bSHA: String = "b1") throws -> GitSnapshot {
+    private static func makeSnapshot(_ selection: WorkspaceSelection, head: String, tree: String, a: String, b: String?, aSHA: String = "a1", bSHA: String = "b1") throws -> GitSnapshot {
         let prefix = selection.storePath + "/"
         var files = [
             try RemoteFile(path: prefix + aRelative, blobSHA: aSHA, content: a),
@@ -760,7 +760,7 @@ private actor MemoryWorkspaceStore: WorkspacePersisting {
     private var injected: WorkspaceState?
     private var contentionCount = 0
 
-    func load(selection: RepositorySelection) async throws -> WorkspaceState? {
+    func load(selection: WorkspaceSelection) async throws -> WorkspaceState? {
         value?.selection == selection ? value : nil
     }
 
@@ -795,11 +795,11 @@ private actor MemoryWorkspaceStore: WorkspacePersisting {
 private actor StatefulGitHub: GitHubServing {
     struct CommitCall: Sendable { let changes: [RemoteChange]; let against: GitSnapshot }
     struct UpdateCall: Sendable, Equatable { let commit: String; let expected: String }
-    struct Calls: Sendable { let fetches: [RepositorySelection]; let commits: [CommitCall]; let updates: [UpdateCall] }
+    struct Calls: Sendable { let fetches: [WorkspaceSelection]; let commits: [CommitCall]; let updates: [UpdateCall] }
 
     private var current: GitSnapshot
     private var created: [String: GitSnapshot] = [:]
-    private var fetchLog: [RepositorySelection] = []
+    private var fetchLog: [WorkspaceSelection] = []
     private var commitLog: [CommitCall] = []
     private var updateLog: [UpdateCall] = []
     private var sequence = 0
@@ -812,7 +812,7 @@ private actor StatefulGitHub: GitHubServing {
     func listRepositories() async throws -> [RepositorySummary] { [] }
     func discoverStorePaths(repository: RepositorySummary, branch: String) async throws -> [String] { [] }
 
-    func fetchSnapshot(selection: RepositorySelection) async throws -> GitSnapshot {
+    func fetchSnapshot(selection: WorkspaceSelection) async throws -> GitSnapshot {
         fetchLog.append(selection)
         if failFetch {
             failFetch = false
@@ -821,7 +821,7 @@ private actor StatefulGitHub: GitHubServing {
         return current
     }
 
-    func commit(selection: RepositorySelection, changes: [RemoteChange], against snapshot: GitSnapshot, message: String) async throws -> String {
+    func commit(selection: WorkspaceSelection, changes: [RemoteChange], against snapshot: GitSnapshot, message: String) async throws -> String {
         commitLog.append(.init(changes: changes, against: snapshot))
         guard snapshot.headCommitSHA == current.headCommitSHA else { throw OTodoError.conflict(message: "stale commit") }
         sequence += 1
@@ -839,7 +839,7 @@ private actor StatefulGitHub: GitHubServing {
         return sha
     }
 
-    func updateReference(selection: RepositorySelection, to commitSHA: String, expectedHead: String) async throws {
+    func updateReference(selection: WorkspaceSelection, to commitSHA: String, expectedHead: String) async throws {
         updateLog.append(.init(commit: commitSHA, expected: expectedHead))
         if let race {
             self.race = nil
@@ -1025,14 +1025,14 @@ extension SyncEngineTests {
 }
 
 private struct SubtaskSyncFixture: Sendable {
-    let selection: RepositorySelection
+    let selection: WorkspaceSelection
     let store: MemoryWorkspaceStore
     let gitHub: StatefulGitHub
     let engine: SyncEngine
     let service: TaskWorkspaceService
 
     init(parents: [Int: Int] = [:], schema: Int = 2) throws {
-        selection = try RepositorySelection(owner: "o", name: "subtasks", branch: "main", storePath: "")
+        selection = try WorkspaceSelection(owner: "o", name: "subtasks", branch: "main", storePath: "")
         store = MemoryWorkspaceStore()
         gitHub = StatefulGitHub(try Self.makeSnapshot(head: "initial", parents: parents, names: [:], schema: schema))
         engine = SyncEngine(gitHub: gitHub, persistence: store, configCodec: StrictStoreConfigCodec(), taskCodec: ObsidianTaskCodec())

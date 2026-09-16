@@ -89,7 +89,7 @@ public actor AttachmentStore {
         self.cacheBudget = maximumCacheBytes
     }
 
-    public func stage(sourceURL: URL, selection: RepositorySelection) async throws -> AttachmentDraft {
+    public func stage(sourceURL: URL, selection: WorkspaceSelection) async throws -> AttachmentDraft {
         guard sourceURL.isFileURL else { throw OTodoError.validation(field: "attachment", message: "Select a local file") }
         try Self.rejectSymlinks(at: sourceURL)
         let values = try sourceURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
@@ -100,7 +100,7 @@ public actor AttachmentStore {
         return try await stage(data: bytes, filename: sourceURL.lastPathComponent, selection: selection)
     }
 
-    public func stage(data: Data, filename: String, selection: RepositorySelection) async throws -> AttachmentDraft {
+    public func stage(data: Data, filename: String, selection: WorkspaceSelection) async throws -> AttachmentDraft {
         guard data.count <= AttachmentLinks.maximumBytes else {
             throw OTodoError.validation(field: "attachment", message: "Attachments cannot exceed 20 MiB")
         }
@@ -111,7 +111,7 @@ public actor AttachmentStore {
         return try AttachmentDraft(path: path, displayName: name, localFile: reference)
     }
 
-    public func read(_ reference: BinaryFileReference, selection: RepositorySelection) throws -> Data {
+    public func read(_ reference: BinaryFileReference, selection: WorkspaceSelection) throws -> Data {
         let url = try Self.fileURL(rootURL: rootURL, reference: reference, selection: selection)
         let data = try Self.boundedData(at: url)
         guard data.count == reference.byteSize, GitBlobSHA.hexDigest(data) == reference.blobSHA else {
@@ -120,12 +120,12 @@ public actor AttachmentStore {
         return data
     }
 
-    public func localURL(_ reference: BinaryFileReference, selection: RepositorySelection) throws -> URL {
+    public func localURL(_ reference: BinaryFileReference, selection: WorkspaceSelection) throws -> URL {
         _ = try read(reference, selection: selection)
         return try Self.fileURL(rootURL: rootURL, reference: reference, selection: selection)
     }
 
-    public func cachedFile(path: String, selection: RepositorySelection, expectedSHA: String? = nil) throws -> AttachmentCachedFile? {
+    public func cachedFile(path: String, selection: WorkspaceSelection, expectedSHA: String? = nil) throws -> AttachmentCachedFile? {
         try AttachmentDiskLock.withLock(rootURL: rootURL) {
             guard var entry = try loadEntry(path: path, selection: selection) else { return nil }
             let url = try localURL(entry.file, selection: selection)
@@ -137,7 +137,7 @@ public actor AttachmentStore {
     }
 
     @discardableResult
-    public func download(attachment: AttachmentMetadata, selection: RepositorySelection, gitHub: any GitHubServing) async throws -> AttachmentCachedFile {
+    public func download(attachment: AttachmentMetadata, selection: WorkspaceSelection, gitHub: any GitHubServing) async throws -> AttachmentCachedFile {
         guard !attachment.isSymlink, !attachment.isDirectory, attachment.byteSize <= AttachmentLinks.maximumBytes else {
             throw OTodoError.validation(field: "attachment", message: "Select a regular attachment file no larger than 20 MiB")
         }
@@ -155,7 +155,7 @@ public actor AttachmentStore {
         return cached
     }
 
-    public func retainVerified(_ reference: BinaryFileReference, path: String, selection: RepositorySelection) async throws {
+    public func retainVerified(_ reference: BinaryFileReference, path: String, selection: WorkspaceSelection) async throws {
         let previous = try AttachmentDiskLock.withLock(rootURL: rootURL) {
             _ = try read(reference, selection: selection)
             let previous = try loadEntry(path: path, selection: selection)
@@ -167,7 +167,7 @@ public actor AttachmentStore {
         }
     }
 
-    public func setPinned(path: String, selection: RepositorySelection, pinned: Bool) throws {
+    public func setPinned(path: String, selection: WorkspaceSelection, pinned: Bool) throws {
         try AttachmentDiskLock.withLock(rootURL: rootURL) {
             guard var entry = try loadEntry(path: path, selection: selection) else {
                 throw OTodoError.notFound(resource: "Download this attachment before keeping it offline")
@@ -178,7 +178,7 @@ public actor AttachmentStore {
     }
 
     /// Failed replacements retain the prior file and its pin. Returned errors belong to attachments, not task sync.
-    public func refreshPinned(attachments: [AttachmentMetadata], selection: RepositorySelection, gitHub: any GitHubServing) async -> [String: String] {
+    public func refreshPinned(attachments: [AttachmentMetadata], selection: WorkspaceSelection, gitHub: any GitHubServing) async -> [String: String] {
         var failures: [String: String] = [:]
         do {
             let catalog = Dictionary(uniqueKeysWithValues: attachments.map { ($0.path, $0) })
@@ -192,15 +192,16 @@ public actor AttachmentStore {
         return failures
     }
 
-    public func discard(drafts: [AttachmentDraft], selection: RepositorySelection, persistence: any WorkspacePersisting) async throws {
+    public func discard(drafts: [AttachmentDraft], selection: WorkspaceSelection, persistence: any WorkspacePersisting) async throws {
         // The file-backed implementation checks durable references and deletes under its save lock.
         // Unknown persistence implementations retain bytes conservatively.
         guard let files = persistence as? FileWorkspaceStore else { return }
         for draft in drafts { try await files.discardUnreferencedAttachment(draft.localFile, selection: selection) }
     }
 
-    public func evict(selection: RepositorySelection, workspace: WorkspaceState) async throws {
-        let protected = Set(workspace.pendingChanges.compactMap { $0.payload.binaryFile?.localReference }
+    public func evict(selection: WorkspaceSelection, workspace: WorkspaceState) async throws {
+        let protected = Set(workspace.localAttachmentFiles.values.map(\.localReference)
+            + workspace.pendingChanges.compactMap { $0.payload.binaryFile?.localReference }
             + workspace.conflicts.flatMap { [$0.localPayload.binaryFile?.localReference, $0.remotePayload.binaryFile?.localReference].compactMap { $0 } })
         let cached = try AttachmentDiskLock.withLock(rootURL: rootURL) { try entries(selection: selection) }
         // Pins and durable imports are exempt from both eviction and the ordinary cache budget.
@@ -221,7 +222,7 @@ public actor AttachmentStore {
         }
     }
 
-    private func persist(data: Data, selection: RepositorySelection, filename: String) throws -> BinaryFileReference {
+    private func persist(data: Data, selection: WorkspaceSelection, filename: String) throws -> BinaryFileReference {
         let reference = try BinaryFileReference(localReference: "bytes/\(UUID().uuidString)-\(AttachmentLinks.sanitizeFilename(filename))", byteSize: data.count, blobSHA: GitBlobSHA.hexDigest(data))
         let directory = Self.selectionURL(rootURL: rootURL, selection: selection).appendingPathComponent("bytes", isDirectory: true)
         try Self.rejectSymlinks(at: directory)
@@ -231,23 +232,23 @@ public actor AttachmentStore {
         try FileWorkspaceStore.setPermissions(0o600, at: url)
         return reference
     }
-    private func entryURL(path: String, selection: RepositorySelection) -> URL {
+    private func entryURL(path: String, selection: WorkspaceSelection) -> URL {
         Self.selectionURL(rootURL: rootURL, selection: selection).appendingPathComponent("cache", isDirectory: true)
             .appendingPathComponent(GitBlobSHA.hexDigest(Data(path.utf8)) + ".json")
     }
-    private func loadEntry(path: String, selection: RepositorySelection) throws -> Entry? {
+    private func loadEntry(path: String, selection: WorkspaceSelection) throws -> Entry? {
         let url = entryURL(path: path, selection: selection)
         try Self.rejectSymlinks(at: url)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         return try JSONDecoder().decode(Entry.self, from: Data(contentsOf: url))
     }
-    private func saveEntry(_ entry: Entry, selection: RepositorySelection) throws {
+    private func saveEntry(_ entry: Entry, selection: WorkspaceSelection) throws {
         let url = entryURL(path: entry.path, selection: selection)
         try Self.rejectSymlinks(at: url)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(entry).write(to: url, options: .atomic)
     }
-    private func entries(selection: RepositorySelection) throws -> [Entry] {
+    private func entries(selection: WorkspaceSelection) throws -> [Entry] {
         let directory = Self.selectionURL(rootURL: rootURL, selection: selection).appendingPathComponent("cache")
         try Self.rejectSymlinks(at: directory)
         guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
@@ -257,11 +258,11 @@ public actor AttachmentStore {
                 return try JSONDecoder().decode(Entry.self, from: Data(contentsOf: $0))
             }
     }
-    nonisolated static func selectionURL(rootURL: URL, selection: RepositorySelection) -> URL {
+    nonisolated static func selectionURL(rootURL: URL, selection: WorkspaceSelection) -> URL {
         rootURL.appendingPathComponent("attachment-files", isDirectory: true)
             .appendingPathComponent(FileWorkspaceStore.selectionKey(for: selection), isDirectory: true)
     }
-    nonisolated static func fileURL(rootURL: URL, reference: BinaryFileReference, selection: RepositorySelection) throws -> URL {
+    nonisolated static func fileURL(rootURL: URL, reference: BinaryFileReference, selection: WorkspaceSelection) throws -> URL {
         let url = selectionURL(rootURL: rootURL, selection: selection).appendingPathComponent(reference.localReference)
         try rejectSymlinks(at: url)
         return url

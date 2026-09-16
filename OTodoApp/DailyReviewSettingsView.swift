@@ -4,7 +4,7 @@ import SwiftUI
 struct DailyReviewRequest: Identifiable {
     let id = UUID()
     let kind: DailyReviewKind
-    let selection: RepositorySelection
+    let selection: WorkspaceSelection
     let date = Date()
 }
 
@@ -98,7 +98,7 @@ struct DailyReviewSettingsView: View {
         .accessibilityIdentifier("daily-review-settings")
     }
 
-    private func settings(_ kind: DailyReviewKind, workspace: String, selection: RepositorySelection) -> some View {
+    private func settings(_ kind: DailyReviewKind, workspace: String, selection: WorkspaceSelection) -> some View {
         let preference = store.preference(kind, workspace: workspace)
         return Section {
             Toggle(isOn: Binding(

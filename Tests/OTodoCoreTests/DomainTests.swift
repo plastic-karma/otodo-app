@@ -74,7 +74,7 @@ final class DomainTests: XCTestCase {
     }
 
     func testRepositorySelectionNormalizesStorePath() throws {
-        let selection = try RepositorySelection(
+        let selection = try WorkspaceSelection(
             owner: "example",
             name: "vault",
             branch: "main",
@@ -173,7 +173,7 @@ final class DomainTests: XCTestCase {
             defaultState: "open",
             states: [state]
         )
-        let selection = try RepositorySelection(
+        let selection = try WorkspaceSelection(
             owner: "example",
             name: "vault",
             branch: "main",

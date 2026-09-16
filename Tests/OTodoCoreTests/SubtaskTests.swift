@@ -674,8 +674,8 @@ final class SubtaskTests: XCTestCase, @unchecked Sendable {
                                ])
     }
 
-    private func selection() throws -> RepositorySelection {
-        try RepositorySelection(owner: "owner", name: "repo", branch: "main", storePath: "")
+    private func selection() throws -> WorkspaceSelection {
+        try WorkspaceSelection(owner: "owner", name: "repo", branch: "main", storePath: "")
     }
 
     private func task(_ id: TaskID, parent: TaskID? = nil, state: String = "open", path: String? = nil) throws -> TodoTask {
@@ -684,7 +684,7 @@ final class SubtaskTests: XCTestCase, @unchecked Sendable {
                      lastCompletedDate: nil, body: "Notes\r\n", extraProperties: [], parentID: parent)
     }
 
-    private func seed(_ tasks: [TodoTask], at directory: URL, schema: Int = 2) async throws -> (FileWorkspaceStore, TaskWorkspaceService, RepositorySelection) {
+    private func seed(_ tasks: [TodoTask], at directory: URL, schema: Int = 2) async throws -> (FileWorkspaceStore, TaskWorkspaceService, WorkspaceSelection) {
         let configuration = try configuration(schema)
         let selection = try selection()
         let documents = try tasks.map { task in

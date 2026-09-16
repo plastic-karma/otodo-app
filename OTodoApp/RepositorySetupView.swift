@@ -13,6 +13,15 @@ struct RepositorySetupView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    Button("Use on this device", systemImage: "internaldrive") {
+                        Task { await model.useLocalWorkspace() }
+                    }
+                    .disabled(model.isBusy)
+                    .accessibilityIdentifier("workspace.use-local")
+                } footer: {
+                    Text("A separate local workspace. No GitHub sync or upload.")
+                }
                 if model.isBusy || model.statusMessage != nil {
                     Section {
                         if model.isBusy {

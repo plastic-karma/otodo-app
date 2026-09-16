@@ -43,7 +43,7 @@ final class TaskFilterStoreTests: XCTestCase, @unchecked Sendable {
     func testLegacyLibraryGainsInboxWithoutLosingFiltersOrStarChoices() async throws {
         struct LegacyEnvelope: Encodable {
             let version = 1
-            let selection: RepositorySelection
+            let selection: WorkspaceSelection
             let filters: [SavedTaskFilter]
         }
 
@@ -226,11 +226,11 @@ final class TaskFilterStoreTests: XCTestCase, @unchecked Sendable {
         name: String = "repository",
         branch: String = "main",
         storePath: String = "tasks"
-    ) throws -> RepositorySelection {
-        try RepositorySelection(owner: owner, name: name, branch: branch, storePath: storePath)
+    ) throws -> WorkspaceSelection {
+        try WorkspaceSelection(owner: owner, name: name, branch: branch, storePath: storePath)
     }
 
-    private func fileURL(_ directory: URL, _ selection: RepositorySelection) -> URL {
+    private func fileURL(_ directory: URL, _ selection: WorkspaceSelection) -> URL {
         directory.appendingPathComponent("\(FileWorkspaceStore.selectionKey(for: selection)).json")
     }
 

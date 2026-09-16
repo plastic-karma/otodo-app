@@ -100,8 +100,8 @@ struct SyncStatusView: View {
                     ProgressView()
                         .controlSize(.small)
                         .frame(width: 44, height: 44)
-                        .accessibilityLabel("Sync in progress")
-                } else {
+                        .accessibilityLabel(model.workspaceSelection?.isLocal == true ? "Saving" : "Sync in progress")
+                } else if model.workspaceSelection?.isLocal != true {
                     Button {
                         Task { @MainActor in
                             await model.refresh()
@@ -146,6 +146,7 @@ struct SyncStatusView: View {
 
     private var compactText: String {
         if requiresAttention { return "Needs attention" }
+        if model.workspaceSelection?.isLocal == true { return primaryText }
         if !model.isOnline { return "Offline" }
         return primaryText
     }
@@ -208,6 +209,7 @@ struct SyncStatusView: View {
         if !model.attachmentRefreshErrors.isEmpty {
             return "Attachment updates need attention"
         }
+        if model.workspaceSelection?.isLocal == true { return "On this device · Local only" }
         if !model.isOnline {
             return "Saved on this device"
         }
@@ -224,6 +226,7 @@ struct SyncStatusView: View {
         if requiresAttention {
             return "exclamationmark.triangle"
         }
+        if model.workspaceSelection?.isLocal == true { return "internaldrive" }
         if !model.isOnline {
             return "wifi.slash"
         }

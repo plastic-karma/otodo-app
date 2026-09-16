@@ -54,25 +54,28 @@ actor AuthenticatedGitHubService: GitHubServing {
         }
     }
 
-    func fetchSnapshot(selection: RepositorySelection) async throws -> GitSnapshot {
-        try await authenticated { client in
+    func fetchSnapshot(selection: WorkspaceSelection) async throws -> GitSnapshot {
+        _ = try selection.requireGitHub()
+        return try await authenticated { client in
             try await client.fetchSnapshot(selection: selection)
         }
     }
 
-    func fetchAttachment(selection: RepositorySelection, attachment: AttachmentMetadata) async throws -> Data {
-        try await authenticated { client in
+    func fetchAttachment(selection: WorkspaceSelection, attachment: AttachmentMetadata) async throws -> Data {
+        _ = try selection.requireGitHub()
+        return try await authenticated { client in
             try await client.fetchAttachment(selection: selection, attachment: attachment)
         }
     }
 
     func commit(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         changes: [RemoteChange],
         against snapshot: GitSnapshot,
         message: String
     ) async throws -> String {
-        try await authenticated { client in
+        _ = try selection.requireGitHub()
+        return try await authenticated { client in
             try await client.commit(
                 selection: selection,
                 changes: changes,
@@ -83,10 +86,11 @@ actor AuthenticatedGitHubService: GitHubServing {
     }
 
     func updateReference(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         to commitSHA: String,
         expectedHead: String
     ) async throws {
+        _ = try selection.requireGitHub()
         try await authenticated { client in
             try await client.updateReference(
                 selection: selection,

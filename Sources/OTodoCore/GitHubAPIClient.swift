@@ -134,7 +134,8 @@ public actor GitHubAPIClient: GitHubServing {
         return stores.sorted()
     }
 
-    public func fetchSnapshot(selection: RepositorySelection) async throws -> GitSnapshot {
+    public func fetchSnapshot(selection: WorkspaceSelection) async throws -> GitSnapshot {
+        let selection = try selection.requireGitHub()
         let state = try await fetchBranchState(
             owner: selection.owner,
             repository: selection.name,
@@ -245,7 +246,8 @@ public actor GitHubAPIClient: GitHubServing {
         )
     }
 
-    public func fetchAttachment(selection: RepositorySelection, attachment: AttachmentMetadata) async throws -> Data {
+    public func fetchAttachment(selection: WorkspaceSelection, attachment: AttachmentMetadata) async throws -> Data {
+        let selection = try selection.requireGitHub()
         let prefix = joinedPath(selection.storePath, "Attachments/")
         guard !attachment.isSymlink, !attachment.isDirectory, attachment.path.hasPrefix(prefix), attachment.byteSize <= AttachmentLinks.maximumBytes else {
             throw OTodoError.validation(field: "attachment", message: "Select an attachment inside this store no larger than 20 MiB")
@@ -267,11 +269,12 @@ public actor GitHubAPIClient: GitHubServing {
     }
 
     public func commit(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         changes: [RemoteChange],
         against snapshot: GitSnapshot,
         message: String
     ) async throws -> String {
+        let selection = try selection.requireGitHub()
         guard !changes.isEmpty else {
             throw OTodoError.validation(field: "changes", message: "At least one repository change is required")
         }
@@ -354,10 +357,11 @@ public actor GitHubAPIClient: GitHubServing {
     }
 
     public func updateReference(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         to commitSHA: String,
         expectedHead: String
     ) async throws {
+        let selection = try selection.requireGitHub()
         guard !commitSHA.isEmpty, !expectedHead.isEmpty else {
             throw OTodoError.validation(field: "reference", message: "Commit and expected-head SHAs are required")
         }

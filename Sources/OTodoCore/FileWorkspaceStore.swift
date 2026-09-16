@@ -6,7 +6,7 @@ import Darwin
 import Glibc
 #endif
 
-/// Persists each selected repository workspace as one versioned JSON document.
+/// Persists each selected local or GitHub workspace as one versioned JSON document.
 public actor FileWorkspaceStore: WorkspacePersisting {
     private static let formatVersion = 4
     private static let persistenceLock = NSLock()
@@ -39,7 +39,7 @@ public actor FileWorkspaceStore: WorkspacePersisting {
         self.rootURL = rootURL.standardizedFileURL
     }
 
-    public func load(selection: RepositorySelection) async throws -> WorkspaceState? {
+    public func load(selection: WorkspaceSelection) async throws -> WorkspaceState? {
         try requireFileRoot()
         let url = workspaceURL(for: selection)
         guard FileManager.default.fileExists(atPath: url.path) else {
@@ -118,7 +118,7 @@ public actor FileWorkspaceStore: WorkspacePersisting {
             defer { _ = close(lockDescriptor) }
             #endif
 
-            for reference in workspace.pendingChanges.compactMap({ $0.payload.binaryFile }) + workspace.conflicts.flatMap({ [$0.localPayload.binaryFile, $0.remotePayload.binaryFile].compactMap { $0 } }) {
+            for reference in Array(workspace.localAttachmentFiles.values) + workspace.pendingChanges.compactMap({ $0.payload.binaryFile }) + workspace.conflicts.flatMap({ [$0.localPayload.binaryFile, $0.remotePayload.binaryFile].compactMap { $0 } }) {
                 let file = try AttachmentStore.fileURL(rootURL: rootURL, reference: reference, selection: workspace.selection)
                 guard let attributes = try? fileManager.attributesOfItem(atPath: file.path),
                       attributes[.type] as? FileAttributeType == .typeRegular,
@@ -193,7 +193,7 @@ public actor FileWorkspaceStore: WorkspacePersisting {
     }
 
     /// Shares the transaction lock with save, preventing Cancel from deleting a concurrently committed import.
-    public func discardUnreferencedAttachment(_ reference: BinaryFileReference, selection: RepositorySelection) throws {
+    public func discardUnreferencedAttachment(_ reference: BinaryFileReference, selection: WorkspaceSelection) throws {
         try Self.persistenceLock.withLock {
             guard FileManager.default.fileExists(atPath: rootURL.path) else { return }
             #if canImport(Darwin) || canImport(Glibc)
@@ -204,7 +204,8 @@ public actor FileWorkspaceStore: WorkspacePersisting {
                 let workspaceFile = workspaceURL(for: selection)
                 if FileManager.default.fileExists(atPath: workspaceFile.path) {
                     let workspace = try loadPersistedWorkspace(at: workspaceFile, selection: selection)
-                    let references = workspace.pendingChanges.compactMap { $0.payload.binaryFile?.localReference }
+                    let references = workspace.localAttachmentFiles.values.map(\.localReference)
+                        + workspace.pendingChanges.compactMap { $0.payload.binaryFile?.localReference }
                         + workspace.conflicts.flatMap { [$0.localPayload.binaryFile?.localReference, $0.remotePayload.binaryFile?.localReference].compactMap { $0 } }
                     guard !references.contains(reference.localReference) else { return }
                 }
@@ -225,9 +226,14 @@ public actor FileWorkspaceStore: WorkspacePersisting {
     }
 
     /// Stable, filesystem-safe key derived from all normalized selection fields.
-    public nonisolated static func selectionKey(for selection: RepositorySelection) -> String {
+    public nonisolated static func selectionKey(for selection: WorkspaceSelection) -> String {
+        let repository: GitHubWorkspaceLocation
+        switch selection {
+        case let .local(id): return "local-" + id.uuidString.lowercased()
+        case let .github(location): repository = location
+        }
         var bytes = [UInt8]()
-        for component in [selection.owner, selection.name, selection.branch, selection.storePath] {
+        for component in [repository.owner, repository.name, repository.branch, repository.storePath] {
             let componentBytes = Array(component.utf8)
             bytes.append(contentsOf: String(componentBytes.count).utf8)
             bytes.append(58)
@@ -236,7 +242,7 @@ public actor FileWorkspaceStore: WorkspacePersisting {
         return SHA256.hexDigest(bytes)
     }
 
-    private func workspaceURL(for selection: RepositorySelection) -> URL {
+    private func workspaceURL(for selection: WorkspaceSelection) -> URL {
         rootURL.appendingPathComponent(
             "\(Self.selectionKey(for: selection)).json",
             isDirectory: false
@@ -287,7 +293,7 @@ public actor FileWorkspaceStore: WorkspacePersisting {
 
     private func loadPersistedWorkspace(
         at url: URL,
-        selection: RepositorySelection
+        selection: WorkspaceSelection
     ) throws -> WorkspaceState {
         do {
             let data = try Data(contentsOf: url)

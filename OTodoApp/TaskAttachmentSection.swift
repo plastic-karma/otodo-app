@@ -10,7 +10,7 @@ import UniformTypeIdentifiers
 /// Imports live in the editor until its one workspace transaction succeeds.
 struct TaskAttachmentSection: View {
     let model: AppModel
-    let selection: RepositorySelection
+    let selection: WorkspaceSelection
     @Binding var draft: TaskEditorDraft
     let configuration: StoreConfiguration
     @State private var choosesFiles = false
@@ -155,7 +155,7 @@ private struct AttachmentPhotoFile: Transferable, Sendable {
 
 private struct AttachmentRow: View {
     let model: AppModel
-    let selection: RepositorySelection
+    let selection: WorkspaceSelection
     let path: String
     let name: String
     let imported: AttachmentDraft?
@@ -188,7 +188,7 @@ private struct AttachmentRow: View {
                     ShareLink(item: file.url) { Label("Share", systemImage: "square.and.arrow.up") }
                 }
                 Menu {
-                    if imported == nil {
+                    if imported == nil && !selection.isLocal {
                         Button(file?.isPinned == true ? "Allow Cache Eviction" : "Keep Offline",
                                systemImage: "pin") { pin() }
                     }
@@ -213,6 +213,7 @@ private struct AttachmentRow: View {
 
     private var status: String {
         if imported != nil { return "Selected · saves with this todo" }
+        if selection.isLocal, file != nil { return "Stored on this device" }
         if file?.isOlderVersion == true { return "Older cached version · update unavailable" }
         if file?.isPinned == true { return "Kept offline" }
         if file != nil { return "Available offline" }

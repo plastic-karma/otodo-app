@@ -502,7 +502,7 @@ public struct ProjectDocument: Sendable, Codable, Equatable {
     }
 }
 
-public struct RepositorySelection: Sendable, Codable, Equatable {
+public struct GitHubWorkspaceLocation: Sendable, Codable, Equatable {
     public let owner: String
     public let name: String
     public let branch: String
@@ -538,6 +538,72 @@ public struct RepositorySelection: Sendable, Codable, Equatable {
             branch: container.decode(String.self, forKey: .branch),
             storePath: container.decode(String.self, forKey: .storePath)
         )
+    }
+}
+
+/// A workspace's durable identity, independent of authentication and connectivity.
+public enum WorkspaceSelection: Sendable, Codable, Equatable {
+    case local(id: UUID)
+    case github(GitHubWorkspaceLocation)
+
+    /// The single on-device workspace can always be reopened after switching to GitHub.
+    public static let onDevice = WorkspaceSelection.local(id: UUID(uuid: (
+        0x4f, 0x54, 0x6f, 0x64, 0x6f, 0x4c, 0x40, 0x63,
+        0x80, 0x6c, 0, 0, 0, 0, 0, 1
+    )))
+
+    public init(owner: String, name: String, branch: String, storePath: String) throws {
+        self = .github(try GitHubWorkspaceLocation(owner: owner, name: name, branch: branch, storePath: storePath))
+    }
+
+    public var isLocal: Bool {
+        if case .local = self { return true }
+        return false
+    }
+
+    public var storePath: String {
+        if case let .github(repository) = self { return repository.storePath }
+        return ""
+    }
+
+    public var displayName: String {
+        switch self {
+        case .local: return "On this device"
+        case let .github(repository): return "\(repository.owner)/\(repository.name)"
+        }
+    }
+
+    public func requireGitHub() throws -> GitHubWorkspaceLocation {
+        guard case let .github(repository) = self else {
+            throw OTodoError.validation(field: "workspace", message: "This workspace is stored only on this device")
+        }
+        return repository
+    }
+
+    private enum CodingKeys: String, CodingKey { case kind, id }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Legacy repository selections have no discriminator. Keep their representation and keys.
+        if let kind = try container.decodeIfPresent(String.self, forKey: .kind) {
+            guard kind == "local" else {
+                throw OTodoError.corruptLocalState(message: "Unknown workspace kind \(kind)")
+            }
+            self = .local(id: try container.decode(UUID.self, forKey: .id))
+        } else {
+            self = .github(try GitHubWorkspaceLocation(from: decoder))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        switch self {
+        case let .local(id):
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode("local", forKey: .kind)
+            try container.encode(id, forKey: .id)
+        case let .github(repository):
+            try repository.encode(to: encoder)
+        }
     }
 }
 
@@ -804,7 +870,7 @@ public struct TaskDocument: Sendable, Codable, Equatable {
 }
 
 public struct WorkspaceState: Sendable, Codable, Equatable {
-    public let selection: RepositorySelection
+    public let selection: WorkspaceSelection
     public let configuration: StoreConfiguration
     public let knownProjectSlugs: [String]
     public let tasks: [TaskDocument]
@@ -816,9 +882,11 @@ public struct WorkspaceState: Sendable, Codable, Equatable {
     public let relationshipBlocks: [TaskRelationshipBlock]
     public let attachments: [AttachmentMetadata]
     public let projects: [ProjectDocument]
+    /// Primary local files, not an evictable cache or a queue awaiting upload.
+    public let localAttachmentFiles: [String: BinaryFileReference]
 
     public init(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         configuration: StoreConfiguration,
         knownProjectSlugs: [String] = [],
         tasks: [TaskDocument],
@@ -829,10 +897,25 @@ public struct WorkspaceState: Sendable, Codable, Equatable {
         revision: UInt64 = 0,
         relationshipBlocks: [TaskRelationshipBlock] = [],
         attachments: [AttachmentMetadata] = [],
-        projects: [ProjectDocument] = []
+        projects: [ProjectDocument] = [],
+        localAttachmentFiles: [String: BinaryFileReference] = [:]
     ) throws {
-        guard !baseHeadCommitSHA.isEmpty, !baseRootTreeSHA.isEmpty else {
+        guard selection.isLocal || (!baseHeadCommitSHA.isEmpty && !baseRootTreeSHA.isEmpty) else {
             throw OTodoError.validation(field: "workspace", message: "Base commit and tree SHAs are required")
+        }
+        if selection.isLocal {
+            guard baseHeadCommitSHA.isEmpty, baseRootTreeSHA.isEmpty,
+                  pendingChanges.isEmpty, conflicts.isEmpty else {
+                throw OTodoError.corruptLocalState(message: "A local workspace cannot contain remote sync state")
+            }
+        } else if !localAttachmentFiles.isEmpty {
+            throw OTodoError.corruptLocalState(message: "Local primary files belong only to local workspaces")
+        }
+        for path in localAttachmentFiles.keys {
+            try DomainValidation.validateRelativePath(path, field: "attachment")
+            guard path.hasPrefix("Attachments/") else {
+                throw OTodoError.corruptLocalState(message: "Local attachment path must be inside Attachments/")
+            }
         }
         guard Set(tasks.map { $0.task.relativePath }).count == tasks.count else {
             throw OTodoError.validation(field: "workspace.tasks", message: "Task paths must be unique")
@@ -880,17 +963,18 @@ public struct WorkspaceState: Sendable, Codable, Equatable {
         }
         self.attachments = attachments
         self.projects = projects
+        self.localAttachmentFiles = localAttachmentFiles
     }
 
     private enum CodingKeys: String, CodingKey {
         case selection, configuration, tasks, knownProjectSlugs, baseHeadCommitSHA, baseRootTreeSHA
-        case pendingChanges, conflicts, revision, relationshipBlocks, attachments, projects
+        case pendingChanges, conflicts, revision, relationshipBlocks, attachments, projects, localAttachmentFiles
     }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
-            selection: container.decode(RepositorySelection.self, forKey: .selection),
+            selection: container.decode(WorkspaceSelection.self, forKey: .selection),
             configuration: container.decode(StoreConfiguration.self, forKey: .configuration),
             knownProjectSlugs: container.decodeIfPresent(
                 [String].self,
@@ -904,7 +988,8 @@ public struct WorkspaceState: Sendable, Codable, Equatable {
             revision: container.decodeIfPresent(UInt64.self, forKey: .revision) ?? 0,
             relationshipBlocks: container.decodeIfPresent([TaskRelationshipBlock].self, forKey: .relationshipBlocks) ?? [],
             attachments: container.decodeIfPresent([AttachmentMetadata].self, forKey: .attachments) ?? [],
-            projects: container.decodeIfPresent([ProjectDocument].self, forKey: .projects) ?? []
+            projects: container.decodeIfPresent([ProjectDocument].self, forKey: .projects) ?? [],
+            localAttachmentFiles: container.decodeIfPresent([String: BinaryFileReference].self, forKey: .localAttachmentFiles) ?? [:]
         )
     }
 }

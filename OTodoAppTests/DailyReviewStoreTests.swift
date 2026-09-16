@@ -10,8 +10,8 @@ final class DailyReviewStoreTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = DailyReviewStore(defaults: defaults)
-        let first = DailyReviewContext.workspaceKey(try RepositorySelection(owner: "test", name: "todos", branch: "main", storePath: "Todo"))
-        let other = DailyReviewContext.workspaceKey(try RepositorySelection(owner: "test", name: "todos", branch: "other", storePath: "Todo"))
+        let first = DailyReviewContext.workspaceKey(try WorkspaceSelection(owner: "test", name: "todos", branch: "main", storePath: "Todo"))
+        let other = DailyReviewContext.workspaceKey(try WorkspaceSelection(owner: "test", name: "todos", branch: "other", storePath: "Todo"))
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-09-15T10:00:00Z"))
@@ -41,8 +41,8 @@ final class DailyReviewStoreTests: XCTestCase {
     }
 
     func testWorkspaceKeysDoNotCollideForBranchAndStorePathBoundaries() throws {
-        let first = try RepositorySelection(owner: "test", name: "todos", branch: "topic/a", storePath: "b")
-        let second = try RepositorySelection(owner: "test", name: "todos", branch: "topic", storePath: "a/b")
+        let first = try WorkspaceSelection(owner: "test", name: "todos", branch: "topic/a", storePath: "b")
+        let second = try WorkspaceSelection(owner: "test", name: "todos", branch: "topic", storePath: "a/b")
         XCTAssertNotEqual(DailyReviewContext.workspaceKey(first), DailyReviewContext.workspaceKey(second))
     }
 }

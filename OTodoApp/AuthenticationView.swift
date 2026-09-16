@@ -25,6 +25,22 @@ struct AuthenticationView: View {
                             startCard
                         }
 
+                        VStack(alignment: .leading, spacing: 12) {
+                            Button {
+                                Task { await model.useLocalWorkspace() }
+                            } label: {
+                                Label("Use on this device", systemImage: "internaldrive")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.large)
+                            .disabled(model.isBusy)
+                            .accessibilityIdentifier("workspace.use-local")
+                            Text("No account needed. Todos and attachments stay in this app’s local storage. Switching to GitHub later keeps this workspace separate and does not upload it.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+
                         if let errorMessage = model.errorMessage {
                             Label {
                                 Text(errorMessage)
@@ -77,7 +93,9 @@ struct AuthenticationView: View {
     @ViewBuilder
     private var startCard: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("GitHub will show a one-time code, then ask you to approve OTodo in your browser.")
+            Text(model.gitHubClientID == nil
+                 ? "GitHub sync is not configured in this build. You can use OTodo on this device without an account."
+                 : "GitHub will show a one-time code, then ask you to approve OTodo in your browser.")
                 .foregroundStyle(.secondary)
 
             if model.isBusy {
@@ -90,7 +108,7 @@ struct AuthenticationView: View {
                     }
                 }
                 .accessibilityIdentifier("authentication.cancel")
-            } else {
+            } else if model.gitHubClientID != nil {
                 Button {
                     Task {
                         await model.startAuthorization()

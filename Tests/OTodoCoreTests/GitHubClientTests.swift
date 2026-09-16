@@ -445,7 +445,7 @@ final class GitHubClientTests: XCTestCase, @unchecked Sendable {
                 maximumAggregateBlobBytes: configuration.utf8.count + taskText.utf8.count + projectText.utf8.count
             )
         )
-        let selection = try RepositorySelection(
+        let selection = try WorkspaceSelection(
             owner: "acme",
             name: "vault",
             branch: "main",
@@ -733,7 +733,7 @@ final class GitHubClientTests: XCTestCase, @unchecked Sendable {
             transport: transport,
             baseURL: apiBaseURL
         )
-        let selection = try RepositorySelection(
+        let selection = try WorkspaceSelection(
             owner: "acme",
             name: "vault",
             branch: "main",
@@ -787,7 +787,7 @@ final class GitHubClientTests: XCTestCase, @unchecked Sendable {
     }
 
     func testReferenceUpdateChecksExpectedHeadNeverForcesAndClassifiesRaces() async throws {
-        let selection = try RepositorySelection(
+        let selection = try WorkspaceSelection(
             owner: "acme",
             name: "vault",
             branch: "main",
@@ -1105,8 +1105,8 @@ private func repositoryJSON(name: String, isPrivate: Bool) -> [String: Any] {
     ]
 }
 
-private func rootSelection() throws -> RepositorySelection {
-    try RepositorySelection(
+private func rootSelection() throws -> WorkspaceSelection {
+    try WorkspaceSelection(
         owner: "acme",
         name: "vault",
         branch: "main",

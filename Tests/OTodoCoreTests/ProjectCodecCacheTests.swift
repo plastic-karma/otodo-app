@@ -52,7 +52,7 @@ final class ProjectCodecCacheTests: XCTestCase, @unchecked Sendable {
     func testPendingProjectEditWinsOverCachedProjectionBeforeArchive() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let selection = try RepositorySelection(owner: "o", name: "pending-edit", branch: "main", storePath: "")
+        let selection = try WorkspaceSelection(owner: "o", name: "pending-edit", branch: "main", storePath: "")
         let configuration = try StoreConfiguration(schemaVersion: 1, tasksDirectory: "Tasks", projectsDirectory: "Projects",
             obsidianLinkPrefix: "", defaultState: "open", states: [try WorkflowState(id: "open", name: "Open", isTerminal: false)])
         let codec = ObsidianProjectCodec()
@@ -81,7 +81,7 @@ final class ProjectCodecCacheTests: XCTestCase, @unchecked Sendable {
     func testPendingProjectDeletionCannotBeResurrectedByArchivingCachedProjection() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let selection = try RepositorySelection(owner: "o", name: "pending-delete", branch: "main", storePath: "")
+        let selection = try WorkspaceSelection(owner: "o", name: "pending-delete", branch: "main", storePath: "")
         let configuration = try StoreConfiguration(schemaVersion: 1, tasksDirectory: "Tasks", projectsDirectory: "Projects",
             obsidianLinkPrefix: "", defaultState: "open", states: [try WorkflowState(id: "open", name: "Open", isTerminal: false)])
         let source = "---\nname: Alpha\n---\nOld notes\n"
@@ -137,7 +137,7 @@ final class ProjectCodecCacheTests: XCTestCase, @unchecked Sendable {
     }
 
     func testRealOldEnvelopesDoNotInventProjectDocumentsAndRecoverLocalEvidence() async throws {
-        let selection = try RepositorySelection(owner: "o", name: "cache", branch: "main", storePath: "vault")
+        let selection = try WorkspaceSelection(owner: "o", name: "cache", branch: "main", storePath: "vault")
         let configuration = try StoreConfiguration(schemaVersion: 1, tasksDirectory: "Tasks", projectsDirectory: "Projects", obsidianLinkPrefix: "Vault", defaultState: "open", states: [try WorkflowState(id: "open", name: "Open", isTerminal: false)])
         let source = "# A real historical title\n"
         let orphanSource = "---\nname: Remote disagreement\narchived: 'plugin-owned'\n---\n\r\nKeep body  \r\n"
@@ -175,7 +175,7 @@ final class ProjectCodecCacheTests: XCTestCase, @unchecked Sendable {
     func testVersionFourRetainsAtomicGroupAcrossDiskReload() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let selection = try RepositorySelection(owner: "o", name: "groups", branch: "main", storePath: "")
+        let selection = try WorkspaceSelection(owner: "o", name: "groups", branch: "main", storePath: "")
         let configuration = try StoreConfiguration(schemaVersion: 1, tasksDirectory: "Tasks", projectsDirectory: "Projects", obsidianLinkPrefix: "", defaultState: "open", states: [try WorkflowState(id: "open", name: "Open", isTerminal: false)])
         let group = UUID()
         let source = "---\nname: Alpha\narchived: true\n---\n# Old heading\n"
@@ -191,7 +191,7 @@ final class ProjectCodecCacheTests: XCTestCase, @unchecked Sendable {
     }
 
     func testCompleteCachedDocumentSurvivesSeparateDeletionConflictEvidence() throws {
-        let selection = try RepositorySelection(owner: "o", name: "evidence", branch: "main", storePath: "")
+        let selection = try WorkspaceSelection(owner: "o", name: "evidence", branch: "main", storePath: "")
         let configuration = try StoreConfiguration(schemaVersion: 1, tasksDirectory: "Tasks", projectsDirectory: "Projects", obsidianLinkPrefix: "", defaultState: "open", states: [try WorkflowState(id: "open", name: "Open", isTerminal: false)])
         let source = "---\nname: Real title\narchived: false\n---\nBody  \r\n"
         let project = try ObsidianProjectCodec().parseProject(slug: "alpha", relativePath: "Projects/alpha.md", text: source)

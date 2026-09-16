@@ -530,7 +530,7 @@ final class AttachmentTests: XCTestCase, @unchecked Sendable {
             ["content": config.base64EncodedString(), "encoding": "base64"],
             ["sha": sha], ["sha": "new-tree"], ["sha": "commit"]])
         let client = GitHubAPIClient(accessToken: "token", transport: transport)
-        let selection = try RepositorySelection(owner: "owner", name: "repo", branch: "main", storePath: "")
+        let selection = try WorkspaceSelection(owner: "owner", name: "repo", branch: "main", storePath: "")
         let snapshot = try await client.fetchSnapshot(selection: selection)
         XCTAssertEqual(snapshot.files.count, 1)
         XCTAssertEqual(snapshot.attachments.count, 3)
@@ -550,7 +550,7 @@ final class AttachmentTests: XCTestCase, @unchecked Sendable {
         let sha = GitBlobSHA.hexDigest(data)
         let transport = AttachmentHTTPTransport(data: data)
         let client = GitHubAPIClient(accessToken: "token", transport: transport)
-        let selection = try RepositorySelection(owner: "owner", name: "repo", branch: "main", storePath: "todos")
+        let selection = try WorkspaceSelection(owner: "owner", name: "repo", branch: "main", storePath: "todos")
         let metadata = try AttachmentMetadata(path: "todos/Attachments/test.bin", blobSHA: sha, byteSize: data.count)
         let downloaded = try await client.fetchAttachment(selection: selection, attachment: metadata)
         XCTAssertEqual(downloaded, data)
@@ -566,7 +566,7 @@ final class AttachmentTests: XCTestCase, @unchecked Sendable {
 
 private struct Fixture {
     let root: URL
-    let selection: RepositorySelection
+    let selection: WorkspaceSelection
     let configuration: StoreConfiguration
     let persistence: FileWorkspaceStore
     let bytes: AttachmentStore
@@ -576,7 +576,7 @@ private struct Fixture {
     var workspaceURL: URL { root.appendingPathComponent(FileWorkspaceStore.selectionKey(for: selection) + ".json") }
     init(version: Int = 1, cacheBudget: Int = AttachmentStore.maximumCacheBytes) async throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("attachment-tests-" + UUID().uuidString)
-        selection = try RepositorySelection(owner: "owner", name: "repo", branch: "main", storePath: "todos")
+        selection = try WorkspaceSelection(owner: "owner", name: "repo", branch: "main", storePath: "todos")
         configuration = try StrictStoreConfigCodec().parseConfiguration(AttachmentRemote.configuration(version))
         persistence = FileWorkspaceStore(rootURL: root)
         bytes = AttachmentStore(rootURL: root, maximumCacheBytes: cacheBudget)
@@ -620,14 +620,14 @@ private actor AttachmentRemote: GitHubServing {
     }
     func listRepositories() async throws -> [RepositorySummary] { [] }
     func discoverStorePaths(repository: RepositorySummary, branch: String) async throws -> [String] { ["todos"] }
-    func fetchSnapshot(selection: RepositorySelection) async throws -> GitSnapshot {
+    func fetchSnapshot(selection: WorkspaceSelection) async throws -> GitSnapshot {
         if failFetch { failFetch = false; throw OTodoError.transport(statusCode: nil, message: "confirmation failure") }
         return snapshot
     }
-    func commit(selection: RepositorySelection, changes: [RemoteChange], against snapshot: GitSnapshot, message: String) async throws -> String {
+    func commit(selection: WorkspaceSelection, changes: [RemoteChange], against snapshot: GitSnapshot, message: String) async throws -> String {
         self.changes.append(changes); staged = changes; return "commit-\(self.changes.count)"
     }
-    func updateReference(selection: RepositorySelection, to commitSHA: String, expectedHead: String) async throws {
+    func updateReference(selection: WorkspaceSelection, to commitSHA: String, expectedHead: String) async throws {
         if staleHead {
             staleHead = false
             snapshot = try GitSnapshot(headCommitSHA: snapshot.headCommitSHA + "unrelated", rootTreeSHA: snapshot.rootTreeSHA + "unrelated", files: snapshot.files, attachments: snapshot.attachments)
@@ -648,7 +648,7 @@ private actor AttachmentRemote: GitHubServing {
         snapshot = try GitSnapshot(headCommitSHA: commitSHA, rootTreeSHA: "tree-" + commitSHA, files: files, attachments: attachments)
         if shouldFailConfirmation { shouldFailConfirmation = false; failFetch = true }
     }
-    func fetchAttachment(selection: RepositorySelection, attachment: AttachmentMetadata) async throws -> Data {
+    func fetchAttachment(selection: WorkspaceSelection, attachment: AttachmentMetadata) async throws -> Data {
         if downloadFails { throw OTodoError.transport(statusCode: nil, message: "offline") }
         guard let data = binary[attachment.path] else { throw OTodoError.notFound(resource: attachment.path) }
         return data

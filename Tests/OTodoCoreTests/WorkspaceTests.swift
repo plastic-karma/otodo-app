@@ -35,7 +35,7 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         try WorkspaceStorageMigration.prepare(legacyURL: legacy, destinationURL: shared)
 
         let restoredSelection = try JSONDecoder().decode(
-            RepositorySelection.self,
+            WorkspaceSelection.self,
             from: Data(contentsOf: shared.appendingPathComponent("repository-selection.json"))
         )
         let sharedWorkspaces = shared.appendingPathComponent("workspaces", isDirectory: true)
@@ -2637,7 +2637,7 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
 
 private func loadRequired(
     _ store: FileWorkspaceStore,
-    selection: RepositorySelection
+    selection: WorkspaceSelection
 ) async throws -> WorkspaceState {
     let workspace = try await store.load(selection: selection)
     return try XCTUnwrap(workspace)
@@ -2685,7 +2685,7 @@ private struct CapacityLimitedWorkspaceStore: WorkspacePersisting {
     let store: FileWorkspaceStore
     let maximumTaskCount: Int
 
-    func load(selection: RepositorySelection) async throws -> WorkspaceState? {
+    func load(selection: WorkspaceSelection) async throws -> WorkspaceState? {
         try await store.load(selection: selection)
     }
 
@@ -2701,7 +2701,7 @@ private struct SnapshotWorkspaceStore: WorkspacePersisting {
     let store: FileWorkspaceStore
     let snapshot: WorkspaceState
 
-    func load(selection: RepositorySelection) async throws -> WorkspaceState? {
+    func load(selection: WorkspaceSelection) async throws -> WorkspaceState? {
         snapshot
     }
 
@@ -2723,8 +2723,8 @@ private func makeTemporaryDirectory() throws -> URL {
     return directory
 }
 
-private func makeSelection() throws -> RepositorySelection {
-    try RepositorySelection(owner: "octo", name: "vault", branch: "main", storePath: "Todo")
+private func makeSelection() throws -> WorkspaceSelection {
+    try WorkspaceSelection(owner: "octo", name: "vault", branch: "main", storePath: "Todo")
 }
 
 private func makeConfiguration(
@@ -2747,7 +2747,7 @@ private func makeConfiguration(
 }
 
 private func makeWorkspace(
-    selection: RepositorySelection,
+    selection: WorkspaceSelection,
     configuration: StoreConfiguration,
     knownProjectSlugs: [String] = ["alpha", "beta"],
     tasks: [TaskDocument] = [],
@@ -2846,7 +2846,7 @@ private func makeService(
     )
 }
 
-private func repositoryPath(_ selection: RepositorySelection, _ relativePath: String) -> String {
+private func repositoryPath(_ selection: WorkspaceSelection, _ relativePath: String) -> String {
     selection.storePath.isEmpty ? relativePath : "\(selection.storePath)/\(relativePath)"
 }
 

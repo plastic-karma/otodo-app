@@ -26,7 +26,8 @@ public actor SyncEngine {
     }
 
     /// Fetches and validates a selected store before making it the durable local workspace.
-    public func initialPull(selection: RepositorySelection) async throws -> WorkspaceState {
+    public func initialPull(selection: WorkspaceSelection) async throws -> WorkspaceState {
+        _ = try selection.requireGitHub()
         guard try await persistence.load(selection: selection) == nil else {
             throw OTodoError.conflict(message: "A local workspace already exists for this repository selection")
         }
@@ -46,7 +47,8 @@ public actor SyncEngine {
 
     /// Explicit, connected setup after user confirmation. Publishes only the shared configuration;
     /// task outbox entries remain ordinary offline edits and are never pushed by this operation.
-    public func addInProgressState(selection: RepositorySelection) async throws -> WorkspaceState {
+    public func addInProgressState(selection: WorkspaceSelection) async throws -> WorkspaceState {
+        _ = try selection.requireGitHub()
         let configPath = repositoryPath(storePath: selection.storePath, relativePath: ".todo/config.toml")
         _ = try await workspaceForConfigurationSetup(selection: selection, configPath: configPath)
         var snapshot = try await gitHub.fetchSnapshot(selection: selection)
@@ -120,7 +122,7 @@ public actor SyncEngine {
     }
 
     private func workspaceForConfigurationSetup(
-        selection: RepositorySelection, configPath: String
+        selection: WorkspaceSelection, configPath: String
     ) async throws -> WorkspaceState {
         let local = try await loadWorkspace(selection: selection)
         guard !local.pendingChanges.contains(where: { $0.path == configPath }),
@@ -134,7 +136,8 @@ public actor SyncEngine {
 
     /// Pulls the latest selected snapshot, replays safe local changes, and advances the branch
     /// only with a non-forced compare-and-swap update performed by `GitHubServing`.
-    public func sync(selection: RepositorySelection) async throws -> SyncReport {
+    public func sync(selection: WorkspaceSelection) async throws -> SyncReport {
+        _ = try selection.requireGitHub()
         _ = try await loadWorkspace(selection: selection)
         var snapshot = try await gitHub.fetchSnapshot(selection: selection)
 
@@ -257,7 +260,7 @@ public actor SyncEngine {
         let attachmentsByPath: [String: AttachmentMetadata]
     }
 
-    private func loadWorkspace(selection: RepositorySelection) async throws -> WorkspaceState {
+    private func loadWorkspace(selection: WorkspaceSelection) async throws -> WorkspaceState {
         guard let workspace = try await persistence.load(selection: selection) else {
             throw OTodoError.notFound(resource: "local workspace")
         }
@@ -270,7 +273,7 @@ public actor SyncEngine {
     }
 
     private func reconcileAndSave(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         snapshot: GitSnapshot,
         confirming confirmedAttempts: [PendingChange],
         restrictingTo publishablePendingIDs: Set<UUID>? = nil
@@ -319,7 +322,7 @@ public actor SyncEngine {
     }
 
     private func workspace(
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         snapshot: GitSnapshot,
         pendingChanges: [PendingChange],
         existingConflicts: [SyncConflict],
@@ -528,7 +531,7 @@ public actor SyncEngine {
     }
 
     private func remappingProjectLayout(
-        pending: [PendingChange], conflicts: [SyncConflict], selection: RepositorySelection,
+        pending: [PendingChange], conflicts: [SyncConflict], selection: WorkspaceSelection,
         previous: StoreConfiguration?, current: StoreConfiguration
     ) throws -> (pending: [PendingChange], conflicts: [SyncConflict], originalPaths: [String: String]) {
         guard let previous, previous.projectsDirectory != current.projectsDirectory else {
@@ -594,7 +597,7 @@ public actor SyncEngine {
 
     /// Projects, attachments, parent relationships and durable groups are reduced together to a safe fixed point.
     private func dependencySafeChanges(candidates: [PendingChange], pending: [PendingChange], conflicts: [SyncConflict], remote: ParsedSnapshot,
-        localTasks: [TaskDocument], selection: RepositorySelection) throws -> (changes: [PendingChange], blocks: [TaskRelationshipBlock]) {
+        localTasks: [TaskDocument], selection: WorkspaceSelection) throws -> (changes: [PendingChange], blocks: [TaskRelationshipBlock]) {
         var safe = candidates
         var blocks: [TaskRelationshipBlock] = []
         if !AttachmentLinks.enabled(configuration: remote.configuration) { safe.removeAll { $0.payload.binaryFile != nil } }
@@ -653,7 +656,7 @@ public actor SyncEngine {
 
     private func projectSafeChanges(
         candidates: [PendingChange], remote: ParsedSnapshot,
-        localTasksByPath: [String: TodoTask], selection: RepositorySelection
+        localTasksByPath: [String: TodoTask], selection: WorkspaceSelection
     ) -> (changes: [PendingChange], blocks: [TaskRelationshipBlock]) {
         let prefix = repositoryPath(storePath: selection.storePath, relativePath: remote.configuration.projectsDirectory + "/")
         var available = Set(remote.knownProjectSlugs)
@@ -707,7 +710,7 @@ public actor SyncEngine {
 
     private func relationshipSafeChanges(
         candidates: [PendingChange], remote: ParsedSnapshot, localTasks: [TaskDocument],
-        selection: RepositorySelection
+        selection: WorkspaceSelection
     ) throws -> (changes: [PendingChange], blocks: [TaskRelationshipBlock]) {
         let remoteTasks = remote.tasks.map(\.task)
         let local = localTasks.map(\.task)
@@ -778,7 +781,7 @@ public actor SyncEngine {
         return (safe, blocks)
     }
 
-    private func parse(snapshot: GitSnapshot, selection: RepositorySelection) throws -> ParsedSnapshot {
+    private func parse(snapshot: GitSnapshot, selection: WorkspaceSelection) throws -> ParsedSnapshot {
         let filesByPath = Dictionary(uniqueKeysWithValues: snapshot.files.map { ($0.path, $0) })
         let configPath = repositoryPath(storePath: selection.storePath, relativePath: ".todo/config.toml")
         guard let configFile = filesByPath[configPath] else {
@@ -863,7 +866,7 @@ public actor SyncEngine {
         content: String?,
         fullPath: String,
         blobSHA: String?,
-        selection: RepositorySelection,
+        selection: WorkspaceSelection,
         configuration: StoreConfiguration,
         tasksByPath: inout [String: TaskDocument],
         knownProjectSlugs: inout Set<String>,
@@ -939,7 +942,7 @@ public actor SyncEngine {
         from oldTasks: [TaskDocument],
         to newTasks: [TaskDocument],
         excludingFullPaths: Set<String>,
-        selection: RepositorySelection
+        selection: WorkspaceSelection
     ) -> Int {
         let excluded = Set(excludingFullPaths.compactMap {
             storeRelativePath($0, storePath: selection.storePath)

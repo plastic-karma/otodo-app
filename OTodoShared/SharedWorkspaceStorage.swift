@@ -1,7 +1,7 @@
 import Foundation
 import OTodoCore
 
-/// The app, Share extension, and App Intent use one selected workspace and outbox.
+/// The app, Share extension, and App Intent use one selected durable workspace.
 enum SharedWorkspaceStorage {
     static let appGroupIdentifier = "group.plastickarma.otodo"
 

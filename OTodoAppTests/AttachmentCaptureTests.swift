@@ -61,9 +61,9 @@ final class AttachmentCaptureTests: XCTestCase {
 
     func testSharedSaveCommitsBytesAndCleanupCannotDeleteThem() async throws {
         let directory = try SharedWorkspaceStorage.prepareForApplication(isUITesting: true)
-        let selections = RepositorySelectionStore(directoryURL: directory)
+        let selections = WorkspaceSelectionStore(directoryURL: directory)
         let previous = try await selections.load()
-        let selection = try RepositorySelection(owner: "attachment-testing", name: UUID().uuidString, branch: "main", storePath: "Todo")
+        let selection = try WorkspaceSelection(owner: "attachment-testing", name: UUID().uuidString, branch: "main", storePath: "Todo")
         let root = directory.appendingPathComponent("workspaces")
         let persistence = FileWorkspaceStore(rootURL: root)
         addTeardownBlock {

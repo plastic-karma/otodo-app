@@ -33,7 +33,7 @@ public enum DailyReviewContext {
         TodayWidgetSnapshotBuilder.dateKey(for: date, timeZone: calendar.timeZone)
     }
 
-    public static func workspaceKey(_ selection: RepositorySelection) -> String {
+    public static func workspaceKey(_ selection: WorkspaceSelection) -> String {
         FileWorkspaceStore.selectionKey(for: selection)
     }
 }
