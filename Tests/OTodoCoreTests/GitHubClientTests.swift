@@ -928,6 +928,30 @@ final class GitHubClientTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    func testLocalWorkspaceCannotIssueGitHubRequests() async throws {
+        let transport = ScriptedHTTPTransport(responses: [])
+        let client = GitHubAPIClient(
+            accessToken: "access-token",
+            transport: transport,
+            baseURL: apiBaseURL
+        )
+
+        do {
+            _ = try await client.fetchSnapshot(selection: RepositorySelection.local())
+            XCTFail("A local-only workspace must not reach GitHub")
+        } catch {
+            XCTAssertEqual(
+                error as? OTodoError,
+                OTodoError.validation(
+                    field: "workspace",
+                    message: "A local-only workspace cannot use GitHub operations"
+                )
+            )
+        }
+        let requests = await transport.requests()
+        XCTAssertTrue(requests.isEmpty)
+    }
+
     private func assertOAuthRequest(
         _ request: CapturedRequest,
         path: String,

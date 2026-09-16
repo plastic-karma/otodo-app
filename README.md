@@ -1,6 +1,6 @@
 # OTodo
 
-OTodo is an offline-first iOS client for Obsidian Todo schema-1 and schema-2 stores kept in a GitHub repository. It signs in through GitHub's OAuth Device Flow, discovers stores on a selected branch, and lets you create, archive, and restore projects plus create, edit, complete, and delete todos without making a local Git checkout.
+OTodo is an offline-first iOS client for Obsidian Todo schema-1 and schema-2 stores. You can start immediately with a local-only workspace that needs no account or network connection, or connect a GitHub repository through OAuth Device Flow and sync a store from a selected branch. Both modes support projects plus todo creation, editing, completion, recurrence, subtasks, and deletion without making a local Git checkout.
 
 The workspace uses a compact typographic heading, a neutral canvas, quiet row dividers, and a floating quick-add control while retaining native iOS interactions and accessibility. It displays active todos due today or overdue by default, with filters for every active todo or all todos including terminal states. The Projects sidebar filters projects; project names become lowercase, hyphenated slugs and direct Markdown project records. By default, todos are ordered by due date and time, configured workflow-state order, name, and ULID. Swipe right on a todo to reveal Done and Reschedule; swipe left to reveal Delete. Touch and hold a todo and choose Reschedule to shift its due date with the calendar or a relative phrase while preserving every other field. The editor supports the name, state, projects, tags, due date with optional exact time, and Markdown body. New todos and the reschedule sheet calculate an exact due date and time from phrases such as `in 3 days`, `in 6 hours`, or `in 6 months`; supported units are minutes, hours, days, weeks, months, and years. GitHub tokens are stored in the device Keychain; repository workspaces and their pending changes are stored on the device.
 
@@ -262,7 +262,7 @@ Open **Filters** from the top-right of the workspace, then **+** to save a name 
 
 The query editor suggests projects and tags from the current workspace as you type `project:` or `tag:`. Tap a suggestion to complete the value at the cursor, including when editing in the middle of a query. Matching ignores case while insertion preserves the stored spelling and quotes or escapes special characters automatically. Suggestions work offline and leave the surrounding query unchanged.
 
-Filters are saved offline on this device, separately for each repository, branch, and store path. They do not alter the Obsidian store or sync through GitHub. Selecting a filter from the library clears project scope in Todos but preserves it in Upcoming. Selecting a Home filter retains that scope except for Inbox, which always shows projectless work. Selecting a project from Inbox switches to that project's Active view.
+Filters are saved offline on this device, separately for each workspace. They do not alter the Obsidian store or sync through GitHub. Selecting a filter from the library clears project scope in Todos but preserves it in Upcoming. Selecting a Home filter retains that scope except for Inbox, which always shows projectless work. Selecting a project from Inbox switches to that project's Active view.
 
 Creating a todo from a filtered view preselects its required projects and tags, plus the selected sidebar project. `AND` combines requirements; `OR` keeps only labels shared by every branch. Negated expressions and ambiguous alternatives are not used to guess labels. Only existing projects and valid tags are inherited. The editor keeps these fields editable, and **Save & Create Another** retains your choices. **Bulk Add** applies the same labels to every todo in its atomic batch. In **Today**, **New Todo**, **Add Subtask**, repeated creation, and **Bulk Add** all default to the current local date, including within a project. **Upcoming → Calendar** uses its selected day instead. The date remains editable and a date phrase in the name takes precedence. Other views, including Upcoming's Agenda and Calendar's **No date**, keep fresh todos undated unless a date is entered; names and workflow states are never inferred from a filter.
 
@@ -375,7 +375,9 @@ The exact record contract is:
 
 ## Offline, outbox, and conflict behavior
 
-The first connection to a store requires GitHub access so OTodo can validate and save a complete snapshot. After that:
+Choose **Use This Device** on the welcome screen to create or reopen OTodo's local-only schema-2 workspace. It includes Open, In Progress, and Done states and supports the app, Share extension, widgets, and Watch snapshot without GitHub credentials. Its records and attachments stay in OTodo's App Group container and are never sent to GitHub; deleting the app or its data can remove them, so device backup remains the user's only external recovery path.
+
+A GitHub-backed workspace requires access for its first connection so OTodo can validate and save a complete snapshot. After that:
 
 1. Every project or todo creation, edit, completion, or deletion is atomically saved to the durable local workspace and outbox before the operation reports success.
 2. Repeated local changes to the same path coalesce into one pending change while retaining the original remote base. Deleting a never-synchronized todo cancels its pending creation.
@@ -388,9 +390,9 @@ The first connection to a store requires GitHub access so OTodo can validate and
 
 Losing connectivity, a failed API request, or expired authorization does not discard saved todos or pending changes. Reauthorize to resume synchronization.
 
-## One-time GitHub OAuth registration
+## One-time GitHub OAuth registration for synced workspaces
 
-> **One-time external user action:** a repository workflow cannot create or configure a GitHub OAuth App. An owner of the GitHub account or organization must do this in the GitHub web UI.
+> **Optional for local-only use. One-time external user action for GitHub sync:** a repository workflow cannot create or configure a GitHub OAuth App. An owner of the GitHub account or organization must do this in the GitHub web UI.
 
 1. Open GitHub **Settings → Developer settings → OAuth Apps → New OAuth App**.
 2. Enter these values:
@@ -408,13 +410,13 @@ Losing connectivity, a failed API request, or expired authorization does not dis
 
 OTodo requests the GitHub `repo` scope so the user can explicitly approve access to public and private repositories. The client sends only the public client ID during Device Flow. It requires **no OAuth client secret, personal access token, or GitHub password**. If an organization enforces SAML SSO or OAuth App restrictions, its owner must separately approve/authorize the OAuth App for that organization.
 
-At build time, the public Actions variable is passed to the Xcode build setting `GITHUB_CLIENT_ID`; `project.yml` writes that value to the app's `GitHubClientID` Info.plist key. For a local build, pass the same setting explicitly as shown below.
+At build time, the public Actions variable is passed to the Xcode build setting `GITHUB_CLIENT_ID`; `project.yml` writes that value to the app's `GitHubClientID` Info.plist key. The value may stay empty for a local-only build. Pass it explicitly as shown below to enable GitHub sync in a local build.
 
-## Repository and store onboarding
+## Workspace onboarding
 
-> **One-time external user action:** create the GitHub repository and commit a compatible `.todo/config.toml`, project records, and any existing task records before connecting OTodo. Neither the app nor CI creates this external repository/store registration.
+For a local-only workspace, tap **Use This Device**. No GitHub OAuth configuration, account, repository, or network connection is required.
 
-In OTodo:
+For a GitHub-backed workspace, first create the repository and commit a compatible `.todo/config.toml`, project records, and any existing task records. Neither the app nor CI creates this external repository/store registration. Then:
 
 1. Tap **Continue with GitHub**, open the verification page, enter the one-time code, and approve the requested `repo` scope.
 2. Select a repository. Its default branch is filled automatically; enter another branch if needed.

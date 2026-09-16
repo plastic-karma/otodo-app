@@ -38,16 +38,14 @@ actor RepositorySelectionStore {
     }
 
     func save(_ selection: RepositorySelection) async throws {
-        let normalized: RepositorySelection
         let data: Data
         do {
-            normalized = try RepositorySelection(
-                owner: selection.owner,
-                name: selection.name,
-                branch: selection.branch,
-                storePath: selection.storePath
-            )
-            data = try JSONEncoder().encode(normalized)
+            data = try JSONEncoder().encode(selection)
+            guard try JSONDecoder().decode(RepositorySelection.self, from: data) == selection else {
+                throw OTodoError.corruptLocalState(
+                    message: "The workspace selection changed while validating it"
+                )
+            }
         } catch {
             throw OTodoError.corruptLocalState(
                 message: "The repository selection could not be encoded as valid local state"

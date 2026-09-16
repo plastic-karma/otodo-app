@@ -53,6 +53,7 @@ final class AppModel {
 
     @ObservationIgnored private let isUITesting: Bool
     @ObservationIgnored private let resetsUITestingWorkspace: Bool
+    @ObservationIgnored private let usesOnboardingUITest: Bool
     @ObservationIgnored private let workspaceRootURL: URL
     @ObservationIgnored private let workspaceStore: FileWorkspaceStore
     @ObservationIgnored let filterStore: FileTaskFilterStore
@@ -66,6 +67,8 @@ final class AppModel {
     @ObservationIgnored private var authenticatedGitHub: AuthenticatedGitHubService?
     @ObservationIgnored private var syncEngine: SyncEngine?
     private(set) var workspaceSelection: RepositorySelection?
+    var isLocalOnly: Bool { workspaceSelection?.isLocalOnly == true }
+    var isAuthorizingGitHub: Bool { authorizationID != nil }
     @ObservationIgnored private var didStart = false
     @ObservationIgnored private var sessionID = UUID()
     @ObservationIgnored private var authorizationID: UUID?
@@ -83,10 +86,14 @@ final class AppModel {
     ) throws {
 #if DEBUG
         let isUITesting = launchArguments.contains("-ui-testing")
+        let usesOnboardingUITest =
+            isUITesting && launchArguments.contains("-ui-testing-onboarding")
 #else
         let isUITesting = false
+        let usesOnboardingUITest = false
 #endif
         self.isUITesting = isUITesting
+        self.usesOnboardingUITest = usesOnboardingUITest
         resetsUITestingWorkspace =
             isUITesting && launchArguments.contains("-ui-testing-reset-workspace")
         if resetsUITestingWorkspace {
@@ -96,7 +103,9 @@ final class AppModel {
             rawValue: UserDefaults.standard.string(forKey: Self.sortOrderDefaultsKey) ?? ""
         ) ?? .dueDate
 
-        let clientID = Self.configuredClientID(in: infoDictionary)
+        let clientID = isUITesting && launchArguments.contains("-ui-testing-no-oauth")
+            ? nil
+            : Self.configuredClientID(in: infoDictionary)
         gitHubClientID = clientID
 
         let directoryURL = try SharedWorkspaceStorage.prepareForApplication(isUITesting: isUITesting)
@@ -123,7 +132,9 @@ final class AppModel {
             oauthClient = nil
             connectivityMonitor = nil
             isOnline = false
-            rootState = .workspace
+            rootState = usesOnboardingUITest
+                ? (clientID == nil ? .missingOAuthConfiguration : .authentication)
+                : .workspace
         } else {
             let credentials = KeychainCredentialStore()
             credentialStore = credentials
@@ -154,20 +165,20 @@ final class AppModel {
 
 #if DEBUG
         if isUITesting {
-            await startUITestingWorkspace()
-            return
+            if !usesOnboardingUITest {
+                await startUITestingWorkspace()
+                return
+            }
+            if resetsUITestingWorkspace {
+                if FileManager.default.fileExists(atPath: workspaceRootURL.path) {
+                    try? FileManager.default.removeItem(at: workspaceRootURL)
+                }
+                try? await repositorySelectionStore.clear()
+            }
         }
 #endif
 
         startConnectivityObservation()
-        guard gitHubClientID != nil,
-              let credentialStore,
-              oauthClient != nil
-        else {
-            rootState = .missingOAuthConfiguration
-            return
-        }
-
         let operationSession = sessionID
         var restoredWorkspace = false
         do {
@@ -179,7 +190,29 @@ final class AppModel {
                     apply(workspace)
                     rootState = .workspace
                     restoredWorkspace = true
+                    if selection.isLocalOnly {
+                        statusMessage = "Stored only on this device."
+                        errorMessage = nil
+                        return
+                    }
+                } else if selection.isLocalOnly {
+                    try await repositorySelectionStore.clear()
+                    workspaceSelection = nil
                 }
+            }
+
+            guard gitHubClientID != nil,
+                  let credentialStore,
+                  oauthClient != nil
+            else {
+                if restoredWorkspace {
+                    rootState = .workspace
+                    statusMessage = "Saved todos remain available offline."
+                    errorMessage = "GitHub sign-in is not configured in this build."
+                } else {
+                    rootState = .missingOAuthConfiguration
+                }
+                return
             }
 
             let storedToken = try await credentialStore.loadToken()
@@ -233,7 +266,7 @@ final class AppModel {
                 rootState = .workspace
             } else {
                 errorMessage = Self.message(for: error)
-                rootState = .authentication
+                rootState = gitHubClientID == nil ? .missingOAuthConfiguration : .authentication
             }
         }
     }
@@ -252,8 +285,73 @@ final class AppModel {
             errorMessage = Self.message(for: error)
         }
         guard sessionID == operationSession, !isEndingSession else { return }
-        if isOnline {
+        if isOnline, !selection.isLocalOnly {
             await synchronize(surfacesErrors: true)
+        }
+    }
+
+    func useLocalStorage() async {
+        guard !isEndingSession, !isBusy else { return }
+        guard rootState == .authentication || rootState == .missingOAuthConfiguration else {
+            errorMessage = "Choose local storage before opening a workspace."
+            return
+        }
+
+        sessionID = UUID()
+        let operationSession = sessionID
+        errorMessage = nil
+        statusMessage = "Preparing local storage…"
+        isBusy = true
+        defer {
+            if sessionID == operationSession {
+                isBusy = false
+            }
+        }
+
+        do {
+            let selection = try RepositorySelection.local()
+            let workspace: WorkspaceState
+            if let existing = try await taskService.load(selection: selection) {
+                workspace = existing
+            } else {
+                let configuration = try StoreConfiguration(
+                    schemaVersion: 2,
+                    tasksDirectory: "Tasks",
+                    projectsDirectory: "Projects",
+                    obsidianLinkPrefix: "",
+                    defaultState: "open",
+                    states: [
+                        try WorkflowState(id: "open", name: "Open", isTerminal: false),
+                        .inProgress,
+                        try WorkflowState(id: "done", name: "Done", isTerminal: true),
+                    ]
+                )
+                workspace = try WorkspaceState(
+                    selection: selection,
+                    configuration: configuration,
+                    tasks: [],
+                    baseHeadCommitSHA: "local-only",
+                    baseRootTreeSHA: "local-only",
+                    pendingChanges: [],
+                    conflicts: []
+                )
+                try await workspaceStore.save(workspace, expectedRevision: nil)
+            }
+            try await repositorySelectionStore.save(selection)
+            guard sessionID == operationSession, !isEndingSession else { return }
+
+            authenticatedGitHub = nil
+            syncEngine = nil
+            syncFollowUpRequested = false
+            syncFollowUpSurfacesErrors = false
+            apply(workspace)
+            rootState = .workspace
+            statusMessage = "Stored only on this device."
+            errorMessage = nil
+        } catch {
+            guard sessionID == operationSession, !isEndingSession else { return }
+            statusMessage = nil
+            errorMessage = Self.message(for: error)
         }
     }
 
@@ -1002,6 +1100,11 @@ final class AppModel {
             errorMessage = Self.message(for: error)
             return
         }
+        if selection.isLocalOnly {
+            statusMessage = "Stored only on this device."
+            errorMessage = nil
+            return
+        }
         guard authenticatedGitHub != nil else {
             statusMessage = "Saved todos remain available on this device."
             errorMessage = "GitHub authorization is required. Sign out, then authorize again to synchronize."
@@ -1321,7 +1424,7 @@ final class AppModel {
     private func connectivityDidChange(_ online: Bool) {
         let wasOnline = isOnline
         isOnline = online
-        guard rootState == .workspace else { return }
+        guard rootState == .workspace, !isLocalOnly else { return }
         if !online {
             statusMessage = "Offline — changes are saved locally."
         } else if !wasOnline {
@@ -1339,10 +1442,13 @@ final class AppModel {
 
     private func finishLocalMutation() {
         localMutationsInProgress -= 1
-        guard localMutationsInProgress == 0,
-              isOnline,
-              syncFollowUpRequested
-        else { return }
+        guard localMutationsInProgress == 0 else { return }
+        if isLocalOnly {
+            syncFollowUpRequested = false
+            syncFollowUpSurfacesErrors = false
+            return
+        }
+        guard isOnline, syncFollowUpRequested else { return }
         triggerSynchronization(surfacesErrors: false)
     }
 
@@ -1350,7 +1456,10 @@ final class AppModel {
         onlineMessage: String,
         offlineMessage: String
     ) {
-        if authenticatedGitHub == nil {
+        if isLocalOnly {
+            statusMessage = "Saved on this device."
+            errorMessage = nil
+        } else if authenticatedGitHub == nil {
             statusMessage = "Saved on this device. Sign out, then authorize again to synchronize."
             errorMessage = nil
         } else {

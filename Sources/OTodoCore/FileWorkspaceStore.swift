@@ -225,9 +225,14 @@ public actor FileWorkspaceStore: WorkspacePersisting {
     }
 
     /// Stable, filesystem-safe key derived from all normalized selection fields.
+    /// Remote keys retain their historical shape so existing caches stay addressable.
     public nonisolated static func selectionKey(for selection: RepositorySelection) -> String {
+        var components = [selection.owner, selection.name, selection.branch, selection.storePath]
+        if selection.isLocalOnly {
+            components.insert(selection.origin.rawValue, at: 0)
+        }
         var bytes = [UInt8]()
-        for component in [selection.owner, selection.name, selection.branch, selection.storePath] {
+        for component in components {
             let componentBytes = Array(component.utf8)
             bytes.append(contentsOf: String(componentBytes.count).utf8)
             bytes.append(58)

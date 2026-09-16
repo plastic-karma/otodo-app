@@ -77,33 +77,63 @@ struct AuthenticationView: View {
     @ViewBuilder
     private var startCard: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("GitHub will show a one-time code, then ask you to approve OTodo in your browser.")
-                .foregroundStyle(.secondary)
+            Text("Choose where OTodo keeps this workspace.")
+                .font(.headline)
 
             if model.isBusy {
-                ProgressView("Requesting a code…")
+                ProgressView(model.statusMessage ?? "Working…")
                     .accessibilityIdentifier("authentication.requestingCode")
 
-                Button("Cancel", role: .cancel) {
-                    Task {
-                        await model.cancelAuthorization()
+                if model.isAuthorizingGitHub {
+                    Button("Cancel", role: .cancel) {
+                        Task {
+                            await model.cancelAuthorization()
+                        }
                     }
+                    .accessibilityIdentifier("authentication.cancel")
                 }
-                .accessibilityIdentifier("authentication.cancel")
             } else {
+                Text("Local storage needs no account or network connection. Todos stay inside OTodo on this device.")
+                    .foregroundStyle(.secondary)
+
                 Button {
                     Task {
-                        await model.startAuthorization()
+                        await model.useLocalStorage()
                     }
                 } label: {
-                    Label("Continue with GitHub", systemImage: "person.crop.circle.badge.checkmark")
+                    Label("Use This Device", systemImage: "internaldrive")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(OTodoTheme.filledAccent)
                 .controlSize(.large)
-                .accessibilityHint("Requests a one-time code from GitHub")
-                .accessibilityIdentifier("authentication.start")
+                .accessibilityHint("Creates or opens a workspace stored only on this device")
+                .accessibilityIdentifier("authentication.local")
+
+                Divider()
+
+                if model.gitHubClientID != nil {
+                    Text("Or connect a GitHub repository to sync its todo store.")
+                        .foregroundStyle(.secondary)
+
+                    Button {
+                        Task {
+                            await model.startAuthorization()
+                        }
+                    } label: {
+                        Label("Continue with GitHub", systemImage: "person.crop.circle.badge.checkmark")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .accessibilityHint("Requests a one-time code from GitHub")
+                    .accessibilityIdentifier("authentication.start")
+                } else {
+                    Label("GitHub sign-in is not configured in this build.", systemImage: "key.slash")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("authentication.githubUnavailable")
+                }
             }
         }
         .padding(20)

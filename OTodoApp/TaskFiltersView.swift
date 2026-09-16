@@ -37,7 +37,7 @@ struct TaskFiltersView: View {
                 } header: {
                     Text("Saved")
                 } footer: {
-                    Text("Star filters to show them on Home. Touch and hold a saved filter to edit or delete it. Filters are saved on this device, separately for each repository workspace.")
+                    Text("Star filters to show them on Home. Touch and hold a saved filter to edit or delete it. Filters are saved on this device, separately for each workspace.")
                 }
             }
             .scrollContentBackground(.hidden)

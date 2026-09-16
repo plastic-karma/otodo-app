@@ -893,7 +893,7 @@ struct TaskListView: View {
                     await model.signOut()
                 }
             } label: {
-                Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+                Label(model.isLocalOnly ? "Choose storage" : "Sign out", systemImage: "rectangle.portrait.and.arrow.right")
                     .font(.subheadline)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())

@@ -83,6 +83,50 @@ final class DomainTests: XCTestCase {
         XCTAssertEqual(selection.storePath, "Todo")
     }
 
+    func testLegacyRepositorySelectionDecodesAsGitHubWithoutMovingItsCache() throws {
+        let legacy = Data(
+            #"{"owner":"example","name":"vault","branch":"main","storePath":"Todo"}"#.utf8
+        )
+        let decoded = try JSONDecoder().decode(RepositorySelection.self, from: legacy)
+        let current = try RepositorySelection(
+            owner: "example",
+            name: "vault",
+            branch: "main",
+            storePath: "Todo"
+        )
+
+        XCTAssertEqual(decoded, current)
+        XCTAssertEqual(decoded.origin, .github)
+        XCTAssertFalse(decoded.isLocalOnly)
+        XCTAssertEqual(
+            FileWorkspaceStore.selectionKey(for: decoded),
+            FileWorkspaceStore.selectionKey(for: current)
+        )
+    }
+
+    func testLocalSelectionRoundTripsAndCannotCollideWithRemoteIdentity() throws {
+        let local = try RepositorySelection.local()
+        let remote = try RepositorySelection(
+            owner: local.owner,
+            name: local.name,
+            branch: local.branch,
+            storePath: local.storePath
+        )
+        let roundTrip = try JSONDecoder().decode(
+            RepositorySelection.self,
+            from: JSONEncoder().encode(local)
+        )
+
+        XCTAssertEqual(roundTrip, local)
+        XCTAssertEqual(local.origin, .local)
+        XCTAssertTrue(local.isLocalOnly)
+        XCTAssertEqual(local.name, "On This Device")
+        XCTAssertNotEqual(
+            FileWorkspaceStore.selectionKey(for: local),
+            FileWorkspaceStore.selectionKey(for: remote)
+        )
+    }
+
     func testStoreConfigurationBuildsCanonicalLinks() throws {
         let states = [try WorkflowState(id: "open", name: "Open", isTerminal: false)]
         let prefixed = try StoreConfiguration(

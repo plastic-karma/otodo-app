@@ -35,7 +35,13 @@ struct SyncStatusView: View {
                     .foregroundStyle(primaryColor)
                     .accessibilityLabel(primaryText)
                     .accessibilityValue(detailText ?? "")
-                    .accessibilityHint(isShowingDetails ? "Hides sync details" : "Shows sync details and workspace repair actions")
+                    .accessibilityHint(
+                        isShowingDetails
+                            ? "Hides workspace details"
+                            : model.isLocalOnly
+                                ? "Shows local workspace details and relationship repair actions"
+                                : "Shows sync details and workspace repair actions"
+                    )
                     .accessibilityIdentifier("sync-details-toggle")
 
                     if isShowingDetails {
@@ -100,7 +106,7 @@ struct SyncStatusView: View {
                     ProgressView()
                         .controlSize(.small)
                         .frame(width: 44, height: 44)
-                        .accessibilityLabel("Sync in progress")
+                        .accessibilityLabel(model.isLocalOnly ? "Local save in progress" : "Sync in progress")
                 } else {
                     Button {
                         Task { @MainActor in
@@ -113,8 +119,12 @@ struct SyncStatusView: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.borderless)
-                    .disabled(!model.isOnline)
-                    .accessibilityLabel(model.isOnline ? "Sync now" : "Sync unavailable while offline")
+                    .disabled(!model.isLocalOnly && !model.isOnline)
+                    .accessibilityLabel(
+                        model.isLocalOnly
+                            ? "Refresh local workspace"
+                            : model.isOnline ? "Sync now" : "Sync unavailable while offline"
+                    )
                     .accessibilityIdentifier("sync-refresh")
                 }
             }
@@ -146,6 +156,7 @@ struct SyncStatusView: View {
 
     private var compactText: String {
         if requiresAttention { return "Needs attention" }
+        if model.isLocalOnly { return primaryText }
         if !model.isOnline { return "Offline" }
         return primaryText
     }
@@ -188,6 +199,10 @@ struct SyncStatusView: View {
                 plural: "conflicts need attention"
             )
         }
+        if model.isLocalOnly {
+            return model.statusMessage.flatMap { $0.isEmpty ? nil : $0 }
+                ?? "No GitHub connection"
+        }
         if model.pendingChangeCount > 0 {
             return countText(
                 model.pendingChangeCount,
@@ -208,11 +223,14 @@ struct SyncStatusView: View {
         if !model.attachmentRefreshErrors.isEmpty {
             return "Attachment updates need attention"
         }
+        if model.isBusy {
+            return model.isLocalOnly ? "Saving" : "Syncing"
+        }
+        if model.isLocalOnly {
+            return "On this device"
+        }
         if !model.isOnline {
             return "Saved on this device"
-        }
-        if model.isBusy {
-            return "Syncing"
         }
         if model.pendingChangeCount > 0 {
             return "Waiting to sync"
@@ -224,11 +242,14 @@ struct SyncStatusView: View {
         if requiresAttention {
             return "exclamationmark.triangle"
         }
-        if !model.isOnline {
-            return "wifi.slash"
-        }
         if model.isBusy {
             return "arrow.triangle.2.circlepath"
+        }
+        if model.isLocalOnly {
+            return "internaldrive"
+        }
+        if !model.isOnline {
+            return "wifi.slash"
         }
         if model.pendingChangeCount > 0 {
             return "clock.arrow.circlepath"
@@ -240,10 +261,16 @@ struct SyncStatusView: View {
         if requiresAttention {
             return .orange
         }
+        if model.isBusy {
+            return OTodoTheme.accent
+        }
+        if model.isLocalOnly {
+            return OTodoTheme.mint
+        }
         if !model.isOnline {
             return .secondary
         }
-        if model.isBusy || model.pendingChangeCount > 0 {
+        if model.pendingChangeCount > 0 {
             return OTodoTheme.accent
         }
         return OTodoTheme.mint

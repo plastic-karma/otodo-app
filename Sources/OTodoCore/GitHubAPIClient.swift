@@ -135,6 +135,7 @@ public actor GitHubAPIClient: GitHubServing {
     }
 
     public func fetchSnapshot(selection: RepositorySelection) async throws -> GitSnapshot {
+        try requireGitHubSelection(selection)
         let state = try await fetchBranchState(
             owner: selection.owner,
             repository: selection.name,
@@ -246,6 +247,7 @@ public actor GitHubAPIClient: GitHubServing {
     }
 
     public func fetchAttachment(selection: RepositorySelection, attachment: AttachmentMetadata) async throws -> Data {
+        try requireGitHubSelection(selection)
         let prefix = joinedPath(selection.storePath, "Attachments/")
         guard !attachment.isSymlink, !attachment.isDirectory, attachment.path.hasPrefix(prefix), attachment.byteSize <= AttachmentLinks.maximumBytes else {
             throw OTodoError.validation(field: "attachment", message: "Select an attachment inside this store no larger than 20 MiB")
@@ -272,6 +274,7 @@ public actor GitHubAPIClient: GitHubServing {
         against snapshot: GitSnapshot,
         message: String
     ) async throws -> String {
+        try requireGitHubSelection(selection)
         guard !changes.isEmpty else {
             throw OTodoError.validation(field: "changes", message: "At least one repository change is required")
         }
@@ -358,6 +361,7 @@ public actor GitHubAPIClient: GitHubServing {
         to commitSHA: String,
         expectedHead: String
     ) async throws {
+        try requireGitHubSelection(selection)
         guard !commitSHA.isEmpty, !expectedHead.isEmpty else {
             throw OTodoError.validation(field: "reference", message: "Commit and expected-head SHAs are required")
         }
@@ -815,6 +819,15 @@ public actor GitHubAPIClient: GitHubServing {
             return try JSONEncoder().encode(value)
         } catch {
             throw OTodoError.transport(statusCode: nil, message: "Could not encode a GitHub request: \(error.localizedDescription)")
+        }
+    }
+
+    private func requireGitHubSelection(_ selection: RepositorySelection) throws {
+        guard !selection.isLocalOnly else {
+            throw OTodoError.validation(
+                field: "workspace",
+                message: "A local-only workspace cannot use GitHub operations"
+            )
         }
     }
 

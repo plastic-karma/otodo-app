@@ -502,37 +502,98 @@ public struct ProjectDocument: Sendable, Codable, Equatable {
     }
 }
 
+public enum WorkspaceOrigin: String, Sendable, Codable {
+    case github
+    case local
+}
+
 public struct RepositorySelection: Sendable, Codable, Equatable {
+    private static let localOwner = "otodo-local"
+    private static let localBranch = "local"
+
+    public let origin: WorkspaceOrigin
     public let owner: String
     public let name: String
     public let branch: String
     public let storePath: String
 
+    public var isLocalOnly: Bool { origin == .local }
+
     public init(owner: String, name: String, branch: String, storePath: String) throws {
-        guard !owner.isEmpty else {
-            throw OTodoError.validation(field: "owner", message: "Repository owner must not be empty")
-        }
-        guard !name.isEmpty else {
-            throw OTodoError.validation(field: "name", message: "Repository name must not be empty")
-        }
-        guard !branch.isEmpty, !branch.contains("\u{0000}") else {
-            throw OTodoError.validation(field: "branch", message: "Branch must not be empty")
-        }
+        try self.init(
+            origin: .github,
+            owner: owner,
+            name: name,
+            branch: branch,
+            storePath: storePath
+        )
+    }
+
+    public static func local(name: String = "On This Device") throws -> Self {
+        try Self(
+            origin: .local,
+            owner: localOwner,
+            name: name,
+            branch: localBranch,
+            storePath: ""
+        )
+    }
+
+    private init(
+        origin: WorkspaceOrigin,
+        owner: String,
+        name: String,
+        branch: String,
+        storePath: String
+    ) throws {
         let normalizedStorePath = storePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        if !normalizedStorePath.isEmpty {
-            try DomainValidation.validateRelativePath(normalizedStorePath, field: "storePath")
+        let normalizedName = origin == .local
+            ? name.trimmingCharacters(in: .whitespacesAndNewlines)
+            : name
+
+        switch origin {
+        case .github:
+            guard !owner.isEmpty else {
+                throw OTodoError.validation(field: "owner", message: "Repository owner must not be empty")
+            }
+            guard !normalizedName.isEmpty else {
+                throw OTodoError.validation(field: "name", message: "Repository name must not be empty")
+            }
+            guard !branch.isEmpty, !branch.contains("\u{0000}") else {
+                throw OTodoError.validation(field: "branch", message: "Branch must not be empty")
+            }
+            if !normalizedStorePath.isEmpty {
+                try DomainValidation.validateRelativePath(normalizedStorePath, field: "storePath")
+            }
+        case .local:
+            guard owner == Self.localOwner,
+                  branch == Self.localBranch,
+                  normalizedStorePath.isEmpty,
+                  !normalizedName.isEmpty,
+                  normalizedName.rangeOfCharacter(from: .newlines) == nil
+            else {
+                throw OTodoError.validation(
+                    field: "workspace",
+                    message: "Local workspace identity is invalid"
+                )
+            }
         }
+
+        self.origin = origin
         self.owner = owner
-        self.name = name
+        self.name = normalizedName
         self.branch = branch
         self.storePath = normalizedStorePath
     }
 
-    private enum CodingKeys: String, CodingKey { case owner, name, branch, storePath }
+    private enum CodingKeys: String, CodingKey {
+        case origin, owner, name, branch, storePath
+    }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
+            origin: container.decodeIfPresent(WorkspaceOrigin.self, forKey: .origin) ?? .github,
             owner: container.decode(String.self, forKey: .owner),
             name: container.decode(String.self, forKey: .name),
             branch: container.decode(String.self, forKey: .branch),
