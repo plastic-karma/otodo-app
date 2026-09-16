@@ -3,6 +3,25 @@
 name: Release IPA
 
 on:
+  workflow_call:
+    inputs:
+      ci_run_id:
+        description: "Current PR CI run whose full verification jobs already passed"
+        required: true
+        type: string
+      marketing_version:
+        required: false
+        type: string
+      publish_testflight:
+        required: true
+        type: boolean
+    secrets:
+      APP_STORE_CONNECT_API_KEY_ID:
+        required: true
+      APP_STORE_CONNECT_API_ISSUER_ID:
+        required: true
+      APP_STORE_CONNECT_API_KEY:
+        required: true
   workflow_dispatch:
     inputs:
       marketing_version:
@@ -113,6 +132,7 @@ jobs:
         id: verification
         env:
           GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
         run: python3 .github/scripts/ci_runtime.py run --stage release-ci-verification --timeout 180 -- python3 .github/scripts/release.py verify-ci
 
       - name: Validate and install App Store Connect API key
