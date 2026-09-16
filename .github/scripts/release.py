@@ -85,12 +85,37 @@ def github_pages(path: str, field: str) -> list[dict]:
 def verify_ci() -> None:
     repository = required_environment("GITHUB_REPOSITORY")
     sha = required_environment("GITHUB_SHA")
-    query = urllib.parse.urlencode({"head_sha": sha, "status": "success"})
-    runs = github_pages(f"/repos/{repository}/actions/workflows/ci.yml/runs?{query}", "workflow_runs")
+    caller_run = os.environ.get("CI_RUN_ID", "")
+    if caller_run:
+        # Reusable PR releases execute inside CI, so the overall run cannot be
+        # completed yet. Only that current run may use completed verification
+        # jobs as its gate; an arbitrary in-progress run is never sufficient.
+        if (caller_run != required_environment("GITHUB_RUN_ID")
+                or os.environ.get("GITHUB_EVENT_NAME") != "pull_request"):
+            raise RuntimeError("A reusable release must verify its current PR CI run")
+        event = json.loads(Path(required_environment("GITHUB_EVENT_PATH")).read_text())
+        head = event.get("pull_request", {}).get("head", {})
+        if head.get("repo", {}).get("full_name") != repository:
+            raise RuntimeError("Automatic TestFlight releases require a same-repository PR")
+        run = github_get(f"/repos/{repository}/actions/runs/{caller_run}")
+        if (str(run.get("id")) != caller_run or run.get("event") != "pull_request"
+                or run.get("path") != ".github/workflows/ci.yml"
+                or run.get("head_sha") not in {sha, head.get("sha")}
+                or run.get("status") != "in_progress" or run.get("conclusion") is not None):
+            raise RuntimeError("The caller is not the current in-progress PR CI workflow")
+        runs = [run]
+    else:
+        query = urllib.parse.urlencode({"head_sha": sha, "status": "success"})
+        runs = github_pages(f"/repos/{repository}/actions/workflows/ci.yml/runs?{query}", "workflow_runs")
     for run in runs:
-        if (run.get("head_sha") != sha or run.get("status") != "completed"
-                or run.get("conclusion") != "success" or run.get("path") != ".github/workflows/ci.yml"):
+        if not caller_run and (run.get("head_sha") != sha or run.get("status") != "completed"
+                               or run.get("conclusion") != "success"
+                               or run.get("path") != ".github/workflows/ci.yml"):
             continue
+        # GitHub may report the PR head SHA in REST metadata while GITHUB_SHA
+        # and both workflows' checkouts use its synthetic merge commit. The
+        # inherited run ID binds the reusable release to those exact CI jobs.
+        check_sha = run["head_sha"] if caller_run else sha
         jobs = github_pages(f"/repos/{repository}/actions/runs/{run['id']}/jobs?filter=all", "jobs")
         # Reruns can retain successful jobs from prior attempts. For each name,
         # only its newest execution is authoritative; a stale green cannot mask red.
@@ -101,7 +126,7 @@ def verify_ci() -> None:
                 effective[name] = job
         if all(effective.get(name, {}).get("conclusion") == "success"
                and effective[name].get("status") == "completed"
-               and effective[name].get("head_sha") == sha for name in FULL_JOBS):
+               and effective[name].get("head_sha") == check_sha for name in FULL_JOBS):
             print(f"Full exact-SHA CI verified: {run['html_url']} ({sha})")
             output("ci_url", run["html_url"])
             return

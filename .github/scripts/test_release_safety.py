@@ -103,7 +103,7 @@ class ApplePreflightTests(unittest.TestCase):
 
 class FullVerificationTests(unittest.TestCase):
     def setUp(self):
-        self.environment = patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/repo", "GITHUB_SHA": "exact-sha"})
+        self.environment = patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/repo", "GITHUB_SHA": "exact-sha", "CI_RUN_ID": ""})
         self.environment.start()
         self.addCleanup(self.environment.stop)
         self.run = {"id": 10, "head_sha": "exact-sha", "status": "completed", "conclusion": "success",
@@ -136,6 +136,89 @@ class FullVerificationTests(unittest.TestCase):
     def test_other_sha_cannot_authorize_release(self):
         with patch.object(release, "github_pages", return_value=[{**self.run, "head_sha": "other-sha"}]):
             with self.assertRaisesRegex(RuntimeError, "exact SHA"):
+                release.verify_ci()
+
+    def test_manual_release_cannot_use_an_unfinished_run(self):
+        unfinished = {**self.run, "status": "in_progress", "conclusion": None}
+        with patch.object(release, "github_pages", return_value=[unfinished]):
+            with self.assertRaisesRegex(RuntimeError, "No successful full"):
+                release.verify_ci()
+
+
+class PullRequestReleaseTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        self.event_path = root / "event.json"
+        self.event = {"pull_request": {"head": {"sha": "pr-head", "repo": {"full_name": "owner/repo"}}}}
+        self.event_path.write_text(json.dumps(self.event))
+        self.output = root / "outputs"
+        environment = patch.dict(os.environ, {
+            "GITHUB_REPOSITORY": "owner/repo", "GITHUB_SHA": "merge-sha",
+            "GITHUB_RUN_ID": "10", "CI_RUN_ID": "10", "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_EVENT_PATH": str(self.event_path), "GITHUB_OUTPUT": str(self.output),
+        })
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.run = {"id": 10, "event": "pull_request", "head_sha": "pr-head", "status": "in_progress",
+                    "conclusion": None, "path": ".github/workflows/ci.yml",
+                    "html_url": "https://github.com/owner/repo/actions/runs/10"}
+        self.jobs = [{"id": index + 1, "name": name, "head_sha": "pr-head", "status": "completed",
+                      "conclusion": "success"} for index, name in enumerate(sorted(release.FULL_JOBS))]
+
+    def test_current_run_can_release_its_tested_merge_after_all_seven_checks(self):
+        with patch.object(release, "github_get", return_value=self.run) as get, \
+                patch.object(release, "github_pages", return_value=self.jobs) as pages:
+            release.verify_ci()
+        get.assert_called_once_with("/repos/owner/repo/actions/runs/10")
+        pages.assert_called_once_with("/repos/owner/repo/actions/runs/10/jobs?filter=all", "jobs")
+        self.assertEqual(self.output.read_text().strip(), "ci_url=" + self.run["html_url"])
+
+    def test_foreign_run_cannot_be_substituted_for_the_caller(self):
+        with patch.dict(os.environ, {"CI_RUN_ID": "11"}), patch.object(release, "github_get") as get:
+            with self.assertRaisesRegex(RuntimeError, "current PR CI run"):
+                release.verify_ci()
+        get.assert_not_called()
+
+    def test_fork_cannot_use_automatic_publishing(self):
+        self.event["pull_request"]["head"]["repo"]["full_name"] = "fork/repo"
+        self.event_path.write_text(json.dumps(self.event))
+        with patch.object(release, "github_get") as get:
+            with self.assertRaisesRegex(RuntimeError, "same-repository"):
+                release.verify_ci()
+        get.assert_not_called()
+
+    def test_other_workflow_revision_or_event_cannot_authorize_release(self):
+        for invalid in ({"path": ".github/workflows/other.yml"}, {"head_sha": "different-head"},
+                        {"event": "workflow_dispatch"}, {"id": 11}, {"conclusion": "failure"}):
+            with self.subTest(invalid=invalid), \
+                    patch.object(release, "github_get", return_value={**self.run, **invalid}), \
+                    patch.object(release, "github_pages") as pages:
+                with self.assertRaisesRegex(RuntimeError, "current in-progress PR CI"):
+                    release.verify_ci()
+                pages.assert_not_called()
+
+    def test_pending_failed_skipped_or_foreign_sha_check_blocks_upload(self):
+        for invalid in ({"status": "in_progress", "conclusion": None}, {"conclusion": "failure"},
+                        {"conclusion": "skipped"}, {"head_sha": "other-sha"}):
+            jobs = [*self.jobs[:-1], {**self.jobs[-1], **invalid}]
+            with self.subTest(invalid=invalid), patch.object(release, "github_get", return_value=self.run), \
+                    patch.object(release, "github_pages", return_value=jobs):
+                with self.assertRaisesRegex(RuntimeError, "No successful full"):
+                    release.verify_ci()
+
+    def test_focused_coverage_cannot_authorize_an_automatic_release(self):
+        with patch.object(release, "github_get", return_value=self.run), \
+                patch.object(release, "github_pages", return_value=self.jobs[:-1]):
+            with self.assertRaisesRegex(RuntimeError, "No successful full"):
+                release.verify_ci()
+
+    def test_newer_failed_attempt_cannot_reuse_stale_green(self):
+        jobs = [*self.jobs, {**self.jobs[-1], "id": 100, "conclusion": "failure"}]
+        with patch.object(release, "github_get", return_value=self.run), \
+                patch.object(release, "github_pages", return_value=jobs):
+            with self.assertRaisesRegex(RuntimeError, "No successful full"):
                 release.verify_ci()
 
 
