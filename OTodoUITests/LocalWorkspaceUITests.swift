@@ -107,9 +107,8 @@ final class LocalWorkspaceUITests: XCTestCase {
         app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace", "-ui-testing-attachment-refresh-failure"]
         app.launch()
         defer { app.terminate() }
-        let status = app.descendants(matching: .any).matching(identifier: "sync-status").firstMatch
-        XCTAssertTrue(status.waitForExistence(timeout: 10))
-        let previousWarning = status.staticTexts.firstMatch.label
+        let warning = app.staticTexts["attachment-refresh-status"]
+        XCTAssertTrue(warning.waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["sync-refresh"].exists)
 
         app.buttons["project-sidebar-toggle"].tap()
@@ -124,7 +123,7 @@ final class LocalWorkspaceUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["task-add"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["sync-refresh"].exists)
-        XCTAssertTrue(app.staticTexts[previousWarning].waitForNonExistence(timeout: 8),
+        XCTAssertTrue(warning.waitForNonExistence(timeout: 8),
                       "A local workspace must not retain a different workspace's attachment failure")
     }
 }
