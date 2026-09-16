@@ -17,6 +17,7 @@ struct HighlightedTaskNameField: UIViewRepresentable {
 
     @MainActor
     func makeUIView(context: Context) -> NameTextField {
+        _ = EditorTouchDiagnostics.installed
         let textField = NameTextField()
         textField.borderStyle = .none
         textField.placeholder = "Todo name"

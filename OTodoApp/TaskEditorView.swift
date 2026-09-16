@@ -458,6 +458,12 @@ struct TaskEditorView: View {
             }
         }
         .onAppear { isEditorPresented = true }
+        .onChange(of: hasDueDate) { _, value in
+            NSLog("EDITOR_DATE hasDueDate=%@", String(value))
+        }
+        .onChange(of: hasDueTime) { _, value in
+            NSLog("EDITOR_DATE hasDueTime=%@", String(value))
+        }
         .onChange(of: draft.parentID) { _, parentID in
             guard draft.preservedTask == nil,
                   let parentID,
