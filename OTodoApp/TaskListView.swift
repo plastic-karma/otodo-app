@@ -41,6 +41,7 @@ struct TaskListView: View {
     @State private var dates = TaskDateContext()
     @State private var isSelecting = false
     @State private var selectedTaskIDs: Set<TaskID> = []
+    @State private var searchText = ""
 
     private struct ProjectArchivePresentation: Identifiable {
         let id: String
@@ -74,7 +75,7 @@ struct TaskListView: View {
                                 .listRowBackground(Color.clear)
                         }
 
-                        if isUpcoming {
+                        if isUpcoming && !isSearching {
                             Section {
                                 Picker("Upcoming layout", selection: $showsCalendar) {
                                     Text("Agenda").tag(false)
@@ -142,7 +143,7 @@ struct TaskListView: View {
                             calendarContent
                         } else if displayedTasks.isEmpty {
                             Section { emptyRow }
-                        } else if isUpcoming {
+                        } else if isUpcoming && !isSearching {
                             ForEach(agendaSections, id: \.group) { section in
                                 Section {
                                     if !collapsedAgendaGroups.contains(section.group) {
@@ -198,7 +199,7 @@ struct TaskListView: View {
                         .background(OTodoCanvas())
                     }
                 }
-                .navigationTitle(isUpcoming ? "Upcoming" : selectedProject.map(projectDisplayName) ?? "Todos")
+                .navigationTitle(isSearching ? "Search" : isUpcoming ? "Upcoming" : selectedProject.map(projectDisplayName) ?? "Todos")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(Color(uiColor: .systemBackground), for: .navigationBar)
                 .toolbarBackground(.visible, for: .navigationBar)
@@ -214,7 +215,7 @@ struct TaskListView: View {
                         .accessibilityHint("Shows Upcoming, Inbox, project filters, Stats, and changelog")
                         .accessibilityIdentifier("project-sidebar-toggle")
                     }
-                    if isUpcoming {
+                    if isUpcoming && !isSearching {
                         ToolbarItem(placement: .topBarTrailing) {
                             Button(isSelecting ? "Cancel" : "Select") {
                                 selectedTaskIDs.removeAll()
@@ -224,7 +225,7 @@ struct TaskListView: View {
                             .accessibilityIdentifier("upcoming-select")
                         }
                     }
-                    if !isUpcoming {
+                    if !isUpcoming || isSearching {
                         ToolbarItem(placement: .topBarTrailing) {
                             sortMenu
                         }
@@ -237,6 +238,11 @@ struct TaskListView: View {
                         .accessibilityIdentifier("filters-open")
                     }
                 }
+                .searchable(
+                    text: $searchText,
+                    placement: .navigationBarDrawer(displayMode: .always),
+                    prompt: "Search all todos"
+                )
                 .sheet(item: $editorPresentation, onDismiss: presentPendingNotificationRequest) { presentation in
                     if let configuration = model.configuration {
                         TaskEditorView(
@@ -375,6 +381,7 @@ struct TaskListView: View {
             )
         }
         .task(id: model.workspaceSelection.map(FileWorkspaceStore.selectionKey(for:))) {
+            searchText = ""
             selectedFilterID = "today"
             isUpcoming = false
             showsCalendar = false
@@ -385,6 +392,7 @@ struct TaskListView: View {
         }
         .onChange(of: showsCalendar) { _, _ in clearSelection() }
         .onChange(of: selectedCalendarDate) { _, _ in clearSelection() }
+        .onChange(of: searchText) { _, _ in clearSelection() }
         .task(id: input) {
             await updateVisibleTasks(input: input)
         }
@@ -645,6 +653,9 @@ struct TaskListView: View {
 
 
     private var workspaceTitle: String {
+        if isSearching {
+            return "Search"
+        }
         if isUpcoming {
             return selectedProject.map(projectDisplayName) ?? "Upcoming"
         }
@@ -657,6 +668,9 @@ struct TaskListView: View {
 
 
     private var workspaceSubtitle: String {
+        if isSearching {
+            return "Names, notes, projects, tags, links, and IDs"
+        }
         if isUpcoming {
             return selectedFilterID == "active"
                 ? "Review deadlines and undated work"
@@ -1212,6 +1226,26 @@ struct TaskListView: View {
     private var emptyRow: some View {
         if isFiltering {
             loadingRow
+        } else if isSearching {
+            VStack(spacing: 12) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 32, weight: .light))
+                    .foregroundStyle(OTodoTheme.accent)
+
+                Text("No matching todos")
+                    .font(.title3.bold())
+                    .multilineTextAlignment(.center)
+
+                Text("Try a different name, note, project, tag, link, or full ID.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(28)
+            .frame(maxWidth: .infinity)
+            .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
         } else if filterError == nil {
             VStack(spacing: 12) {
                 Image(systemName: selectedFilterID == "all" ? "checklist" : "checkmark.circle")
@@ -1270,7 +1304,11 @@ struct TaskListView: View {
         }
     }
 
-    private var isCalendar: Bool { isUpcoming && showsCalendar }
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var isCalendar: Bool { isUpcoming && showsCalendar && !isSearching }
 
     private var scopedTasks: [TodoTask] {
         isCalendar ? calendarTasks[selectedCalendarDate] ?? [] : displayedTasks
@@ -1321,7 +1359,8 @@ struct TaskListView: View {
             filterID: selectedFilter.id,
             query: selectedFilter.query,
             selectedProject: selectedProject,
-            sortOrder: isUpcoming ? .dueDate : model.taskSortOrder,
+            searchText: searchText,
+            sortOrder: isSearching || !isUpcoming ? model.taskSortOrder : .dueDate,
             dates: dates,
             isUpcoming: isUpcoming,
             workspaceKey: model.workspaceSelection.map(FileWorkspaceStore.selectionKey(for:)),
@@ -1375,28 +1414,39 @@ struct TaskListView: View {
         let states = input.states
         let stateOrder = Dictionary(uniqueKeysWithValues: states.enumerated().map { ($0.element.id, $0.offset) })
         let terminalStates = Set(states.lazy.filter(\.isTerminal).map(\.id))
-        var result = try input.tasks.filter { task in
-            try Task.checkCancellation()
-            if input.isUpcoming && terminalStates.contains(task.state) {
-                return false
+        let search = TaskSearch(input.searchText)
+        var result: [TodoTask]
+        if search.isEmpty {
+            result = try input.tasks.filter { task in
+                try Task.checkCancellation()
+                if input.isUpcoming && terminalStates.contains(task.state) {
+                    return false
+                }
+                if let selectedProject = input.selectedProject,
+                   !task.projectSlugs.contains(selectedProject)
+                {
+                    return false
+                }
+                return try query.matches(task, terminalStateIDs: terminalStates, dates: input.dates)
             }
-            if let selectedProject = input.selectedProject,
-               !task.projectSlugs.contains(selectedProject)
-            {
-                return false
+        } else {
+            result = try input.tasks.filter { task in
+                try Task.checkCancellation()
+                return search.matches(task)
             }
-            return try query.matches(task, terminalStateIDs: terminalStates, dates: input.dates)
         }
         input.sortOrder.sort(&result, stateOrder: stateOrder)
-        let nestsMatches = !input.isUpcoming && input.filterID != "today" && input.filterID != "inbox"
+        let nestsMatches = search.isEmpty
+            ? !input.isUpcoming && input.filterID != "today" && input.filterID != "inbox"
+            : true
         let rows = nestsMatches ? TaskHierarchy(tasks: input.tasks).rows(matching: result) : []
         return TaskFilterResult(
             tasks: nestsMatches ? rows.map(\.task) : result,
             depths: Dictionary(uniqueKeysWithValues: rows.map { ($0.task.id, $0.depth) }),
-            sections: input.isUpcoming
+            sections: search.isEmpty && input.isUpcoming
                 ? TaskAgenda.sections(tasks: result, terminalStateIDs: terminalStates, dates: input.dates)
                 : [],
-            calendarTasks: input.isUpcoming ? Dictionary(grouping: result, by: \.dueDate) : [:]
+            calendarTasks: search.isEmpty && input.isUpcoming ? Dictionary(grouping: result, by: \.dueDate) : [:]
         )
     }
 
@@ -1633,6 +1683,7 @@ private struct TaskFilterInput: Equatable, Sendable {
     let filterID: String
     let query: String
     let selectedProject: String?
+    let searchText: String
     let sortOrder: TaskSortOrder
     let dates: TaskDateContext
     let isUpcoming: Bool
