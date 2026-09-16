@@ -104,7 +104,13 @@ struct HighlightedTaskNameField: UIViewRepresentable {
             super.layoutSubviews()
             defer { layoutHighlights() }
             // Form cells can be re-enabled or moved on screen without another window attachment.
-            guard wantsFocus, isEnabled, window != nil else { return }
+            guard wantsFocus, isEnabled, let window else { return }
+            // Form can retain an outgoing cell beside its replacement. Only the
+            // interactive field may fulfill their shared request or take the keyboard.
+            let center = CGPoint(x: bounds.midX, y: bounds.midY)
+            guard let target = window.hitTest(convert(center, to: window), with: nil),
+                  target === self || target.isDescendant(of: self)
+            else { return }
             guard isFirstResponder || becomeFirstResponder() else { return }
             wantsFocus = false
             // Report fulfillment after UIKit finishes layout; later user focus changes are independent.

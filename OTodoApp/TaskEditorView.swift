@@ -1219,10 +1219,6 @@ private struct TaskEditorSubtaskInput: View {
                 text: $name, requestsFocus: $requestsFocus,
                 onFocus: onFocus, onSubmit: add
             )
-                .simultaneousGesture(TapGesture().onEnded {
-                    onFocus()
-                    requestsFocus = true
-                })
                 .onChange(of: !name.isEmpty) { _, pending in
                     onPendingChange(pending)
                 }
