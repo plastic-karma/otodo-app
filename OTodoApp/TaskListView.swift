@@ -55,6 +55,7 @@ struct TaskListView: View {
     @State private var selectedTaskIDs: Set<TaskID> = []
     @State private var searchText = ""
     @State private var isSearchPresented = false
+    @FocusState private var isSearchFocused: Bool
 
     private enum SettingsDestination {
         case reminders, dailyRhythm, changelog, account
@@ -208,6 +209,11 @@ struct TaskListView: View {
                     .refreshable {
                         await model.refresh()
                     }
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        if isSearchPresented {
+                            searchControls
+                        }
+                    }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         VStack(spacing: 10) {
                             if isSelecting {
@@ -246,6 +252,7 @@ struct TaskListView: View {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Search", systemImage: "magnifyingglass") {
                             isSearchPresented = true
+                            isSearchFocused = true
                         }
                         .labelStyle(.iconOnly)
                         .accessibilityIdentifier("task-search-open")
@@ -273,12 +280,6 @@ struct TaskListView: View {
                         .accessibilityIdentifier("filters-open")
                     }
                 }
-                .searchable(
-                    text: $searchText,
-                    isPresented: $isSearchPresented,
-                    placement: .navigationBarDrawer(displayMode: .automatic),
-                    prompt: "Search all todos"
-                )
                 .sheet(item: $editorPresentation, onDismiss: presentPendingNotificationRequest) { presentation in
                     if let configuration = model.configuration {
                         TaskEditorView(
@@ -745,6 +746,54 @@ struct TaskListView: View {
         editorPresentation = .edit(task)
     }
 
+
+    private var searchControls: some View {
+        HStack(spacing: OTodoTheme.Spacing.small) {
+            HStack(spacing: OTodoTheme.Spacing.small) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(OTodoTheme.secondaryText)
+                    .accessibilityHidden(true)
+                TextField("Search all todos", text: $searchText)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.search)
+                    .focused($isSearchFocused)
+                    .onSubmit { isSearchFocused = false }
+                    .accessibilityLabel("Search all todos")
+                    .accessibilityIdentifier("task-search-field")
+                    .frame(minHeight: 44)
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                        isSearchFocused = true
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(OTodoTheme.secondaryText)
+                            .frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("Clear search")
+                    .accessibilityIdentifier("task-search-clear")
+                }
+            }
+            .padding(.horizontal, OTodoTheme.Spacing.medium)
+            .background(
+                Color(uiColor: .tertiarySystemFill),
+                in: RoundedRectangle(cornerRadius: OTodoTheme.Radius.control)
+            )
+            Button("Cancel") {
+                isSearchFocused = false
+                searchText = ""
+                isSearchPresented = false
+            }
+            .fixedSize()
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("task-search-cancel")
+        }
+        .padding(.horizontal, OTodoTheme.Spacing.inset)
+        .padding(.vertical, OTodoTheme.Spacing.small)
+        .background(OTodoCanvas())
+        .onAppear { isSearchFocused = true }
+    }
 
     private var workspaceTitle: String {
         if isSearching {
