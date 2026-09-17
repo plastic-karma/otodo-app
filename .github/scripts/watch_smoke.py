@@ -234,7 +234,7 @@ def observe_states(output, states, pids, observed):
             raise RuntimeError(f"{role} app: {state['terminalError']}")
 
 
-def wait_for_snapshot(path, *, output, states, pids, expected=None):
+def wait_for_snapshot(path, *, output, states, pids, expected=None, ready_role=None):
     # Absolute budget, never reset by transient readiness or partial progress.
     # Cold pairs have taken nearly five minutes just to become reachable.
     # Leave room for the real request/reply after that first readiness event.
@@ -253,13 +253,17 @@ def wait_for_snapshot(path, *, output, states, pids, expected=None):
             continue
         if value.get("version") != 1:
             raise RuntimeError(f"Unexpected companion protocol {value.get('version')!r} in {path}; expected version 1")
+        current_state = observed.get(ready_role, {})
+        current_process_ready = (ready_role is None or
+                                 (current_state.get("ready") == "true" and current_state.get("activation") == "2"))
         names = {task["name"] for task in value["snapshot"]["tasks"]}
         summary = {"version": value["version"], "workspaceAvailable": value["workspaceAvailable"],
                    "names": sorted(names), "matchesPhone": expected is None or value == expected}
         if summary != last_snapshot:
             last_snapshot = summary
             progress(output, "snapshot-observed", snapshot=summary)
-        if value["workspaceAvailable"] and names == EXPECTED_NAMES and (expected is None or value == expected):
+        if (current_process_ready and value["workspaceAvailable"] and names == EXPECTED_NAMES
+                and (expected is None or value == expected)):
             progress(output, "snapshot-delivered", source=str(path),
                      elapsedSeconds=round(time.monotonic() - started, 3))
             return value
@@ -324,6 +328,58 @@ def record_diagnostics(output, failures):
     return previous["complete"]
 
 
+def needs_initial_phone_restart(output, states, pids, *, timeout=30):
+    deadline = time.monotonic() + timeout
+    observed = {}
+    while True:
+        observe_states(output, states, pids, observed)
+        watch = observed.get("watch", {})
+        # Never interrupt a reachable session, an in-flight request, or a cache
+        # delivery. App failures still propagate through observe_states.
+        if (watch.get("reachable") == "true" or watch.get("request")
+                or watch.get("snapshot") == "persisted" or watch.get("cache") == "loaded"):
+            return False
+        if time.monotonic() >= deadline:
+            return (watch.get("activation") == "2" and watch.get("ready") == "true"
+                    and watch.get("reachable") == "false" and watch.get("cache") == "absent")
+        time.sleep(1)
+
+
+def reconnect_cold_phone(output, devices, states, pids, phone_cache, phone_snapshot):
+    if not needs_initial_phone_restart(output, states, pids):
+        return phone_snapshot
+    # Cold simulator pairs can remain connected while watchOS's wcd reports
+    # "remote first unlocked: NO" forever. Restart the phone once after both
+    # WCSession clients have registered, so its unlock state is sent to an
+    # already-running Watch daemon. Do not synthesize transport/cache evidence.
+    progress(output, "cold-pair-recovery-started", reason="activated Watch remains unreachable without a request")
+    failures = []
+    collect_role(output, "phone", devices["phone"], "before-reconnect", failures)
+    record_diagnostics(output, failures)
+    # Keep the Watch daemon running, but prevent its app from requesting a
+    # snapshot until the restarted phone has restored its seeded workspace.
+    run("xcrun", "simctl", "terminate", devices["watch"], WATCH_BUNDLE, stage="reconnect-stop-watch")
+    pids.pop("watch")
+    run("xcrun", "simctl", "shutdown", devices["phone"], stage="reconnect-stop-phone")
+    pids.pop("phone")
+    boot = run("xcrun", "simctl", "bootstatus", devices["phone"], "-b",
+               stage="reconnect-boot-phone", timeout=180, capture=True, log_path=output / "reconnect-boot-phone.log")
+    if "Finished" not in {line.strip() for line in boot.splitlines()}:
+        raise RuntimeError("The phone did not finish rebooting during cold-pair recovery")
+    # Preserve the original fixture workspace and snapshot; never reset or write
+    # the Watch cache as part of simulator recovery.
+    pids["phone"] = launch(devices["phone"], PHONE_BUNDLE, "phone-reconnected", "-ui-testing", "-ui-testing-upcoming")
+    save_json(output / "processes.json", pids)
+    restored = wait_for_snapshot(phone_cache, output=output, states={"phone": states["phone"]},
+                                 pids=pids, ready_role="phone")
+    if restored["snapshot"]["tasks"] != phone_snapshot["snapshot"]["tasks"]:
+        raise RuntimeError("The restarted phone changed the companion fixtures")
+    pids["watch"] = launch(devices["watch"], WATCH_BUNDLE, "watch-reconnected")
+    save_json(output / "processes.json", pids)
+    progress(output, "cold-pair-recovery-finished", phonePID=pids["phone"], watchPID=pids["watch"])
+    return restored
+
+
 def verify(output, derived_data):
     progress(output, "verification-started")
     devices = json.loads((output / "devices.json").read_text())
@@ -360,6 +416,8 @@ def verify(output, derived_data):
     evidence["watch"] = str(watch_cache)
     save_json(output / "evidence-paths.json", evidence)
     screenshot(watch, pids, output / "watch-initial-launch.png", "watch-initial")
+    phone_snapshot = reconnect_cold_phone(output, devices, states, pids, phone_cache, phone_snapshot)
+    phone_pid = pids["phone"]
     received = wait_for_snapshot(watch_cache, expected=phone_snapshot, output=output, states=states, pids=pids)
     screenshot(watch, pids, output / "watch-live-today-overdue.png", "watch-live")
     observe_states(output, states, pids, {})

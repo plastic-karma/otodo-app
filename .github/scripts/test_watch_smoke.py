@@ -163,6 +163,102 @@ class WatchPhoneSelectionTests(unittest.TestCase):
         create.assert_called_once()
 
 
+class WatchReconnectTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.output = Path(temporary.name)
+        self.devices = {"phone": "PHONE", "watch": "WATCH"}
+        self.states = {role: self.output / f"{role}-state.json" for role in self.devices}
+        self.pids = {"phone": 11, "watch": 12}
+        self.cache = self.output / "phone-snapshot.json"
+        self.snapshot = {"snapshot": {"tasks": [{"id": "seed", "dueTime": "09:15"}]}}
+        self.waiting = {"activation": "2", "ready": "true", "reachable": "false", "cache": "absent"}
+
+    def recover(self):
+        return watch_smoke.reconnect_cold_phone(
+            self.output, self.devices, self.states, self.pids, self.cache, self.snapshot)
+
+    def test_only_activated_unreachable_client_becomes_a_restart_candidate(self):
+        for state, expected in ((self.waiting, True), ({**self.waiting, "activation": "0"}, False), ({}, False)):
+            with self.subTest(state=state), patch.object(watch_smoke, "observe_states",
+                    side_effect=lambda output, states, pids, observed: observed.update(watch=state)):
+                self.assertEqual(watch_smoke.needs_initial_phone_restart(
+                    self.output, self.states, self.pids, timeout=0), expected)
+
+    def test_reachable_inflight_or_cached_sessions_are_not_interrupted(self):
+        for change in ({"reachable": "true"}, {"request": "sent"}, {"cache": "loaded"}, {"snapshot": "persisted"}):
+            state = {**self.waiting, **change}
+            with self.subTest(change=change), patch.object(watch_smoke, "observe_states",
+                    side_effect=lambda output, states, pids, observed: observed.update(watch=state)), \
+                    patch.object(watch_smoke, "run") as command:
+                self.assertIs(self.recover(), self.snapshot)
+                command.assert_not_called()
+
+    def test_app_failure_propagates_without_restarting_the_pair(self):
+        with patch.object(watch_smoke, "observe_states", side_effect=RuntimeError("app terminal failure")), \
+                patch.object(watch_smoke, "run") as command:
+            with self.assertRaisesRegex(RuntimeError, "app terminal failure"):
+                self.recover()
+            command.assert_not_called()
+
+    def test_recovery_restores_phone_before_relaunching_watch_and_tracks_new_pids(self):
+        def restored_phone(*arguments, **options):
+            self.assertEqual(options["pids"], {"phone": 21})
+            self.assertEqual(set(options["states"]), {"phone"})
+            self.assertEqual(options["ready_role"], "phone")
+            return self.snapshot
+
+        with patch.object(watch_smoke, "needs_initial_phone_restart", return_value=True), \
+                patch.object(watch_smoke, "collect_role"), \
+                patch.object(watch_smoke, "run", return_value="Finished\n") as command, \
+                patch.object(watch_smoke, "launch", side_effect=[21, 22]) as launch, \
+                patch.object(watch_smoke, "wait_for_snapshot", side_effect=restored_phone):
+            self.assertEqual(self.recover(), self.snapshot)
+        self.assertEqual(self.pids, {"phone": 21, "watch": 22})
+        self.assertEqual(json.loads((self.output / "processes.json").read_text()), self.pids)
+        self.assertEqual([call.kwargs["stage"] for call in command.call_args_list],
+                         ["reconnect-stop-watch", "reconnect-stop-phone", "reconnect-boot-phone"])
+        self.assertEqual(command.call_args_list[0].args[:3], ("xcrun", "simctl", "terminate"))
+        self.assertNotIn("-ui-testing-reset-workspace", launch.call_args_list[0].args)
+        self.assertEqual(launch.call_args_list[1].args[0], "WATCH")
+        self.assertFalse((self.output / "watch-snapshot.json").exists())
+
+    def test_old_phone_cache_and_old_pid_cannot_authorize_reconnected_watch(self):
+        snapshot = {"version": 1, "workspaceAvailable": True,
+                    "snapshot": {"tasks": [{"name": name} for name in watch_smoke.EXPECTED_NAMES]}}
+        watch_smoke.save_json(self.cache, snapshot)
+        state = {"pid": "11", "ready": "true", "activation": "2"}
+        watch_smoke.save_json(self.states["phone"], state)
+        def new_process_becomes_ready(seconds):
+            watch_smoke.save_json(self.states["phone"], {**state, "pid": "21"})
+        with patch.object(watch_smoke.os, "kill"), \
+                patch.object(watch_smoke.time, "sleep", side_effect=new_process_becomes_ready) as pause:
+            result = watch_smoke.wait_for_snapshot(self.cache, output=self.output,
+                states={"phone": self.states["phone"]}, pids={"phone": 21}, ready_role="phone")
+        self.assertEqual(result, snapshot)
+        pause.assert_called_once()
+
+    def test_failed_reboot_cannot_launch_apps_or_authorize_delivery(self):
+        with patch.object(watch_smoke, "needs_initial_phone_restart", return_value=True), \
+                patch.object(watch_smoke, "collect_role"), \
+                patch.object(watch_smoke, "run", return_value="Data Migration Failed\n"), \
+                patch.object(watch_smoke, "launch") as launch:
+            with self.assertRaisesRegex(RuntimeError, "did not finish rebooting"):
+                self.recover()
+            launch.assert_not_called()
+
+    def test_changed_fixtures_cannot_authorize_watch_relaunch(self):
+        with patch.object(watch_smoke, "needs_initial_phone_restart", return_value=True), \
+                patch.object(watch_smoke, "collect_role"), \
+                patch.object(watch_smoke, "run", return_value="Finished\n"), \
+                patch.object(watch_smoke, "launch", return_value=21) as launch, \
+                patch.object(watch_smoke, "wait_for_snapshot", return_value={"snapshot": {"tasks": []}}):
+            with self.assertRaisesRegex(RuntimeError, "changed the companion fixtures"):
+                self.recover()
+            launch.assert_called_once()
+
+
 class WatchCleanupTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
