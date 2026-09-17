@@ -123,9 +123,9 @@ struct DailyReviewPromptCard: View {
             HStack(spacing: 16) {
                 Image(systemName: kind.icon)
                     .font(.title2.weight(.semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(kind == .kickstart ? OTodoTheme.warmForeground : OTodoTheme.accent)
                     .frame(width: 48, height: 48)
-                    .background(kind.tint, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                    .background(kind.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: OTodoTheme.Radius.control))
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(kind.promptTitle)
@@ -133,7 +133,7 @@ struct DailyReviewPromptCard: View {
                         .foregroundStyle(.primary)
                     Text(promptDetail)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(OTodoTheme.secondaryText)
                         .multilineTextAlignment(.leading)
                 }
 
@@ -185,7 +185,7 @@ struct DailyReviewSettingsView: View {
                             .font(.title2.bold())
                         Text("OTodo surfaces each enabled check-in on Today after its chosen time. Open Daily rhythm anytime to start one manually.")
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(OTodoTheme.secondaryText)
                     }
                     .padding(.vertical, 10)
                 }
@@ -220,9 +220,9 @@ struct DailyReviewSettingsView: View {
     private func rhythmIcon(_ kind: DailyReviewKind) -> some View {
         Image(systemName: kind.icon)
             .font(.title2.weight(.semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(kind == .kickstart ? OTodoTheme.warmForeground : OTodoTheme.accent)
             .frame(width: 48, height: 48)
-            .background(kind.tint, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+            .background(kind.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: OTodoTheme.Radius.control))
     }
 
     private func reviewSetting(
@@ -268,6 +268,7 @@ struct DailyReviewSettingsView: View {
 
 struct DailyReviewView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private struct ReschedulePresentation: Identifiable {
         let task: TodoTask
         var id: TaskID { task.id }
@@ -338,8 +339,7 @@ struct DailyReviewView: View {
                     summaryCard(isClosing: true)
                         .tag(sessionTasks.count + 1)
                 }
-                .tabViewStyle(.page(indexDisplayMode: .always))
-                .indexViewStyle(.page(backgroundDisplayMode: .always))
+                .tabViewStyle(.page(indexDisplayMode: .never))
                 .padding(.vertical, 8)
             }
             .navigationTitle(kind.title)
@@ -365,84 +365,87 @@ struct DailyReviewView: View {
         }
     }
 
+    private var reviewForeground: Color {
+        kind == .kickstart ? OTodoTheme.warmForeground : OTodoTheme.accent
+    }
+
     private func summaryCard(isClosing: Bool) -> some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 16)
-            VStack(alignment: .leading, spacing: 20) {
-                Image(systemName: isClosing ? "checkmark.seal.fill" : kind.icon)
-                    .font(.system(size: 34, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 68, height: 68)
-                    .background(.white.opacity(0.18), in: RoundedRectangle(cornerRadius: 21, style: .continuous))
+        ScrollView {
+            VStack(alignment: .leading, spacing: OTodoTheme.Spacing.section) {
+                Image(systemName: isClosing ? "checkmark.seal" : kind.icon)
+                    .font(.system(size: 28, weight: .medium))
+                    .foregroundStyle(reviewForeground)
+                    .frame(width: 52, height: 52)
+                    .background(kind.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: OTodoTheme.Radius.control))
+                    .accessibilityHidden(true)
 
                 Text(isClosing ? kind.closingTitle : kind.introTitle)
-                    .font(.largeTitle.bold())
-                    .foregroundStyle(.white)
+                    .font(.title.bold())
+                    .foregroundStyle(.primary)
 
                 Text(isClosing ? closingSummary : openingSummary)
-                    .font(.title3)
-                    .foregroundStyle(.white.opacity(0.88))
+                    .font(.body)
+                    .foregroundStyle(OTodoTheme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
-
-                Spacer(minLength: 12)
 
                 if isClosing {
                     Button("Finish \(kind.title)") { onFinish() }
-                        .buttonStyle(DailyReviewPrimaryButtonStyle())
+                        .buttonStyle(OTodoPrimaryButtonStyle())
                         .accessibilityIdentifier("daily-review-finish")
                 } else {
-                    Button(sessionTasks.isEmpty ? "See the summary" : "Let’s go") {
+                    Button(sessionTasks.isEmpty ? "See summary" : "Start review") {
                         advance()
                     }
-                    .buttonStyle(DailyReviewPrimaryButtonStyle())
+                    .buttonStyle(OTodoPrimaryButtonStyle())
                     .accessibilityIdentifier("daily-review-begin")
                 }
             }
-            .padding(28)
-            .frame(maxWidth: .infinity, maxHeight: 600, alignment: .leading)
-            .background(summaryGradient, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
-            .shadow(color: kind.tint.opacity(0.22), radius: 22, y: 12)
+            .padding(OTodoTheme.Spacing.section)
+            .frame(maxWidth: 560, alignment: .leading)
+            .background(kind.tint.opacity(0.07), in: RoundedRectangle(cornerRadius: OTodoTheme.Radius.card))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(isClosing ? "daily-review-summary-closing" : "daily-review-summary-opening")
-            Spacer(minLength: 16)
+            .padding(OTodoTheme.Spacing.inset)
+            .frame(maxWidth: .infinity)
         }
-        .padding(.horizontal, 20)
     }
 
     private func taskCard(_ task: TodoTask, position: Int) -> some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 16)
-            VStack(alignment: .leading, spacing: 18) {
-                HStack {
+        ScrollView {
+            VStack(alignment: .leading, spacing: OTodoTheme.Spacing.section) {
+                let headerLayout = dynamicTypeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                    : AnyLayout(HStackLayout(spacing: 12))
+                headerLayout {
                     Label(dueDescription(task), systemImage: dueIcon(task))
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(kind.tint)
-                    Spacer()
-                    Text("\(position) of \(sessionTasks.count)")
+                        .foregroundStyle(reviewForeground)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text("Review · \(position) of \(sessionTasks.count)")
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(OTodoTheme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("daily-review-progress")
                 }
 
                 Text(task.name)
-                    .font(.largeTitle.bold())
+                    .font(.title.bold())
                     .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if !task.projectSlugs.isEmpty || !task.tags.isEmpty {
                     Text(metadata(for: task))
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .foregroundStyle(OTodoTheme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if !task.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text(task.body)
                         .font(.body)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(4)
+                        .foregroundStyle(OTodoTheme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-
-                Spacer(minLength: 8)
 
                 if let actionError {
                     Label(actionError, systemImage: "exclamationmark.triangle.fill")
@@ -455,74 +458,59 @@ struct DailyReviewView: View {
                     ProgressView("Saving your decision…")
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
-                    HStack(spacing: 10) {
-                        Button("Done", systemImage: "checkmark.circle.fill") {
-                            complete(task)
+                    VStack(spacing: OTodoTheme.Spacing.small) {
+                        Button("Keep", systemImage: "arrow.right") {
+                            affirmedCount += 1
+                            advance(from: task)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(OTodoTheme.mint)
-                        .accessibilityIdentifier("daily-review-done-\(task.id.rawValue)")
+                        .buttonStyle(OTodoPrimaryButtonStyle())
+                        .accessibilityHint("Keeps the current schedule and moves to the next todo")
+                        .accessibilityIdentifier("daily-review-keep-\(task.id.rawValue)")
 
-                        Button("Reschedule", systemImage: "calendar.badge.clock") {
-                            actionError = nil
-                            reschedulePresentation = ReschedulePresentation(task: task)
+                        let actionLayout = dynamicTypeSize.isAccessibilitySize
+                            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                            : AnyLayout(HStackLayout(spacing: 8))
+                        actionLayout {
+                            Button("Mark done", systemImage: "checkmark.circle") {
+                                complete(task)
+                            }
+                            .buttonStyle(OTodoChipStyle())
+                            .accessibilityIdentifier("daily-review-done-\(task.id.rawValue)")
+
+                            Button("Reschedule", systemImage: "calendar") {
+                                actionError = nil
+                                reschedulePresentation = ReschedulePresentation(task: task)
+                            }
+                            .buttonStyle(OTodoChipStyle())
+                            .accessibilityIdentifier("daily-review-reschedule-\(task.id.rawValue)")
                         }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("daily-review-reschedule-\(task.id.rawValue)")
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-
-                    Button("LFG", systemImage: "arrow.right") {
-                        affirmedCount += 1
-                        advance(from: task)
-                    }
-                    .buttonStyle(DailyReviewPrimaryButtonStyle())
-                    .accessibilityHint("Affirms this todo and moves to the next card")
-                    .accessibilityIdentifier("daily-review-lfg-\(task.id.rawValue)")
                 }
             }
-            .padding(26)
-            .frame(maxWidth: .infinity, maxHeight: 600, alignment: .leading)
-            .background(OTodoTheme.card, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+            .padding(OTodoTheme.Spacing.section)
+            .frame(maxWidth: 560, alignment: .leading)
+            .background(OTodoTheme.card, in: RoundedRectangle(cornerRadius: OTodoTheme.Radius.card))
             .overlay {
-                RoundedRectangle(cornerRadius: 30, style: .continuous)
-                    .stroke(kind.tint.opacity(0.18), lineWidth: 1)
+                RoundedRectangle(cornerRadius: OTodoTheme.Radius.card)
+                    .strokeBorder(Color(uiColor: .separator).opacity(0.35), lineWidth: 0.5)
             }
-            .shadow(color: .black.opacity(0.08), radius: 18, y: 10)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("daily-review-task-\(task.id.rawValue)")
-            Spacer(minLength: 16)
-        }
-        .padding(.horizontal, 20)
-    }
-
-    private var summaryGradient: LinearGradient {
-        switch kind {
-        case .kickstart:
-            LinearGradient(
-                colors: [OTodoTheme.coral, OTodoTheme.gold],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
-        case .wrapUp:
-            OTodoTheme.heroGradient
+            .padding(OTodoTheme.Spacing.inset)
+            .frame(maxWidth: .infinity)
         }
     }
 
     private var openingSummary: String {
-        let completion = completedTodayAtStart == 1
-            ? "One todo is already done today."
-            : "\(completedTodayAtStart) todos are already done today."
         guard !sessionTasks.isEmpty else {
-            return kind == .kickstart
-                ? "Your due list is clear. \(completion) Begin with the space you made."
-                : "\(completion) Nothing due needs to follow you into tomorrow."
+            return completedTodayAtStart > 0
+                ? "Your due list is clear. \(completedTodayAtStart) completed today."
+                : "Your due list is clear. Take a moment to plan what comes next."
         }
-        let queue = sessionTasks.count == 1
-            ? "One due todo deserves a decision."
-            : "\(sessionTasks.count) due todos deserve a decision."
-        switch kind {
-        case .kickstart: return "\(queue) \(completion) Keep, move, or finish each one."
-        case .wrapUp: return "\(completion) \(queue) Decide what leaves with you and what moves forward."
-        }
+        return sessionTasks.count == 1
+            ? "One task to review. Keep it, reschedule it, or mark it done."
+            : "\(sessionTasks.count) tasks to review. Keep, reschedule, or mark each one done."
     }
 
     private var closingSummary: String {
@@ -533,8 +521,8 @@ struct DailyReviewView: View {
         }
         let completed = completedCount == 1 ? "1 finished" : "\(completedCount) finished"
         let rescheduled = rescheduledCount == 1 ? "1 rescheduled" : "\(rescheduledCount) rescheduled"
-        let affirmed = affirmedCount == 1 ? "1 affirmed" : "\(affirmedCount) affirmed"
-        return "\(completed), \(rescheduled), and \(affirmed). Every card got your attention."
+        let affirmed = "\(affirmedCount) kept"
+        return "\(completed), \(rescheduled), and \(affirmed)."
     }
 
     private func dueDescription(_ task: TodoTask) -> String {
@@ -591,16 +579,5 @@ struct DailyReviewView: View {
         withAnimation(.snappy(duration: 0.28)) {
             page = min(target, sessionTasks.count + 1)
         }
-    }
-}
-
-private struct DailyReviewPrimaryButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.headline)
-            .foregroundStyle(OTodoTheme.filledAccent)
-            .frame(maxWidth: .infinity, minHeight: 48)
-            .background(.white.opacity(configuration.isPressed ? 0.78 : 0.94))
-            .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
     }
 }

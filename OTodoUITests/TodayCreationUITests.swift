@@ -75,7 +75,7 @@ final class TodayCreationUITests: XCTestCase {
         XCTAssertTrue(name.waitForExistence(timeout: 8))
         name.tap()
         name.typeText("Rapid first tomorrow")
-        app.buttons["task-editor-save-another"].tap()
+        app.saveAndAddAnotherTodo()
         let confirmation = app.descendants(matching: .any).matching(identifier: "task-editor-saved-confirmation").firstMatch
         XCTAssertTrue(confirmation.waitForExistence(timeout: 8))
         name.typeText("Rapid second")

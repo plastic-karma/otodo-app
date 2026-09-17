@@ -2,6 +2,27 @@ import SwiftUI
 import UIKit
 
 enum OTodoTheme {
+    enum Spacing {
+        static let small: CGFloat = 8
+        static let medium: CGFloat = 12
+        static let inset: CGFloat = 16
+        static let section: CGFloat = 24
+    }
+
+    enum Radius {
+        static let control: CGFloat = 10
+        static let card: CGFloat = 20
+    }
+
+    // Informative secondary text stays legible on both plain and grouped surfaces.
+    static let secondaryText = adaptive(
+        light: UIColor(red: 0.36, green: 0.36, blue: 0.40, alpha: 1),
+        dark: UIColor(red: 0.73, green: 0.73, blue: 0.77, alpha: 1)
+    )
+    static let warmForeground = adaptive(
+        light: UIColor(red: 0.52, green: 0.30, blue: 0.06, alpha: 1),
+        dark: UIColor(red: 1.00, green: 0.77, blue: 0.40, alpha: 1)
+    )
     static let accent = adaptive(
         light: UIColor(red: 0.29, green: 0.24, blue: 0.75, alpha: 1),
         dark: UIColor(red: 0.70, green: 0.65, blue: 1.00, alpha: 1)
@@ -40,6 +61,44 @@ enum OTodoTheme {
         Color(uiColor: UIColor { traits in
             traits.userInterfaceStyle == .dark ? dark : light
         })
+    }
+}
+
+struct OTodoPrimaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.headline)
+            .foregroundStyle(.white)
+            .padding(.horizontal, OTodoTheme.Spacing.inset)
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .background(
+                OTodoTheme.filledAccent.opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.45),
+                in: RoundedRectangle(cornerRadius: OTodoTheme.Radius.control)
+            )
+    }
+}
+
+/// Compact visual treatment with a full-size touch target outside the fill.
+struct OTodoChipStyle: ButtonStyle {
+    var isSelected = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(isSelected ? .semibold : .regular))
+            .foregroundStyle(isSelected ? OTodoTheme.accent : Color.primary)
+            .padding(.horizontal, OTodoTheme.Spacing.medium)
+            .padding(.vertical, 6)
+            .background(
+                isSelected ? OTodoTheme.accent.opacity(0.12) : Color(uiColor: .tertiarySystemFill),
+                in: RoundedRectangle(cornerRadius: OTodoTheme.Radius.control)
+            )
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .opacity(isEnabled ? 1 : 0.55)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
     }
 }
 

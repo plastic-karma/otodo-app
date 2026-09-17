@@ -23,13 +23,13 @@ final class OTodoUITests: XCTestCase {
         app.revealTaskEditorElement(name)
         let importFinished = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "enabled == true"),
-            object: app.buttons["task-editor-save-another"]
+            object: app.buttons["task-editor-save"]
         )
         XCTAssertEqual(XCTWaiter.wait(for: [importFinished], timeout: 10), .completed,
                        "The file import must finish before the todo can be saved")
         app.revealTaskEditorElement(app.staticTexts["sample.txt"])
         XCTAssertTrue(app.staticTexts["sample.txt"].waitForExistence(timeout: 5))
-        app.buttons["task-editor-save-another"].tap()
+        app.saveAndAddAnotherTodo()
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-editor-saved-confirmation").firstMatch.waitForExistence(timeout: 5))
         name.typeText("\n")
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
@@ -1660,6 +1660,7 @@ final class OTodoUITests: XCTestCase {
         ) else { return }
 
         sidebarButton.tap()
+        app.buttons["settings-open"].tap()
         let openChangelog = app.buttons["changelog-open"]
         guard require(openChangelog, in: app, description: "the sidebar changelog action") else { return }
         openChangelog.tap()
@@ -1816,6 +1817,7 @@ final class OTodoUITests: XCTestCase {
         ) else { return }
         sidebarButton.tap()
 
+        app.buttons["settings-open"].tap()
         let reminderControl = app.buttons["notification-settings"]
         guard require(
             reminderControl,
@@ -1982,7 +1984,7 @@ final class OTodoUITests: XCTestCase {
         repeatPicker.tap()
         app.buttons["Daily"].tap()
 
-        let createAnother = app.buttons["task-editor-save-another"]
+        let createAnother = app.revealSaveAnotherAction()
         guard require(createAnother, in: app, description: "Save & Create Another") else { return }
         XCTAssertTrue(createAnother.isEnabled)
         createAnother.tap()
@@ -2249,7 +2251,7 @@ final class OTodoUITests: XCTestCase {
         XCTAssertTrue((notes.value as? String)?.contains(sourceURL) == true)
         XCTAssertTrue((notes.value as? String)?.contains("Example Domain") == true)
         let savedLink = app.textFields["task-editor-url"]
-        app.revealTaskEditorElement(savedLink)
+        app.revealTaskEditorElement(savedLink, panel: "link")
         XCTAssertEqual(savedLink.value as? String, sourceURL)
         let savedScreenshot = XCTAttachment(screenshot: app.screenshot())
         savedScreenshot.name = "Shared webpage populates the Link field after offline relaunch"
@@ -2681,7 +2683,7 @@ final class OTodoUITests: XCTestCase {
         name.tap()
         name.typeText("Sibling one")
         name.typeText("\n")
-        app.buttons["task-editor-save-another"].tap()
+        app.saveAndAddAnotherTodo()
         guard require(
             app.descendants(matching: .any).matching(identifier: "task-editor-saved-confirmation").firstMatch,
             in: app, description: "the first sibling saved"
@@ -2815,7 +2817,7 @@ final class OTodoUITests: XCTestCase {
         name.tap()
         name.typeText("Child before global shortcut")
         name.typeText("\n")
-        app.buttons["task-editor-save-another"].tap()
+        app.saveAndAddAnotherTodo()
         guard require(
             app.descendants(matching: .any).matching(identifier: "task-editor-saved-confirmation").firstMatch,
             in: app, description: "the child saved without dismissing sibling creation"

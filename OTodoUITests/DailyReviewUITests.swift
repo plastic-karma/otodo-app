@@ -43,7 +43,7 @@ final class DailyReviewUITests: XCTestCase {
                 .waitForExistence(timeout: 8)
         )
         XCTAssertTrue(app.buttons["daily-review-done-\(overdueID)"].exists)
-        XCTAssertTrue(app.buttons["daily-review-lfg-\(overdueID)"].exists)
+        XCTAssertTrue(app.buttons["daily-review-keep-\(overdueID)"].exists)
         app.buttons["daily-review-reschedule-\(overdueID)"].tap()
 
         let relative = app.textFields["task-reschedule-relative-due-date"]
@@ -70,7 +70,7 @@ final class DailyReviewUITests: XCTestCase {
             app.descendants(matching: .any)["daily-review-summary-closing"]
                 .waitForExistence(timeout: 10)
         )
-        XCTAssertTrue(app.staticTexts["1 finished, 1 rescheduled, and 0 affirmed. Every card got your attention."].exists)
+        XCTAssertTrue(app.staticTexts["1 finished, 1 rescheduled, and 0 kept."].exists)
         app.buttons["daily-review-finish"].tap()
         XCTAssertTrue(
             app.descendants(matching: .any)["daily-review-kickstart"]
@@ -106,6 +106,7 @@ final class DailyReviewUITests: XCTestCase {
         let sidebar = app.buttons["project-sidebar-toggle"]
         XCTAssertTrue(sidebar.waitForExistence(timeout: 10))
         sidebar.tap()
+        app.buttons["settings-open"].tap()
         let settings = app.buttons["daily-review-settings-open"]
         XCTAssertTrue(settings.waitForExistence(timeout: 8))
         settings.tap()

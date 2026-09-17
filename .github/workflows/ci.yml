@@ -318,10 +318,16 @@ jobs:
     name: Apple Watch companion
     needs: preflight
     if: needs.preflight.outputs.mode != 'focused'
+    # Use the native Arm runner, as in the hosted iOS suite. Cold Intel pairs
+    # stalled during startup and installation even with the larger RAM budget.
     runs-on: macos-15
     timeout-minutes: 45
     env:
       PROJECT: OTodo.xcodeproj
+      # Cold 26.2 pairs stalled in migration, install, and WCSession transport.
+      # Keep a fixed installed pair; compilation still uses the current SDK.
+      WATCH_SMOKE_IOS_VERSION: '18.6'
+      WATCH_SMOKE_WATCHOS_VERSION: '11.5'
     steps:
       - name: Checkout complete build history
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -333,9 +339,7 @@ jobs:
           apple: 'true'
       - name: Generate Xcode project
         run: python3 .github/scripts/ci_runtime.py run --stage watch-project --timeout 60 -- xcodegen generate --spec project.yml
-      - name: Select and pair compatible preinstalled simulators
-        run: python3 .github/scripts/watch_smoke.py prepare --output "$RUNNER_TEMP/watch-smoke"
-      - name: Verify simulator boots before building full companion graph
+      - name: Build full companion graph before starting simulators
         run: |
           python3 .github/scripts/watch_smoke.py build \
             --output "$RUNNER_TEMP/watch-smoke" --derived-data "$RUNNER_TEMP/WatchDerivedData"
@@ -343,6 +347,8 @@ jobs:
         run: |
           python3 .github/scripts/validate_bundles.py built --platform simulator \
             --app "$RUNNER_TEMP/WatchDerivedData/Build/Products/Debug-iphonesimulator/OTodo.app"
+      - name: Create, activate, and boot the compatible simulator pair
+        run: python3 .github/scripts/watch_smoke.py prepare --output "$RUNNER_TEMP/watch-smoke"
       - name: Verify real live delivery and offline Watch relaunch
         run: |
           python3 .github/scripts/watch_smoke.py verify \
@@ -350,6 +356,9 @@ jobs:
       - name: Collect bounded Watch diagnostics
         if: always()
         run: python3 .github/scripts/watch_smoke.py diagnostics --output "$RUNNER_TEMP/watch-smoke"
+      - name: Shut down this attempt's simulators after collecting evidence
+        if: always()
+        run: python3 .github/scripts/watch_smoke.py cleanup --output "$RUNNER_TEMP/watch-smoke"
       - name: Summarize Watch timing and issues
         if: always()
         run: python3 .github/scripts/ci_runtime.py summary --title 'Real Watch delivery and offline persistence'

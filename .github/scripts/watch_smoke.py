@@ -10,9 +10,9 @@ import plistlib
 import shutil
 import sys
 import time
+from uuid import UUID
 
 from ci_runtime import CommandError, annotate, run_command
-from ios_ci import prepare as prepare_ios
 
 
 PHONE_BUNDLE = "plastickarma.otodo"
@@ -49,13 +49,25 @@ def simulator_state():
     return json.loads(run("xcrun", "simctl", "list", "--json", stage="inventory", timeout=180, capture=True))
 
 
+def simulator_pairs():
+    # Refresh only pair metadata once the devices are running. Enumerating every
+    # installed runtime/type after a cold boot has stalled for several minutes.
+    return json.loads(run("xcrun", "simctl", "list", "pairs", "--json",
+                          stage="pair-inventory", timeout=60, capture=True))
+
+
 def version(value):
     return tuple(int(part) for part in value.split("."))
 
 
-def newest_runtime(state, platform):
+def selected_runtime(state, platform, requested=None):
     choices = [item for item in state["runtimes"]
                if item.get("isAvailable") and f".SimRuntime.{platform}-" in item["identifier"]]
+    if requested:
+        choices = [item for item in choices if version(item["version"]) == version(requested)]
+        if not choices:
+            raise RuntimeError(f"The requested {platform} {requested} runtime is not installed and available; "
+                               "no fallback or platform download is performed")
     return max(choices, key=lambda item: version(item["version"]), default=None)
 
 
@@ -67,18 +79,39 @@ def create_device(state, runtime, family, name):
                and item.get("minRuntimeVersion", 0) <= encoded_version <= item.get("maxRuntimeVersion", 0xFFFFFFFF)]
     if not choices:
         raise RuntimeError(f"No compatible {family} device type for {runtime['name']}")
-    device_type = max(choices, key=lambda item: (item.get("minRuntimeVersion", 0), item["name"]))
+    # Match the hosted iOS suite's Pro preference within the newest generation;
+    # alphabetic ordering alone selects iPhone Air over the tested Pro models.
+    device_type = max(choices, key=lambda item: (item.get("minRuntimeVersion", 0),
+                                               family == "iPhone" and item["name"].endswith("Pro"),
+                                               item["name"]))
     return run("xcrun", "simctl", "create", name, device_type["identifier"], runtime["identifier"],
                stage=f"create-{family.replace(' ', '-').lower()}", capture=True)
 
 
+def select_phone(state, runtime):
+    # Reuse the image-provided phones, as in the hosted iOS suite and the last
+    # successful paired run, instead of adding another newly created device.
+    # Never take a running phone or one already assigned to another pair.
+    paired = {pair.get("phone", {}).get("udid", "").lower() for pair in state.get("pairs", {}).values()}
+    choices = [device for device in state.get("devices", {}).get(runtime["identifier"], [])
+               if device.get("isAvailable") and device.get("state") == "Shutdown"
+               and device.get("name", "").startswith("iPhone")
+               and device["udid"].lower() not in paired]
+    if choices:
+        phone = max(choices, key=lambda device: (device["name"].endswith("Pro"), device["name"]))
+        return phone["udid"], {"source": "runner-image", "name": phone["name"]}
+    return create_device(state, runtime, "iPhone", "OTodo companion smoke iPhone"), {"source": "created"}
+
+
 def prepare(output):
+    run("sysctl", "hw.memsize", "hw.ncpu", stage="host-resources",
+        log_path=output / "host-resources.log")
     state = simulator_state()
     save_json(output / "runtime-inventory.json", state)
-    watch_runtime = newest_runtime(state, "watchOS")
+    watch_runtime = selected_runtime(state, "watchOS", os.environ.get("WATCH_SMOKE_WATCHOS_VERSION"))
     if watch_runtime is None:
         raise RuntimeError("A preinstalled available watchOS simulator runtime is required; no platform downloads are performed")
-    phone_runtime = newest_runtime(state, "iOS")
+    phone_runtime = selected_runtime(state, "iOS", os.environ.get("WATCH_SMOKE_IOS_VERSION"))
     watch_version = version(watch_runtime["version"])
     minimum_phone_version = (watch_version[0] if watch_version[0] >= 26 else watch_version[0] + 7,
                              *watch_version[1:])
@@ -87,32 +120,74 @@ def prepare(output):
                            f"(minimum {'.'.join(map(str, minimum_phone_version))})")
     progress(output, "runtimes-selected", phone=phone_runtime["name"], watch=watch_runtime["name"],
              phoneVersion=phone_runtime["version"], watchVersion=watch_runtime["version"])
-    phone_simulator = prepare_ios(output)
-    if phone_simulator["runtime"] != phone_runtime["identifier"]:
-        raise RuntimeError(f"A preinstalled iPhone on {phone_runtime['name']} is required for companion verification")
-    phone = phone_simulator["id"]
+    phone, origin = select_phone(state, phone_runtime)
+    save_json(output / "device-origins.json", {"phone": origin, "watch": {"source": "created"}})
+    progress(output, "phone-selected", phone=phone, **origin)
     # Retain partial preparation evidence even if Watch creation/pairing fails.
     save_json(output / "devices.json", {"phone": phone})
     watch = create_device(state, watch_runtime, "Apple Watch", "OTodo companion smoke Watch")
     save_json(output / "devices.json", {"phone": phone, "watch": watch})
-    run("xcrun", "simctl", "pair", watch, phone, stage="pair")
+    pair = str(UUID(run("xcrun", "simctl", "pair", watch, phone, stage="pair", capture=True)))
+    save_json(output / "pair.json", {"id": pair})
+    verify_pair(output, activate=True)
     if os.environ.get("GITHUB_ENV"):
         with open(os.environ["GITHUB_ENV"], "a") as environment:
             environment.write(f"WATCH_PHONE_SIMULATOR_ID={phone}\nWATCH_SIMULATOR_ID={watch}\n")
-    progress(output, "paired", phone=phone, watch=watch, boots="before-build")
+    progress(output, "paired", phone=phone, watch=watch, pair=pair, boots="after-build")
+    boot_pair(output)
+    verify_pair(output)
+
+
+def verify_pair(output, *, activate=False):
+    devices = json.loads((output / "devices.json").read_text())
+    pair_id = json.loads((output / "pair.json").read_text())["id"]
+    state = simulator_pairs()
+    save_json(output / "paired-inventory.json", state)
+    # UUID casing is not meaningful, including in simctl's dictionary keys.
+    pairs = {identifier.lower(): pair for identifier, pair in state.get("pairs", {}).items()}
+    pair = pairs.get(pair_id.lower(), {})
+    if any(pair.get(role, {}).get("udid", "").lower() != identifier.lower()
+           for role, identifier in devices.items()):
+        raise RuntimeError(f"Simulator pair {pair_id} does not contain the requested phone and Watch")
+    statuses = {item.strip() for item in pair.get("state", "").strip("()").split(",")}
+    if "active" not in statuses:
+        if activate:
+            # simctl pair normally activates a phone's first pair itself.
+            # pair_activate rejects that already-active state with errno 37.
+            run("xcrun", "simctl", "pair_activate", pair_id, stage="activate-pair")
+            return verify_pair(output)
+        raise RuntimeError(f"Simulator pair {pair_id} is not active: {pair.get('state')}")
+    progress(output, "pair-verified", pair=pair_id, state=pair["state"])
+
+
+def boot_pair(output):
+    devices = json.loads((output / "devices.json").read_text())
+    # Run only after compilation: two simulator runtimes plus Swift compilation
+    # can starve the host and leave companion services stuck after migration.
+    # bootstatus can exit zero with a terminal "Data Migration Failed" result.
+    for role in ("phone", "watch"):
+        for attempt in (1, 2):
+            stage = f"boot-{role}" + ("-retry" if attempt == 2 else "")
+            boot = run("xcrun", "simctl", "bootstatus", devices[role], "-b",
+                       stage=stage, timeout=420, capture=True, log_path=output / f"{stage}.log")
+            statuses = {line.strip() for line in boot.splitlines()}
+            if "Finished" in statuses:
+                progress(output, f"{role}-booted", attempt=attempt)
+                break
+            if attempt == 1 and "Data Migration Failed" in statuses:
+                # A cold CoreSimulator migration can fail independently of the
+                # app. Reboot this device once; retain both logs and require a
+                # genuinely successful migration on the second boot.
+                progress(output, "migration-retry", role=role, attempt=attempt)
+                annotate("warning", f"The {role} simulator's initial migration failed; rebooting once")
+                run("xcrun", "simctl", "shutdown", devices[role], stage=f"restart-{role}", timeout=60)
+                continue
+            raise RuntimeError(f"The {role} simulator did not finish booting successfully; inspect {stage}.log")
 
 
 def build(output, derived_data):
-    devices = json.loads((output / "devices.json").read_text())
-    # Fresh simulator migration must finish before competing with the compiler.
-    # bootstatus can exit zero with a terminal "Data Migration Failed" result.
-    for role in ("phone", "watch"):
-        boot = run("xcrun", "simctl", "bootstatus", devices[role], "-b",
-                   stage=f"boot-{role}", timeout=420, capture=True,
-                   log_path=output / f"boot-{role}.log")
-        if not any(line.strip() == "Finished" for line in boot.splitlines()):
-            raise RuntimeError(f"The {role} simulator did not finish booting successfully; inspect boot-{role}.log")
-        progress(output, f"{role}-booted")
+    # A generic destination builds the embedded Watch app without booting either
+    # simulator. Keep the cold pair's migration/transport work out of this phase.
     source_packages = derived_data / "SourcePackages"
     source_packages.mkdir(parents=True, exist_ok=True)
     run("xcodebuild", "-resolvePackageDependencies", "-project", os.environ.get("PROJECT", "OTodo.xcodeproj"),
@@ -120,7 +195,7 @@ def build(output, derived_data):
         "-clonedSourcePackagesDirPath", source_packages,
         stage="package-resolution", timeout=600, log_path=output / "packages.log")
     run("xcodebuild", "build", "-project", os.environ.get("PROJECT", "OTodo.xcodeproj"),
-        "-scheme", "OTodo", "-destination", f"platform=iOS Simulator,id={devices['phone']}",
+        "-scheme", "OTodo", "-destination", "generic/platform=iOS Simulator", "-jobs", "2",
         "-showBuildTimingSummary",
         "-derivedDataPath", derived_data, "CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-",
         "-clonedSourcePackagesDirPath", source_packages, "-disableAutomaticPackageResolution",
@@ -159,7 +234,7 @@ def observe_states(output, states, pids, observed):
             raise RuntimeError(f"{role} app: {state['terminalError']}")
 
 
-def wait_for_snapshot(path, *, output, states, pids, expected=None):
+def wait_for_snapshot(path, *, output, states, pids, expected=None, ready_role=None):
     # Absolute budget, never reset by transient readiness or partial progress.
     # Cold pairs have taken nearly five minutes just to become reachable.
     # Leave room for the real request/reply after that first readiness event.
@@ -178,13 +253,17 @@ def wait_for_snapshot(path, *, output, states, pids, expected=None):
             continue
         if value.get("version") != 1:
             raise RuntimeError(f"Unexpected companion protocol {value.get('version')!r} in {path}; expected version 1")
+        current_state = observed.get(ready_role, {})
+        current_process_ready = (ready_role is None or
+                                 (current_state.get("ready") == "true" and current_state.get("activation") == "2"))
         names = {task["name"] for task in value["snapshot"]["tasks"]}
         summary = {"version": value["version"], "workspaceAvailable": value["workspaceAvailable"],
                    "names": sorted(names), "matchesPhone": expected is None or value == expected}
         if summary != last_snapshot:
             last_snapshot = summary
             progress(output, "snapshot-observed", snapshot=summary)
-        if value["workspaceAvailable"] and names == EXPECTED_NAMES and (expected is None or value == expected):
+        if (current_process_ready and value["workspaceAvailable"] and names == EXPECTED_NAMES
+                and (expected is None or value == expected)):
             progress(output, "snapshot-delivered", source=str(path),
                      elapsedSeconds=round(time.monotonic() - started, 3))
             return value
@@ -196,7 +275,7 @@ def wait_for_snapshot(path, *, output, states, pids, expected=None):
 
 def launch(device, bundle, role, *arguments):
     result = run("xcrun", "simctl", "launch", "--terminate-running-process", device, bundle,
-                 SMOKE_ARGUMENT, *arguments, stage=f"launch-{role}", capture=True)
+                 SMOKE_ARGUMENT, *arguments, stage=f"launch-{role}", timeout=120, capture=True)
     print(result, flush=True)
     return int(result.rsplit(":", 1)[1].strip())
 
@@ -249,6 +328,65 @@ def record_diagnostics(output, failures):
     return previous["complete"]
 
 
+def needs_initial_phone_restart(output, states, pids, *, timeout=120):
+    # Cold pairs can publish their first-unlock state more than a minute after
+    # activation. Let that handshake settle before interrupting either client.
+    deadline = time.monotonic() + timeout
+    observed = {}
+    while True:
+        observe_states(output, states, pids, observed)
+        watch = observed.get("watch", {})
+        # Never interrupt a reachable session, an in-flight request, or a cache
+        # delivery. App failures still propagate through observe_states.
+        if (watch.get("reachable") == "true" or watch.get("request")
+                or watch.get("snapshot") == "persisted" or watch.get("cache") == "loaded"):
+            return False
+        if time.monotonic() >= deadline:
+            return (watch.get("activation") == "2" and watch.get("ready") == "true"
+                    and watch.get("reachable") == "false" and watch.get("cache") == "absent")
+        time.sleep(1)
+
+
+def reconnect_cold_phone(output, devices, states, pids, phone_cache, phone_snapshot):
+    if not needs_initial_phone_restart(output, states, pids):
+        return phone_snapshot
+    # Cold simulator pairs can remain connected while watchOS's wcd reports
+    # "remote first unlocked: NO" forever. Restart the phone once after both
+    # WCSession clients have registered, so its unlock state is sent to an
+    # already-running Watch daemon. Do not synthesize transport/cache evidence.
+    progress(output, "cold-pair-recovery-started", reason="activated Watch remains unreachable without a request")
+    failures = []
+    collect_role(output, "phone", devices["phone"], "before-reconnect", failures)
+    record_diagnostics(output, failures)
+    # Diagnostic collection can take long enough for the connection to recover.
+    # Recheck live state before acting on the earlier restart decision.
+    if not needs_initial_phone_restart(output, states, pids, timeout=0):
+        progress(output, "cold-pair-recovery-skipped", reason="session recovered during diagnostics")
+        return phone_snapshot
+    # Keep the Watch daemon running, but prevent its app from requesting a
+    # snapshot until the restarted phone has restored its seeded workspace.
+    run("xcrun", "simctl", "terminate", devices["watch"], WATCH_BUNDLE, stage="reconnect-stop-watch")
+    pids.pop("watch")
+    run("xcrun", "simctl", "shutdown", devices["phone"], stage="reconnect-stop-phone")
+    pids.pop("phone")
+    boot = run("xcrun", "simctl", "bootstatus", devices["phone"], "-b",
+               stage="reconnect-boot-phone", timeout=180, capture=True, log_path=output / "reconnect-boot-phone.log")
+    if "Finished" not in {line.strip() for line in boot.splitlines()}:
+        raise RuntimeError("The phone did not finish rebooting during cold-pair recovery")
+    # Preserve the original fixture workspace and snapshot; never reset or write
+    # the Watch cache as part of simulator recovery.
+    pids["phone"] = launch(devices["phone"], PHONE_BUNDLE, "phone-reconnected", "-ui-testing", "-ui-testing-upcoming")
+    save_json(output / "processes.json", pids)
+    restored = wait_for_snapshot(phone_cache, output=output, states={"phone": states["phone"]},
+                                 pids=pids, ready_role="phone")
+    if restored["snapshot"]["tasks"] != phone_snapshot["snapshot"]["tasks"]:
+        raise RuntimeError("The restarted phone changed the companion fixtures")
+    pids["watch"] = launch(devices["watch"], WATCH_BUNDLE, "watch-reconnected")
+    save_json(output / "processes.json", pids)
+    progress(output, "cold-pair-recovery-finished", phonePID=pids["phone"], watchPID=pids["watch"])
+    return restored
+
+
 def verify(output, derived_data):
     progress(output, "verification-started")
     devices = json.loads((output / "devices.json").read_text())
@@ -285,6 +423,8 @@ def verify(output, derived_data):
     evidence["watch"] = str(watch_cache)
     save_json(output / "evidence-paths.json", evidence)
     screenshot(watch, pids, output / "watch-initial-launch.png", "watch-initial")
+    phone_snapshot = reconnect_cold_phone(output, devices, states, pids, phone_cache, phone_snapshot)
+    phone_pid = pids["phone"]
     received = wait_for_snapshot(watch_cache, expected=phone_snapshot, output=output, states=states, pids=pids)
     screenshot(watch, pids, output / "watch-live-today-overdue.png", "watch-live")
     observe_states(output, states, pids, {})
@@ -354,9 +494,44 @@ def diagnostics(output):
     return record_diagnostics(output, failures)
 
 
+def cleanup(output):
+    # Always run after evidence collection, including partial preparation. Only
+    # stop this attempt's assigned devices; never shut down all runner devices.
+    devices_path = output / "devices.json"
+    if not devices_path.exists():
+        save_json(output / "cleanup.json", {"complete": True, "devices": {}, "failures": []})
+        return True
+    owned = json.loads(devices_path.read_text())
+    failures = []
+    states = {}
+    try:
+        inventory = json.loads(run("xcrun", "simctl", "list", "devices", "--json",
+                                   stage="cleanup-inventory", timeout=60, capture=True))
+        states = {device["udid"].lower(): device["state"]
+                  for devices in inventory["devices"].values() for device in devices}
+    except (CommandError, OSError, ValueError, KeyError, RuntimeError) as error:
+        failures.append({"stage": "cleanup-inventory", "error": str(error)})
+    results = {}
+    for role, device in owned.items():
+        if states.get(device.lower()) == "Shutdown":
+            results[role] = "already-shutdown"
+            continue
+        try:
+            run("xcrun", "simctl", "shutdown", device, stage=f"cleanup-{role}", timeout=60)
+            results[role] = "shutdown"
+        except (CommandError, OSError, RuntimeError) as error:
+            failures.append({"stage": f"cleanup-{role}", "error": str(error)})
+            results[role] = "failed"
+    save_json(output / "cleanup.json", {"complete": not failures, "devices": results, "failures": failures})
+    for failure in failures:
+        annotate("warning", f"Watch simulator cleanup ({failure['stage']}): {failure['error']}")
+    progress(output, "cleanup-finished", devices=results, complete=not failures)
+    return not failures
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("prepare", "build", "verify", "diagnostics"))
+    parser.add_argument("mode", choices=("prepare", "build", "verify", "diagnostics", "cleanup"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--derived-data", type=Path)
     arguments = parser.parse_args()
@@ -370,8 +545,11 @@ def main():
             build(arguments.output, arguments.derived_data)
         elif arguments.mode == "verify":
             verify(arguments.output, arguments.derived_data)
-        else:
+        elif arguments.mode == "diagnostics":
             if not diagnostics(arguments.output):
+                return 1
+        else:
+            if not cleanup(arguments.output):
                 return 1
     except (CommandError, OSError, ValueError, KeyError, RuntimeError) as error:
         annotate("error", f"Watch {arguments.mode} failed: {error}")

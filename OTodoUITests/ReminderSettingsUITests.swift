@@ -144,6 +144,7 @@ final class ReminderSettingsUITests: XCTestCase {
         let sidebar = app.buttons["project-sidebar-toggle"]
         XCTAssertTrue(sidebar.waitForExistence(timeout: 10))
         sidebar.tap()
+        app.buttons["settings-open"].tap()
         let settings = app.buttons["notification-settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 8))
         settings.tap()
