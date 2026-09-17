@@ -427,6 +427,46 @@ For a GitHub-backed workspace, first create the repository and commit a compatib
 4. Tap **Connect Repository**. The initial snapshot must validate before it becomes the saved offline workspace.
 
 ## Develop and test
+### Codex Cloud from ChatGPT mobile
+
+Create a Codex Cloud environment for this repository in ChatGPT, select Python
+3.12 and Swift 6.1, and use these repository-backed commands:
+
+```sh
+# Setup script
+./.codex/setup.sh
+
+# Maintenance script
+./.codex/maintenance.sh
+```
+
+The setup is idempotent and cache-safe. It installs checksum-pinned GitHub CLI
+2.101.0 and xtool 1.19.2 binaries for the cloud runner architecture, plus pinned
+SwiftLint or SwiftFormat binaries when the repository declares their config
+files. It creates an isolated Python environment for workflow helpers, resolves
+Swift packages, sets a usable Git identity, and validates portable bundle
+metadata. Optional `CODEX_GIT_AUTHOR_NAME` and `CODEX_GIT_AUTHOR_EMAIL`
+environment variables replace the generic commit identity.
+
+Use Codex's GitHub connection to create and push a branch or pull request.
+Opening or updating a pull request starts this repository's full GitHub Actions
+CI automatically. Enable agent internet access only for the required GitHub and
+dependency domains. Direct `gh workflow run` commands additionally require a
+`GH_TOKEN` available during the agent phase; Codex Cloud secrets are setup-only.
+If direct dispatch is necessary, use a dedicated fine-grained token restricted
+to this repository with only Contents and Actions access, never a broad personal
+token.
+
+The environment installs xtool so Linux compatibility can be evaluated, but it
+does not pretend to replace the release system. This XcodeGen application graph,
+iOS Simulator tests, App Store signing, and TestFlight upload still run on the
+macOS GitHub Actions workflows. Configuring xtool for device deployment would
+also require an Apple login, an Xcode archive, and a physically connected iOS
+device; none of that signing material belongs in Codex setup.
+
+Codex setup runs with internet access and caches the resulting container. The
+maintenance script reruns the same idempotent reconciliation after Codex checks
+out a task's selected branch.
 
 ### Swift package on Linux or macOS
 
