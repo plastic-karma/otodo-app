@@ -10,9 +10,9 @@ import plistlib
 import shutil
 import sys
 import time
+from uuid import UUID
 
 from ci_runtime import CommandError, annotate, run_command
-from ios_ci import prepare as prepare_ios
 
 
 PHONE_BUNDLE = "plastickarma.otodo"
@@ -87,24 +87,46 @@ def prepare(output):
                            f"(minimum {'.'.join(map(str, minimum_phone_version))})")
     progress(output, "runtimes-selected", phone=phone_runtime["name"], watch=watch_runtime["name"],
              phoneVersion=phone_runtime["version"], watchVersion=watch_runtime["version"])
-    phone_simulator = prepare_ios(output)
-    if phone_simulator["runtime"] != phone_runtime["identifier"]:
-        raise RuntimeError(f"A preinstalled iPhone on {phone_runtime['name']} is required for companion verification")
-    phone = phone_simulator["id"]
+    # Own both ends of the pair. A runner image's existing phone can retain
+    # pairing/unlock state even though simctl reports a successful boot.
+    phone = create_device(state, phone_runtime, "iPhone", "OTodo companion smoke iPhone")
     # Retain partial preparation evidence even if Watch creation/pairing fails.
     save_json(output / "devices.json", {"phone": phone})
     watch = create_device(state, watch_runtime, "Apple Watch", "OTodo companion smoke Watch")
     save_json(output / "devices.json", {"phone": phone, "watch": watch})
-    run("xcrun", "simctl", "pair", watch, phone, stage="pair")
+    pair = str(UUID(run("xcrun", "simctl", "pair", watch, phone, stage="pair", capture=True)))
+    save_json(output / "pair.json", {"id": pair})
+    run("xcrun", "simctl", "pair_activate", pair, stage="activate-pair")
+    verify_pair(output)
     if os.environ.get("GITHUB_ENV"):
         with open(os.environ["GITHUB_ENV"], "a") as environment:
             environment.write(f"WATCH_PHONE_SIMULATOR_ID={phone}\nWATCH_SIMULATOR_ID={watch}\n")
-    progress(output, "paired", phone=phone, watch=watch, boots="before-build")
+    progress(output, "paired", phone=phone, watch=watch, pair=pair, boots="after-build")
+    boot_pair(output)
+    verify_pair(output)
 
 
-def build(output, derived_data):
+def verify_pair(output):
     devices = json.loads((output / "devices.json").read_text())
-    # Fresh simulator migration must finish before competing with the compiler.
+    pair_id = json.loads((output / "pair.json").read_text())["id"]
+    state = simulator_state()
+    save_json(output / "paired-inventory.json", state)
+    # UUID casing is not meaningful, including in simctl's dictionary keys.
+    pairs = {identifier.lower(): pair for identifier, pair in state.get("pairs", {}).items()}
+    pair = pairs.get(pair_id.lower(), {})
+    if any(pair.get(role, {}).get("udid", "").lower() != identifier.lower()
+           for role, identifier in devices.items()):
+        raise RuntimeError(f"Simulator pair {pair_id} does not contain the requested phone and Watch")
+    statuses = {item.strip() for item in pair.get("state", "").strip("()").split(",")}
+    if "active" not in statuses:
+        raise RuntimeError(f"Simulator pair {pair_id} is not active: {pair.get('state')}")
+    progress(output, "pair-verified", pair=pair_id, state=pair["state"])
+
+
+def boot_pair(output):
+    devices = json.loads((output / "devices.json").read_text())
+    # Run only after compilation: two simulator runtimes plus Swift compilation
+    # can starve the host and leave companion services stuck after migration.
     # bootstatus can exit zero with a terminal "Data Migration Failed" result.
     for role in ("phone", "watch"):
         boot = run("xcrun", "simctl", "bootstatus", devices[role], "-b",
@@ -113,6 +135,11 @@ def build(output, derived_data):
         if not any(line.strip() == "Finished" for line in boot.splitlines()):
             raise RuntimeError(f"The {role} simulator did not finish booting successfully; inspect boot-{role}.log")
         progress(output, f"{role}-booted")
+
+
+def build(output, derived_data):
+    # A generic destination builds the embedded Watch app without booting either
+    # simulator. Keep the cold pair's migration/transport work out of this phase.
     source_packages = derived_data / "SourcePackages"
     source_packages.mkdir(parents=True, exist_ok=True)
     run("xcodebuild", "-resolvePackageDependencies", "-project", os.environ.get("PROJECT", "OTodo.xcodeproj"),
@@ -120,7 +147,7 @@ def build(output, derived_data):
         "-clonedSourcePackagesDirPath", source_packages,
         stage="package-resolution", timeout=600, log_path=output / "packages.log")
     run("xcodebuild", "build", "-project", os.environ.get("PROJECT", "OTodo.xcodeproj"),
-        "-scheme", "OTodo", "-destination", f"platform=iOS Simulator,id={devices['phone']}",
+        "-scheme", "OTodo", "-destination", "generic/platform=iOS Simulator", "-jobs", "2",
         "-showBuildTimingSummary",
         "-derivedDataPath", derived_data, "CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-",
         "-clonedSourcePackagesDirPath", source_packages, "-disableAutomaticPackageResolution",
@@ -196,7 +223,7 @@ def wait_for_snapshot(path, *, output, states, pids, expected=None):
 
 def launch(device, bundle, role, *arguments):
     result = run("xcrun", "simctl", "launch", "--terminate-running-process", device, bundle,
-                 SMOKE_ARGUMENT, *arguments, stage=f"launch-{role}", capture=True)
+                 SMOKE_ARGUMENT, *arguments, stage=f"launch-{role}", timeout=120, capture=True)
     print(result, flush=True)
     return int(result.rsplit(":", 1)[1].strip())
 
