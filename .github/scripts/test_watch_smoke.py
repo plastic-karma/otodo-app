@@ -202,6 +202,47 @@ class WatchReconnectTests(unittest.TestCase):
                 self.recover()
             command.assert_not_called()
 
+    def test_slow_initial_handshake_finishes_without_restarting_either_client(self):
+        elapsed = 0
+
+        def advance(seconds):
+            nonlocal elapsed
+            elapsed += seconds
+
+        def observe(output, states, pids, observed):
+            observed["watch"] = {**self.waiting, "reachable": "true" if elapsed >= 75 else "false"}
+
+        with patch.object(watch_smoke.time, "monotonic", side_effect=lambda: elapsed), \
+                patch.object(watch_smoke.time, "sleep", side_effect=advance), \
+                patch.object(watch_smoke, "observe_states", side_effect=observe), \
+                patch.object(watch_smoke, "collect_role") as diagnostics, \
+                patch.object(watch_smoke, "run", side_effect=AssertionError("Do not restart a recovering pair")):
+            self.assertIs(self.recover(), self.snapshot)
+            diagnostics.assert_not_called()
+        self.assertEqual(self.pids, {"phone": 11, "watch": 12})
+
+    def test_session_recovering_during_diagnostics_is_not_restarted(self):
+        for change in ({"reachable": "true"}, {"request": "sent"}, {"cache": "loaded"}, {"snapshot": "persisted"}):
+            elapsed = 0
+            state = dict(self.waiting)
+
+            def advance(seconds):
+                nonlocal elapsed
+                elapsed += seconds
+
+            with self.subTest(change=change), \
+                    patch.object(watch_smoke.time, "monotonic", side_effect=lambda: elapsed), \
+                    patch.object(watch_smoke.time, "sleep", side_effect=advance), \
+                    patch.object(watch_smoke, "observe_states",
+                                 side_effect=lambda output, states, pids, observed: observed.update(watch=state)), \
+                    patch.object(watch_smoke, "collect_role", side_effect=lambda *args: state.update(change)), \
+                    patch.object(watch_smoke, "run") as command, \
+                    patch.object(watch_smoke, "launch") as launch:
+                self.assertIs(self.recover(), self.snapshot)
+                command.assert_not_called()
+                launch.assert_not_called()
+                self.assertEqual(self.pids, {"phone": 11, "watch": 12})
+
     def test_recovery_restores_phone_before_relaunching_watch_and_tracks_new_pids(self):
         def restored_phone(*arguments, **options):
             self.assertEqual(options["pids"], {"phone": 21})

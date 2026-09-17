@@ -328,7 +328,9 @@ def record_diagnostics(output, failures):
     return previous["complete"]
 
 
-def needs_initial_phone_restart(output, states, pids, *, timeout=30):
+def needs_initial_phone_restart(output, states, pids, *, timeout=120):
+    # Cold pairs can publish their first-unlock state more than a minute after
+    # activation. Let that handshake settle before interrupting either client.
     deadline = time.monotonic() + timeout
     observed = {}
     while True:
@@ -356,6 +358,11 @@ def reconnect_cold_phone(output, devices, states, pids, phone_cache, phone_snaps
     failures = []
     collect_role(output, "phone", devices["phone"], "before-reconnect", failures)
     record_diagnostics(output, failures)
+    # Diagnostic collection can take long enough for the connection to recover.
+    # Recheck live state before acting on the earlier restart decision.
+    if not needs_initial_phone_restart(output, states, pids, timeout=0):
+        progress(output, "cold-pair-recovery-skipped", reason="session recovered during diagnostics")
+        return phone_snapshot
     # Keep the Watch daemon running, but prevent its app from requesting a
     # snapshot until the restarted phone has restored its seeded workspace.
     run("xcrun", "simctl", "terminate", devices["watch"], WATCH_BUNDLE, stage="reconnect-stop-watch")
