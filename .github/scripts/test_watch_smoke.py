@@ -13,7 +13,7 @@ class WatchBootTests(unittest.TestCase):
         successful_boot = "Status=4294967295, isTerminal=YES\n\tFinished\n"
 
         def simulator_command(*arguments, stage, **options):
-            if stage == "boot-phone":
+            if stage.startswith("boot-phone"):
                 return failed_boot
             if stage == "boot-watch":
                 return successful_boot
@@ -22,9 +22,36 @@ class WatchBootTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
             (output / "devices.json").write_text(json.dumps({"phone": "phone", "watch": "watch"}))
-            with patch.object(watch_smoke, "run", side_effect=simulator_command):
+            with patch.object(watch_smoke, "run", side_effect=simulator_command) as command:
                 with self.assertRaises(RuntimeError):
                     watch_smoke.boot_pair(output)
+                stages = [call.kwargs["stage"] for call in command.call_args_list]
+                self.assertEqual(stages, ["boot-phone", "restart-phone", "boot-phone-retry"])
+
+    def test_migration_retry_requires_a_successful_second_boot_before_watch_boot(self):
+        calls = []
+
+        def simulator_command(*arguments, stage, **options):
+            calls.append(stage)
+            return "Data Migration Failed\n" if stage == "boot-phone" else "Finished\n"
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            watch_smoke.save_json(output / "devices.json", {"phone": "phone", "watch": "watch"})
+            with patch.object(watch_smoke, "run", side_effect=simulator_command):
+                watch_smoke.boot_pair(output)
+            self.assertEqual(calls, ["boot-phone", "restart-phone", "boot-phone-retry", "boot-watch"])
+            events = [json.loads(line) for line in (output / "progress.jsonl").read_text().splitlines()]
+            self.assertEqual([event["attempt"] for event in events if event["stage"] == "phone-booted"], [2])
+
+    def test_unknown_terminal_boot_status_is_not_retried_or_accepted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            watch_smoke.save_json(output / "devices.json", {"phone": "phone", "watch": "watch"})
+            with patch.object(watch_smoke, "run", return_value="Unexpected terminal status\n") as command:
+                with self.assertRaises(RuntimeError):
+                    watch_smoke.boot_pair(output)
+                command.assert_called_once()
 
     def test_build_needs_no_device_and_cannot_boot_a_pair_during_compilation(self):
         with tempfile.TemporaryDirectory() as directory:

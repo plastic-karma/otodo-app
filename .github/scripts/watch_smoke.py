@@ -67,7 +67,11 @@ def create_device(state, runtime, family, name):
                and item.get("minRuntimeVersion", 0) <= encoded_version <= item.get("maxRuntimeVersion", 0xFFFFFFFF)]
     if not choices:
         raise RuntimeError(f"No compatible {family} device type for {runtime['name']}")
-    device_type = max(choices, key=lambda item: (item.get("minRuntimeVersion", 0), item["name"]))
+    # Match the hosted iOS suite's Pro preference within the newest generation;
+    # alphabetic ordering alone selects iPhone Air over the tested Pro models.
+    device_type = max(choices, key=lambda item: (item.get("minRuntimeVersion", 0),
+                                               family == "iPhone" and item["name"].endswith("Pro"),
+                                               item["name"]))
     return run("xcrun", "simctl", "create", name, device_type["identifier"], runtime["identifier"],
                stage=f"create-{family.replace(' ', '-').lower()}", capture=True)
 
@@ -133,12 +137,23 @@ def boot_pair(output):
     # can starve the host and leave companion services stuck after migration.
     # bootstatus can exit zero with a terminal "Data Migration Failed" result.
     for role in ("phone", "watch"):
-        boot = run("xcrun", "simctl", "bootstatus", devices[role], "-b",
-                   stage=f"boot-{role}", timeout=420, capture=True,
-                   log_path=output / f"boot-{role}.log")
-        if not any(line.strip() == "Finished" for line in boot.splitlines()):
-            raise RuntimeError(f"The {role} simulator did not finish booting successfully; inspect boot-{role}.log")
-        progress(output, f"{role}-booted")
+        for attempt in (1, 2):
+            stage = f"boot-{role}" + ("-retry" if attempt == 2 else "")
+            boot = run("xcrun", "simctl", "bootstatus", devices[role], "-b",
+                       stage=stage, timeout=420, capture=True, log_path=output / f"{stage}.log")
+            statuses = {line.strip() for line in boot.splitlines()}
+            if "Finished" in statuses:
+                progress(output, f"{role}-booted", attempt=attempt)
+                break
+            if attempt == 1 and "Data Migration Failed" in statuses:
+                # A cold CoreSimulator migration can fail independently of the
+                # app. Reboot this device once; retain both logs and require a
+                # genuinely successful migration on the second boot.
+                progress(output, "migration-retry", role=role, attempt=attempt)
+                annotate("warning", f"The {role} simulator's initial migration failed; rebooting once")
+                run("xcrun", "simctl", "shutdown", devices[role], stage=f"restart-{role}", timeout=60)
+                continue
+            raise RuntimeError(f"The {role} simulator did not finish booting successfully; inspect {stage}.log")
 
 
 def build(output, derived_data):
