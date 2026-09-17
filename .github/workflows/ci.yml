@@ -318,7 +318,9 @@ jobs:
     name: Apple Watch companion
     needs: preflight
     if: needs.preflight.outputs.mode != 'focused'
-    runs-on: macos-15
+    # Two live simulator runtimes need the standard Intel runner's 14 GB RAM.
+    # The 7 GB Arm runner stalled in migration and WCSession transport.
+    runs-on: macos-15-intel
     timeout-minutes: 45
     env:
       PROJECT: OTodo.xcodeproj

@@ -77,6 +77,8 @@ def create_device(state, runtime, family, name):
 
 
 def prepare(output):
+    run("sysctl", "hw.memsize", "hw.ncpu", stage="host-resources",
+        log_path=output / "host-resources.log")
     state = simulator_state()
     save_json(output / "runtime-inventory.json", state)
     watch_runtime = newest_runtime(state, "watchOS")
