@@ -1135,6 +1135,58 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testHomeFiltersSelectAdjacentSectionsWithHorizontalSwipes() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace"]
+        app.launch()
+        defer { app.terminate() }
+
+        let filters = app.scrollViews["task-filters"]
+        XCTAssertTrue(filters.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["task-filter-today"].isSelected)
+
+        filters.swipeLeft()
+        XCTAssertTrue(app.buttons["task-filter-active"].isSelected)
+        XCTAssertTrue(
+            taskRow(named: "Future todo", state: "Pending", in: app)
+                .waitForExistence(timeout: 8)
+        )
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Active selected by swiping the Home filters"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        filters.swipeLeft()
+        XCTAssertTrue(app.buttons["task-filter-all"].isSelected)
+        XCTAssertTrue(
+            taskRow(named: "Completed overdue todo", state: "Done", in: app)
+                .waitForExistence(timeout: 8)
+        )
+
+        filters.swipeLeft()
+        XCTAssertTrue(app.buttons["task-filter-inbox"].isSelected)
+        filters.swipeLeft()
+        XCTAssertTrue(
+            app.buttons["task-filter-inbox"].isSelected,
+            "Swiping past the last Home filter should keep the last filter selected"
+        )
+
+        filters.swipeRight()
+        XCTAssertTrue(app.buttons["task-filter-all"].isSelected)
+        filters.swipeRight()
+        XCTAssertTrue(app.buttons["task-filter-active"].isSelected)
+        filters.swipeRight()
+        XCTAssertTrue(app.buttons["task-filter-today"].isSelected)
+        filters.swipeRight()
+        XCTAssertTrue(
+            app.buttons["task-filter-today"].isSelected,
+            "Swiping past the first Home filter should keep the first filter selected"
+        )
+    }
+
+    @MainActor
     func testTodayFilterIncludesOverdueAndIsDefault() {
         continueAfterFailure = false
         verifyTodayFilters(appearance: "light")

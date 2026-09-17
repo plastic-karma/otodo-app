@@ -514,35 +514,70 @@ struct TaskListView: View {
     }
 
     private var favoriteFilters: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 8) {
-                ForEach(filterLibrary.filters.filter(\.isStarred)) { filter in
-                    Button {
-                        selectFilter(filter.id)
-                    } label: {
-                        Text(filter.name)
-                            .font(.subheadline.weight(
-                                selectedFilterID == filter.id ? .semibold : .regular
-                            ))
-                            .foregroundStyle(
-                                selectedFilterID == filter.id ? Color.white : Color.secondary
-                            )
-                            .padding(.horizontal, 14)
-                            .frame(minHeight: 44)
-                            .background(
-                                selectedFilterID == filter.id
-                                    ? OTodoTheme.filledAccent : Color.secondary.opacity(0.06),
-                                in: Capsule()
-                            )
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(swipeableFilters) { filter in
+                        Button {
+                            selectFilter(filter.id)
+                        } label: {
+                            Text(filter.name)
+                                .font(.subheadline.weight(
+                                    selectedFilterID == filter.id ? .semibold : .regular
+                                ))
+                                .foregroundStyle(
+                                    selectedFilterID == filter.id ? Color.white : Color.secondary
+                                )
+                                .padding(.horizontal, 14)
+                                .frame(minHeight: 44)
+                                .background(
+                                    selectedFilterID == filter.id
+                                        ? OTodoTheme.filledAccent : Color.secondary.opacity(0.06),
+                                    in: Capsule()
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .id(filter.id)
+                        .accessibilityIdentifier("task-filter-\(filter.id)")
+                        .accessibilityAddTraits(selectedFilterID == filter.id ? .isSelected : [])
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("task-filter-\(filter.id)")
-                    .accessibilityAddTraits(selectedFilterID == filter.id ? .isSelected : [])
                 }
             }
+            .scrollIndicators(.hidden)
+            .simultaneousGesture(filterSwipeGesture)
+            .onChange(of: selectedFilterID) { _, id in
+                withAnimation(.snappy(duration: 0.24)) {
+                    proxy.scrollTo(id, anchor: .center)
+                }
+            }
+            .accessibilityHint("Swipe left or right to choose the next or previous filter")
+            .accessibilityIdentifier("task-filters")
         }
-        .scrollIndicators(.hidden)
-        .accessibilityIdentifier("task-filters")
+    }
+
+    private var swipeableFilters: [SavedTaskFilter] {
+        filterLibrary.filters.filter(\.isStarred)
+    }
+
+    private var filterSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 32)
+            .onEnded { value in
+                let horizontalDistance = value.translation.width
+                guard abs(horizontalDistance) >= 56,
+                      abs(horizontalDistance) > abs(value.translation.height)
+                else { return }
+                selectAdjacentFilter(offset: horizontalDistance < 0 ? 1 : -1)
+            }
+    }
+
+    private func selectAdjacentFilter(offset: Int) {
+        let filters = swipeableFilters
+        guard let currentIndex = filters.firstIndex(where: {
+            $0.id == selectedFilterID
+        }) else { return }
+        let destination = currentIndex + offset
+        guard filters.indices.contains(destination) else { return }
+        selectFilter(filters[destination].id)
     }
 
     private func selectFilter(_ id: String) {

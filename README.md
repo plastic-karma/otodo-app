@@ -263,7 +263,7 @@ Touch and hold an open recurring todo and choose **Finish series**, or select a 
 
 ## Saved filters
 
-Open **Filters** from the top-right of the workspace, then **+** to save a name and text query. Tap a filter to open it; star it to put it on the app's Home filter strip. Touch and hold a saved filter (or swipe left) to edit or delete it. **Today**, **Active**, **All**, and **Inbox** are predefined queries: their definitions cannot change, but their Home stars can.
+Open **Filters** from the top-right of the workspace, then **+** to save a name and text query. Tap a filter to open it; star it to put it on the app's Home filter strip. On Home, swipe that strip left or right to select the next or previous starred filter; swiping past either end keeps the end filter selected. Touch and hold a saved filter (or swipe left) to edit or delete it. **Today**, **Active**, **All**, and **Inbox** are predefined queries: their definitions cannot change, but their Home stars can.
 
 The query editor suggests projects and tags from the current workspace as you type `project:` or `tag:`. Tap a suggestion to complete the value at the cursor, including when editing in the middle of a query. Matching ignores case while insertion preserves the stored spelling and quotes or escapes special characters automatically. Suggestions work offline and leave the surrounding query unchanged.
 
