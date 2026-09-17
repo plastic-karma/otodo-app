@@ -5,9 +5,15 @@ extension XCUIApplication {
     @MainActor
     func revealTaskEditorElement(
         _ element: XCUIElement,
+        panel: String? = nil,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
+        if let panel {
+            let disclosure = buttons["task-editor-\(panel)"]
+            revealTaskEditorElement(disclosure, file: file, line: line)
+            if disclosure.value as? String != "Expanded" { disclosure.tap() }
+        }
         let editors = descendants(matching: .any).matching(identifier: "task-editor")
         XCTAssertTrue(editors.firstMatch.waitForExistence(timeout: 8), file: file, line: line)
         let depth = max(0, editors.count - 1)
@@ -27,7 +33,7 @@ extension XCUIApplication {
                 bottom = min(bottom, keyboard.frame.minY - 52)
                 if done.exists { bottom = min(bottom, done.frame.minY - 8) }
             }
-            if footer.exists { bottom = min(bottom, footer.frame.minY - 8) }
+            if keyboard.exists && footer.exists { bottom = min(bottom, footer.frame.minY - 8) }
             return CGRect(x: frame.minX, y: top, width: frame.width, height: max(0, bottom - top))
         }
         func isUnobscured() -> Bool {
@@ -59,4 +65,27 @@ extension XCUIApplication {
         XCTAssertTrue(element.exists, "The editor must expose the requested control", file: file, line: line)
         XCTAssertTrue(isUnobscured(), "The editor control must be clear of navigation, keyboard, and save controls", file: file, line: line)
     }
+
+    @MainActor
+    func revealSaveAnotherAction(file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
+        let action = buttons["task-editor-save-another"]
+        if !action.exists || !action.isHittable {
+            let name = textFields["task-editor-name"]
+            revealTaskEditorElement(name, file: file, line: line)
+            name.tap()
+        }
+        if !action.isHittable {
+            let done = buttons["task-editor-keyboard-done"]
+            if done.exists && done.isHittable { done.tap() }
+            revealTaskEditorElement(action, file: file, line: line)
+        }
+        XCTAssertTrue(action.waitForExistence(timeout: 5), file: file, line: line)
+        return action
+    }
+
+    @MainActor
+    func saveAndAddAnotherTodo(file: StaticString = #filePath, line: UInt = #line) {
+        revealSaveAnotherAction(file: file, line: line).tap()
+    }
+
 }

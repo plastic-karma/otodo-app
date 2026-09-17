@@ -16,38 +16,38 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         name.typeText("Linked parent\n")
 
         let url = app.textFields["task-editor-url"]
-        app.revealTaskEditorElement(url)
+        app.revealTaskEditorElement(url, panel: "link")
         url.tap()
         url.typeText("https://example.com/Reference?item=One#Notes")
         queueChild("Discarded child", in: app)
         let remove = app.buttons["task-editor-remove-subtask-0"]
-        app.revealTaskEditorElement(remove)
+        app.revealTaskEditorElement(remove, panel: "subtasks")
         remove.tap()
         queueChild("First child", in: app)
         attachScreenshot(in: app, name: "New parent with queued subtask and link")
 
         // Repeat entry must persist the first family without leaking it into the next draft.
-        app.buttons["task-editor-save-another"].tap()
+        app.saveAndAddAnotherTodo()
         XCTAssertTrue(app.descendants(matching: .any)
             .matching(identifier: "task-editor-saved-confirmation").firstMatch.waitForExistence(timeout: 8))
         name.typeText("Independent repeated parent\n")
-        app.revealTaskEditorElement(url)
+        app.revealTaskEditorElement(url, panel: "link")
         XCTAssertFalse(app.buttons["task-editor-clear-url"].exists)
         let childInput = app.textFields["task-editor-subtask-name"]
-        app.revealTaskEditorElement(childInput)
+        app.revealTaskEditorElement(childInput, panel: "subtasks")
         XCTAssertFalse(app.buttons["task-editor-remove-subtask-0"].exists)
         save(in: app)
 
         relaunch(app)
         openTask("Independent repeated parent", in: app)
-        app.revealTaskEditorElement(childInput)
+        app.revealTaskEditorElement(childInput, panel: "subtasks")
         XCTAssertFalse(existingChild("First child", in: app).exists)
         app.buttons["Cancel"].tap()
         openTask("Linked parent", in: app)
-        app.revealTaskEditorElement(url)
+        app.revealTaskEditorElement(url, panel: "link")
         XCTAssertEqual(url.value as? String, "https://example.com/Reference?item=One#Notes")
         let openLink = app.descendants(matching: .any).matching(identifier: "task-editor-open-url").firstMatch
-        app.revealTaskEditorElement(openLink)
+        app.revealTaskEditorElement(openLink, panel: "link")
         openLink.tap()
         let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
         let browserOpened = XCTNSPredicateExpectation(
@@ -58,23 +58,23 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
                        "The link must open only after the explicit tap")
         app.activate()
         let firstChild = existingChild("First child", in: app)
-        app.revealTaskEditorElement(firstChild)
+        app.revealTaskEditorElement(firstChild, panel: "subtasks")
         XCTAssertTrue(firstChild.exists, "The saved child must be a direct child of this parent")
         XCTAssertFalse(existingChild("Discarded child", in: app).exists)
         queueChild("Second child", in: app)
-        app.revealTaskEditorElement(url)
+        app.revealTaskEditorElement(url, panel: "link")
         app.buttons["task-editor-clear-url"].tap()
         XCTAssertFalse(openLink.exists)
         save(in: app)
 
         relaunch(app)
         openTask("Linked parent", in: app)
-        app.revealTaskEditorElement(url)
+        app.revealTaskEditorElement(url, panel: "link")
         XCTAssertFalse(app.buttons["task-editor-clear-url"].exists, "Clearing the link must survive relaunch")
         XCTAssertFalse(openLink.exists)
-        app.revealTaskEditorElement(existingChild("First child", in: app))
+        app.revealTaskEditorElement(existingChild("First child", in: app), panel: "subtasks")
         XCTAssertTrue(existingChild("First child", in: app).exists)
-        app.revealTaskEditorElement(existingChild("Second child", in: app))
+        app.revealTaskEditorElement(existingChild("Second child", in: app), panel: "subtasks")
         XCTAssertTrue(existingChild("Second child", in: app).exists,
                       "Editing a parent must append its queued children without replacing existing children")
         attachScreenshot(in: app, name: "Offline parent retains both saved direct children")
@@ -149,7 +149,7 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         app.buttons["task-reschedule-relative-due-apply"].tap()
         app.buttons["task-reschedule-save"].tap()
         XCTAssertTrue(relative.waitForNonExistence(timeout: 8))
-        app.revealTaskEditorElement(child)
+        app.revealTaskEditorElement(child, panel: "subtasks")
         let due = Calendar.autoupdatingCurrent.date(byAdding: .day, value: 2, to: .now)!
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .autoupdatingCurrent
@@ -176,14 +176,14 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         revealTrailingActions(for: child, in: app)
         app.buttons["task-delete-\(childID)"].tap()
         let refusal = app.descendants(matching: .any).matching(identifier: "subtask-action-error").firstMatch
-        app.revealTaskEditorElement(refusal)
+        app.revealTaskEditorElement(refusal, panel: "subtasks")
         XCTAssertTrue(refusal.label.localizedCaseInsensitiveContains("child"))
         XCTAssertTrue(child.exists, "Delete must retain a nonleaf just as the main list does")
 
-        app.revealTaskEditorElement(child)
+        app.revealTaskEditorElement(child, panel: "subtasks")
         child.tap()
         let grandchild = existingChild("Swipe grandchild", in: app)
-        app.revealTaskEditorElement(grandchild)
+        app.revealTaskEditorElement(grandchild, panel: "subtasks")
         XCTAssertTrue(grandchild.label.contains("State: Done"))
         let grandchildID = String(grandchild.identifier.dropFirst("task-editor-existing-subtask-".count))
         revealTrailingActions(for: grandchild, in: app)
@@ -200,14 +200,14 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         relaunch(app)
         openTask(unsavedName, in: app)
         let input = app.textFields["task-editor-subtask-name"]
-        app.revealTaskEditorElement(input)
+        app.revealTaskEditorElement(input, panel: "subtasks")
         XCTAssertFalse(existingChild("Hierarchy child", in: app).exists)
         attachScreenshot(in: app, name: "Parent draft and subtask deletions persist after offline relaunch")
     }
 
     @MainActor
     private func revealLeadingActions(for row: XCUIElement, in app: XCUIApplication) {
-        app.revealTaskEditorElement(row)
+        app.revealTaskEditorElement(row, panel: "subtasks")
         row.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).press(
             forDuration: 0.1,
             thenDragTo: row.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
@@ -216,7 +216,7 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
 
     @MainActor
     private func revealTrailingActions(for row: XCUIElement, in app: XCUIApplication) {
-        app.revealTaskEditorElement(row)
+        app.revealTaskEditorElement(row, panel: "subtasks")
         row.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)).press(
             forDuration: 0.1,
             thenDragTo: row.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5))
@@ -236,39 +236,39 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         name.tap()
         name.typeText("Legacy linked task\n")
         let url = app.textFields["task-editor-url"]
-        app.revealTaskEditorElement(url)
+        app.revealTaskEditorElement(url, panel: "link")
         url.tap()
         url.typeText("javascript:alert(1)")
         XCTAssertFalse(app.buttons["task-editor-save"].isEnabled)
         XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "task-editor-open-url").firstMatch.exists)
         let unavailable = app.staticTexts["task-editor-subtasks-unavailable"]
-        app.revealTaskEditorElement(unavailable)
+        app.revealTaskEditorElement(unavailable, panel: "subtasks")
         XCTAssertTrue(unavailable.exists)
         XCTAssertFalse(app.textFields["task-editor-subtask-name"].exists)
         attachScreenshot(in: app, name: "Legacy store explains subtasks while invalid link blocks save")
-        app.revealTaskEditorElement(url)
+        app.revealTaskEditorElement(url, panel: "link")
         app.buttons["task-editor-clear-url"].tap()
         url.tap()
         url.typeText("https://example.com/legacy")
         save(in: app)
         relaunch(app)
         openTask("Legacy linked task", in: app)
-        app.revealTaskEditorElement(url)
+        app.revealTaskEditorElement(url, panel: "link")
         XCTAssertEqual(url.value as? String, "https://example.com/legacy")
-        app.revealTaskEditorElement(unavailable)
+        app.revealTaskEditorElement(unavailable, panel: "subtasks")
         XCTAssertTrue(unavailable.exists, "Saving an additive link must not upgrade the store schema")
     }
 
     @MainActor
     private func queueChild(_ title: String, in app: XCUIApplication) {
         let input = app.textFields["task-editor-subtask-name"]
-        app.revealTaskEditorElement(input)
+        app.revealTaskEditorElement(input, panel: "subtasks")
         input.tap()
         input.typeText(title)
         XCTAssertFalse(app.buttons["task-editor-save"].isEnabled,
                        "Unqueued typing must be added or cleared before saving")
         let add = app.buttons["task-editor-subtask-add"]
-        app.revealTaskEditorElement(add)
+        app.revealTaskEditorElement(add, panel: "subtasks")
         add.tap()
         let readyToSave = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "enabled == true"),

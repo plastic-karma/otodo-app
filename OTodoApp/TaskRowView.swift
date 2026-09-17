@@ -82,7 +82,7 @@ struct TaskRowView: View {
                         }
                         .fixedSize(horizontal: false, vertical: true)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(OTodoTheme.secondaryText)
                         .lineLimit(1)
                     }
                 }

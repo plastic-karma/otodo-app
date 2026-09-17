@@ -16,6 +16,7 @@ final class TaskSearchUITests: XCTestCase {
         XCTAssertFalse(future.exists)
         XCTAssertFalse(completed.exists)
 
+        app.buttons["task-search-open"].tap()
         let search = app.searchFields.firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: 8))
         search.tap()

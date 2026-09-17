@@ -104,7 +104,6 @@ struct TaskEditorView: View {
     @State private var nameFocused = false
     @State private var nameComposing = false
     @State private var notesComposing = false
-    @ScaledMetric(relativeTo: .body) private var notesHeight = 96
     @State private var recurrenceError: String?
     @State private var recurrenceRule: RecurrenceRule?
     @State private var initialRecurrenceSettings: TaskRecurrenceFields.Settings
@@ -120,6 +119,8 @@ struct TaskEditorView: View {
     @State private var notesFocused = false
     @State private var isScheduleExpanded = false
     @State private var isDetailsExpanded = false
+    @State private var isLinkExpanded = false
+    @State private var isSubtasksExpanded = false
     @State private var childEditorPresentation: EditorPresentation?
     @State private var childReschedulePresentation: ReschedulePresentation?
     @State private var isAddingInProgressState = false
@@ -194,185 +195,7 @@ struct TaskEditorView: View {
         NavigationStack {
             ScrollViewReader { proxy in
                 Form {
-                    Section {
-                        if didSaveAndContinue {
-                            Label("Todo saved. Create another.", systemImage: "checkmark.circle.fill")
-                                .font(.footnote)
-                                .foregroundStyle(OTodoTheme.accent)
-                                .accessibilityIdentifier("task-editor-saved-confirmation")
-                        }
-
-                        HighlightedTaskNameField(
-                            text: $draft.name,
-                            highlightRanges: nameHighlightRanges,
-                            accessibilityIdentifier: "task-editor-name",
-                            requestsFocus: $requestsNameFocus,
-                            selection: $nameSelection, isFocused: $nameFocused,
-                            isComposing: $nameComposing
-                        )
-                        .frame(minHeight: 44)
-                        .onChange(of: draft.name) { _, name in
-                            detectedDueDatePhrase = Self.detectDueDatePhrase(in: name)
-                            nameProjectMentions = TaskTextMentions(in: name, marker: "#")
-                            nameTagMentions = TaskTextMentions(in: name, marker: "@")
-                            nameHighlightRanges = (detectedDueDatePhrase?.utf16Ranges ?? [])
-                                + Self.mentionHighlightRanges(nameProjectMentions, choices: projectChoiceSet)
-                                + Self.mentionHighlightRanges(nameTagMentions, choices: tagChoiceSet)
-                            refreshDetectedMentions()
-                        }
-                        .onChange(of: nameFocused) { _, focused in
-                            if focused { notesFocused = false }
-                        }
-                        if nameFocused, !nameComposing {
-                            mentionSuggestions(
-                                nameProjectMentions.suggestions(at: nameSelection, choices: projectChoices),
-                                field: "name", kind: .project
-                            ) { suggestion in
-                                guard let result = suggestion.applying(to: draft.name) else { return }
-                                draft.name = result.text
-                                nameSelection = result.selection
-                                requestsNameFocus = true
-                            }
-                            mentionSuggestions(
-                                nameTagMentions.suggestions(at: nameSelection, choices: tagChoices),
-                                field: "name", kind: .tag
-                            ) { suggestion in
-                                guard let result = suggestion.applying(to: draft.name) else { return }
-                                draft.name = result.text
-                                nameSelection = result.selection
-                                requestsNameFocus = true
-                            }
-                        }
-
-                        if let detectedDueDatePhrase {
-                            let explanation =
-                                "Due \(resolvedDueDate?.rawValue ?? detectedDueDatePhrase.dueDate.rawValue)\(resolvedDueTime.map { " at \($0.rawValue)" } ?? "") · “\(detectedDueDatePhrase.phrases.joined(separator: "” and “"))” will be removed when saved"
-                            Label(explanation, systemImage: "calendar.badge.checkmark")
-                                .font(.footnote)
-                                .foregroundStyle(OTodoTheme.accent)
-                                .accessibilityElement(children: .ignore)
-                                .accessibilityLabel(explanation)
-                                .accessibilityIdentifier("task-editor-detected-due-date")
-                        }
-
-                        ZStack(alignment: .topLeading) {
-                            if draft.body.isEmpty {
-                                Text("Add notes…")
-                                    .foregroundStyle(.tertiary)
-                                    .padding(.top, 8)
-                                    .padding(.leading, 5)
-                                    .allowsHitTesting(false)
-                                    .accessibilityHidden(true)
-                            }
-                            TaskTextEditor(
-                                text: $draft.body, selection: $notesSelection,
-                                isFocused: $notesFocused, isComposing: $notesComposing,
-                                style: .notes
-                            )
-                                .frame(height: notesHeight)
-                                .onChange(of: draft.body) { _, text in
-                                    detectedNotesDueDatePhrase = Self.detectDueDatePhrase(in: text)
-                                    let projectMentions = TaskTextMentions(in: text, marker: "#")
-                                    let tagMentions = TaskTextMentions(in: text, marker: "@")
-                                    notesProjectMentions = projectMentions
-                                    notesTagMentions = tagMentions
-                                    refreshDetectedMentions()
-                                    let suggestionID: String?
-                                    if !tagMentions.suggestions(at: notesSelection, choices: tagChoices).isEmpty {
-                                        suggestionID = "task-editor-notes-tag-suggestions"
-                                    } else if !projectMentions.suggestions(
-                                        at: notesSelection, choices: projectChoices
-                                    ).isEmpty {
-                                        suggestionID = "task-editor-notes-project-suggestions"
-                                    } else {
-                                        suggestionID = nil
-                                    }
-                                    if let suggestionID {
-                                        Task { @MainActor in
-                                            await Task.yield()
-                                            proxy.scrollTo(suggestionID, anchor: .bottom)
-                                        }
-                                    }
-                                }
-                                .onChange(of: notesFocused) { _, focused in
-                                    if focused {
-                                        requestsNameFocus = false
-                                        nameFocused = false
-                                    }
-                                }
-                        }
-                        .listRowSeparator(.hidden)
-                        if detectedDueDatePhrase == nil, let detectedNotesDueDatePhrase {
-                            let explanation =
-                                "Due \(resolvedDueDate?.rawValue ?? detectedNotesDueDatePhrase.dueDate.rawValue)\(resolvedDueTime.map { " at \($0.rawValue)" } ?? "") · “\(detectedNotesDueDatePhrase.phrases.joined(separator: "” and “"))” in notes will be removed when saved"
-                            Label(explanation, systemImage: "calendar.badge.checkmark")
-                                .font(.footnote)
-                                .foregroundStyle(OTodoTheme.accent)
-                                .accessibilityElement(children: .ignore)
-                                .accessibilityLabel(explanation)
-                                .accessibilityIdentifier("task-editor-detected-notes-due-date")
-                        }
-                        if notesFocused, !notesComposing {
-                            mentionSuggestions(
-                                notesProjectMentions.suggestions(at: notesSelection, choices: projectChoices),
-                                field: "notes", kind: .project
-                            ) { suggestion in
-                                guard let result = suggestion.applying(to: draft.body) else { return }
-                                draft.body = result.text
-                                notesSelection = result.selection
-                            }
-                            .id("task-editor-notes-project-suggestions")
-                            mentionSuggestions(
-                                notesTagMentions.suggestions(at: notesSelection, choices: tagChoices),
-                                field: "notes", kind: .tag
-                            ) { suggestion in
-                                guard let result = suggestion.applying(to: draft.body) else { return }
-                                draft.body = result.text
-                                notesSelection = result.selection
-                            }
-                            .id("task-editor-notes-tag-suggestions")
-                        }
-                        if !detectedProjects.isEmpty {
-                            let explanation = "Projects from #mentions: \(detectedProjects.joined(separator: ", "))"
-                            Label(explanation, systemImage: "folder.badge.plus")
-                                .font(.footnote)
-                                .foregroundStyle(OTodoTheme.accent)
-                                .accessibilityElement(children: .ignore)
-                                .accessibilityLabel(explanation)
-                                .accessibilityIdentifier("task-editor-detected-projects")
-                        }
-                        if !detectedTags.isEmpty {
-                            let explanation = "Tags from @mentions: \(detectedTags.joined(separator: ", "))"
-                            Label(explanation, systemImage: "tag.fill")
-                                .font(.footnote)
-                                .foregroundStyle(OTodoTheme.accent)
-                                .accessibilityElement(children: .ignore)
-                                .accessibilityLabel(explanation)
-                                .accessibilityIdentifier("task-editor-detected-tags")
-                        }
-                    }
-                    .id("task-editor-top")
-
-                    Section {
-                        DisclosureGroup(isExpanded: $isScheduleExpanded) {
-                            scheduleFields
-                        } label: {
-                            Label {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text("Schedule")
-                                    Text(scheduleSummary)
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                }
-                            } icon: {
-                                Image(systemName: "calendar")
-                            }
-                        }
-                        .disclosureGroupStyle(TaskEditorDisclosureStyle(
-                            identifier: "task-editor-schedule", beforeToggle: dismissKeyboard
-                        ))
-                    }
+                    captureFields(proxy: proxy)
 
                     Section {
                         DisclosureGroup(isExpanded: $isDetailsExpanded) {
@@ -383,7 +206,7 @@ struct TaskEditorView: View {
                                     Text("Details")
                                     Text(detailsSummary)
                                         .font(.subheadline)
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(OTodoTheme.secondaryText)
                                         .lineLimit(1)
                                 }
                             } icon: {
@@ -396,14 +219,39 @@ struct TaskEditorView: View {
                     }
 
 
-                    Section("Link") {
-                        TaskEditorLinkFields(url: $draft.url, onFocus: {
-                            requestsNameFocus = false
-                            notesFocused = false
-                        })
-                    }
+                    Section {
+                        DisclosureGroup(isExpanded: $isLinkExpanded) {
+                            TaskEditorLinkFields(url: $draft.url, onFocus: {
+                                requestsNameFocus = false
+                                notesFocused = false
+                            })
+                        } label: {
+                            Label {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Link")
+                                    if let host = draft.url.flatMap({ URL(string: $0)?.host }) {
+                                        Text(host)
+                                            .font(.subheadline)
+                                            .foregroundStyle(OTodoTheme.secondaryText)
+                                    }
+                                }
+                            } icon: {
+                                Image(systemName: "link")
+                            }
+                        }
+                        .disclosureGroupStyle(TaskEditorDisclosureStyle(
+                            identifier: "task-editor-link", beforeToggle: dismissKeyboard
+                        ))
 
-                    subtaskSection
+                        DisclosureGroup(isExpanded: $isSubtasksExpanded) {
+                            subtaskFields
+                        } label: {
+                            Label(subtaskSummary, systemImage: "checklist")
+                        }
+                        .disclosureGroupStyle(TaskEditorDisclosureStyle(
+                            identifier: "task-editor-subtasks", beforeToggle: dismissKeyboard
+                        ))
+                    }
 
                     if let attachmentModel, let attachmentSelection, AttachmentLinks.enabled(configuration: configuration) {
                         TaskAttachmentSection(
@@ -429,21 +277,11 @@ struct TaskEditorView: View {
                 }
                 .disabled(isSaving || attachmentModel?.isBusy == true)
                 .accessibilityIdentifier("task-editor")
+                .listSectionSpacing(OTodoTheme.Spacing.medium)
+                .contentMargins(.top, OTodoTheme.Spacing.small, for: .scrollContent)
                 .scrollContentBackground(.hidden)
                 .scrollDismissesKeyboard(.interactively)
                 .background(OTodoTheme.formCanvas.ignoresSafeArea())
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    if draft.preservedTask == nil && !dynamicTypeSize.isAccessibilitySize {
-                        VStack(spacing: 0) {
-                            Divider()
-                            saveAnotherButton
-                                .buttonStyle(.bordered)
-                                .padding(.horizontal, 20)
-                                .padding(.vertical, 8)
-                        }
-                        .background(OTodoTheme.formCanvas)
-                    }
-                }
                 .navigationTitle(draft.preservedTask == nil ? "New Todo" : "Edit Todo")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(OTodoTheme.formCanvas, for: .navigationBar)
@@ -466,6 +304,10 @@ struct TaskEditorView: View {
                     }
 
                     ToolbarItemGroup(placement: .keyboard) {
+                        if draft.preservedTask == nil && !dynamicTypeSize.isAccessibilitySize
+                            && !nameFocused && !notesFocused {
+                            saveAnotherButton
+                        }
                         Spacer()
                         Button("Done", action: dismissKeyboard)
                             .accessibilityIdentifier("task-editor-keyboard-done")
@@ -555,6 +397,260 @@ struct TaskEditorView: View {
         }
     }
 
+    private func captureFields(proxy: ScrollViewProxy) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: OTodoTheme.Spacing.small) {
+                if didSaveAndContinue {
+                    Label("Todo saved. Create another.", systemImage: "checkmark.circle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(OTodoTheme.accent)
+                        .accessibilityIdentifier("task-editor-saved-confirmation")
+                }
+
+                HighlightedTaskNameField(
+                    text: $draft.name,
+                    highlightRanges: nameHighlightRanges,
+                    accessibilityIdentifier: "task-editor-name",
+                    requestsFocus: $requestsNameFocus,
+                    selection: $nameSelection, isFocused: $nameFocused,
+                    isComposing: $nameComposing,
+                    saveAnotherAction: captureSaveAction,
+                    canSaveAnother: !isSaveDisabled
+                )
+                .frame(minHeight: 44)
+                .onChange(of: draft.name) { _, name in
+                    detectedDueDatePhrase = Self.detectDueDatePhrase(in: name)
+                    nameProjectMentions = TaskTextMentions(in: name, marker: "#")
+                    nameTagMentions = TaskTextMentions(in: name, marker: "@")
+                    nameHighlightRanges = (detectedDueDatePhrase?.utf16Ranges ?? [])
+                        + Self.mentionHighlightRanges(nameProjectMentions, choices: projectChoiceSet)
+                        + Self.mentionHighlightRanges(nameTagMentions, choices: tagChoiceSet)
+                    refreshDetectedMentions()
+                }
+                .onChange(of: nameFocused) { _, focused in
+                    if focused { notesFocused = false }
+                }
+                if nameFocused, !nameComposing {
+                    mentionSuggestions(
+                        nameProjectMentions.suggestions(at: nameSelection, choices: projectChoices),
+                        field: "name", kind: .project
+                    ) { suggestion in
+                        guard let result = suggestion.applying(to: draft.name) else { return }
+                        draft.name = result.text
+                        nameSelection = result.selection
+                        requestsNameFocus = true
+                    }
+                    mentionSuggestions(
+                        nameTagMentions.suggestions(at: nameSelection, choices: tagChoices),
+                        field: "name", kind: .tag
+                    ) { suggestion in
+                        guard let result = suggestion.applying(to: draft.name) else { return }
+                        draft.name = result.text
+                        nameSelection = result.selection
+                        requestsNameFocus = true
+                    }
+                }
+
+                captureContext
+
+                VStack(alignment: .leading, spacing: OTodoTheme.Spacing.inset) {
+                    scheduleFields
+                }
+                .buttonStyle(.borderless)
+                .padding(.vertical, isScheduleExpanded ? OTodoTheme.Spacing.small : 0)
+                .frame(height: isScheduleExpanded ? nil : 0, alignment: .top)
+                .clipped()
+                .opacity(isScheduleExpanded ? 1 : 0)
+                .disabled(!isScheduleExpanded)
+                .allowsHitTesting(isScheduleExpanded)
+                .accessibilityHidden(!isScheduleExpanded)
+
+                if let detectedDueDatePhrase {
+                    let explanation =
+                        "Due \(resolvedDueDate?.rawValue ?? detectedDueDatePhrase.dueDate.rawValue)\(resolvedDueTime.map { " at \($0.rawValue)" } ?? "") · “\(detectedDueDatePhrase.phrases.joined(separator: "” and “"))” will be removed when saved"
+                    Label(explanation, systemImage: "calendar.badge.checkmark")
+                        .font(.footnote)
+                        .foregroundStyle(OTodoTheme.accent)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(explanation)
+                        .accessibilityIdentifier("task-editor-detected-due-date")
+                }
+
+                ZStack(alignment: .topLeading) {
+                    if draft.body.isEmpty {
+                        Text("Add notes…")
+                            .foregroundStyle(OTodoTheme.secondaryText)
+                            .padding(.top, 8)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                    TaskTextEditor(
+                        text: $draft.body, selection: $notesSelection,
+                        isFocused: $notesFocused, isComposing: $notesComposing,
+                        style: .notes, expandsWithContent: true,
+                        saveAnotherAction: captureSaveAction,
+                        canSaveAnother: !isSaveDisabled
+                    )
+                        .frame(minHeight: 44)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .onChange(of: draft.body) { _, text in
+                            detectedNotesDueDatePhrase = Self.detectDueDatePhrase(in: text)
+                            let projectMentions = TaskTextMentions(in: text, marker: "#")
+                            let tagMentions = TaskTextMentions(in: text, marker: "@")
+                            notesProjectMentions = projectMentions
+                            notesTagMentions = tagMentions
+                            refreshDetectedMentions()
+                            let suggestionID: String?
+                            if !tagMentions.suggestions(at: notesSelection, choices: tagChoices).isEmpty {
+                                suggestionID = "task-editor-notes-tag-suggestions"
+                            } else if !projectMentions.suggestions(
+                                at: notesSelection, choices: projectChoices
+                            ).isEmpty {
+                                suggestionID = "task-editor-notes-project-suggestions"
+                            } else {
+                                suggestionID = nil
+                            }
+                            if let suggestionID {
+                                Task { @MainActor in
+                                    await Task.yield()
+                                    proxy.scrollTo(suggestionID, anchor: .bottom)
+                                }
+                            }
+                        }
+                        .onChange(of: notesFocused) { _, focused in
+                            if focused {
+                                requestsNameFocus = false
+                                nameFocused = false
+                            }
+                        }
+                }
+                .listRowSeparator(.hidden)
+                if detectedDueDatePhrase == nil, let detectedNotesDueDatePhrase {
+                    let explanation =
+                        "Due \(resolvedDueDate?.rawValue ?? detectedNotesDueDatePhrase.dueDate.rawValue)\(resolvedDueTime.map { " at \($0.rawValue)" } ?? "") · “\(detectedNotesDueDatePhrase.phrases.joined(separator: "” and “"))” in notes will be removed when saved"
+                    Label(explanation, systemImage: "calendar.badge.checkmark")
+                        .font(.footnote)
+                        .foregroundStyle(OTodoTheme.accent)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(explanation)
+                        .accessibilityIdentifier("task-editor-detected-notes-due-date")
+                }
+                if notesFocused, !notesComposing {
+                    mentionSuggestions(
+                        notesProjectMentions.suggestions(at: notesSelection, choices: projectChoices),
+                        field: "notes", kind: .project
+                    ) { suggestion in
+                        guard let result = suggestion.applying(to: draft.body) else { return }
+                        draft.body = result.text
+                        notesSelection = result.selection
+                    }
+                    .id("task-editor-notes-project-suggestions")
+                    mentionSuggestions(
+                        notesTagMentions.suggestions(at: notesSelection, choices: tagChoices),
+                        field: "notes", kind: .tag
+                    ) { suggestion in
+                        guard let result = suggestion.applying(to: draft.body) else { return }
+                        draft.body = result.text
+                        notesSelection = result.selection
+                    }
+                    .id("task-editor-notes-tag-suggestions")
+                }
+                if !detectedProjects.isEmpty {
+                    let explanation = "Projects from #mentions: \(detectedProjects.joined(separator: ", "))"
+                    Label(explanation, systemImage: "checkmark.circle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(OTodoTheme.accent)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(explanation)
+                        .accessibilityIdentifier("task-editor-detected-projects")
+                }
+                if !detectedTags.isEmpty {
+                    let explanation = "Tags from @mentions: \(detectedTags.joined(separator: ", "))"
+                    Label(explanation, systemImage: "checkmark.circle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(OTodoTheme.accent)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(explanation)
+                        .accessibilityIdentifier("task-editor-detected-tags")
+                }
+            }
+            .padding(.vertical, 4)
+            .listRowSeparator(.hidden)
+        }
+        .id("task-editor-top")
+    }
+
+    private var captureSaveAction: (() -> Void)? {
+        guard draft.preservedTask == nil, !dynamicTypeSize.isAccessibilitySize else { return nil }
+        return { save(createAnother: true) }
+    }
+
+    private var subtaskSummary: String {
+        let existing = draft.preservedTask.map {
+            (attachmentModel?.hierarchy ?? hierarchy).children(of: $0.id).count
+        } ?? 0
+        let count = existing + draft.subtaskNames.count
+        return count == 0 ? "Subtasks" : "Subtasks · \(count)"
+    }
+
+    private var captureContext: some View {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: OTodoTheme.Spacing.small))
+        return layout {
+            Button {
+                dismissKeyboard()
+                withAnimation(.easeInOut(duration: 0.2)) { isScheduleExpanded.toggle() }
+            } label: {
+                Label(scheduleSummary, systemImage: "calendar")
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+            }
+            .buttonStyle(OTodoChipStyle(isSelected: resolvedDueDate != nil))
+            .accessibilityLabel("Schedule, \(scheduleSummary)")
+            .accessibilityValue(isScheduleExpanded ? "Expanded" : "Collapsed")
+            .accessibilityIdentifier("task-editor-schedule")
+
+            Menu {
+                if projectChoices.isEmpty {
+                    Text("Create a project from the workspace sidebar")
+                }
+                ForEach(projectChoices, id: \.self) { project in
+                    Button {
+                        var selected = TaskEditorDraft.parseCommaSeparated(projectsText)
+                        if selected.contains(project) {
+                            selected.removeAll { $0 == project }
+                        } else {
+                            selected.append(project)
+                        }
+                        projectsText = selected.joined(separator: ", ")
+                    } label: {
+                        if projectsIncludingMentions.contains(project) {
+                            Label(project, systemImage: "checkmark")
+                        } else {
+                            Text(project)
+                        }
+                    }
+                    .disabled(detectedProjects.contains(project))
+                    .accessibilityIdentifier("task-editor-quick-project-\(project)")
+                }
+            } label: {
+                Label {
+                    Text(projectsIncludingMentions.first.map { first in
+                        projectsIncludingMentions.count > 1 ? "\(first) +\(projectsIncludingMentions.count - 1)" : first
+                    } ?? "Project")
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                } icon: {
+                    Image(systemName: projectsIncludingMentions.isEmpty ? "folder" : "checkmark.circle")
+                }
+            }
+            .buttonStyle(OTodoChipStyle(isSelected: !projectsIncludingMentions.isEmpty))
+            .accessibilityLabel("Projects")
+            .accessibilityValue(projectsIncludingMentions.isEmpty ? "None selected" : projectsIncludingMentions.joined(separator: ", "))
+            .accessibilityIdentifier("task-editor-projects")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func dismissKeyboard() {
         requestsNameFocus = false
         notesFocused = false
@@ -566,7 +662,14 @@ struct TaskEditorView: View {
     private var scheduleSummary: String {
         var parts: [String] = []
         if let date = resolvedDueDate {
-            parts.append(date.rawValue)
+            let calendarDate = TaskSchedule.date(from: date, time: nil)
+            if TaskSchedule.calendar.isDateInToday(calendarDate) {
+                parts.append("Today")
+            } else if TaskSchedule.calendar.isDateInTomorrow(calendarDate) {
+                parts.append("Tomorrow")
+            } else {
+                parts.append(calendarDate.formatted(.dateTime.month(.abbreviated).day().year()))
+            }
             if let time = resolvedDueTime { parts.append(time.rawValue) }
         } else {
             parts.append("No due date")
@@ -626,7 +729,7 @@ struct TaskEditorView: View {
             }
             Text(dueDateHelpText)
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(OTodoTheme.secondaryText)
             TaskRecurrenceFields(
                 recurrence: $draft.recurrence,
                 recurrenceFrom: $draft.recurrenceFrom,
@@ -716,7 +819,7 @@ struct TaskEditorView: View {
             if !detectedProjects.isEmpty {
                 Text("Mentioned projects are included automatically. Edit #mentions in the name or notes to change them; existing project assignments are kept.")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(OTodoTheme.secondaryText)
             }
             TextField("Tags", text: $tagsText)
                 .textInputAutocapitalization(.never)
@@ -744,16 +847,16 @@ struct TaskEditorView: View {
             if !detectedTags.isEmpty {
                 Text("Mentioned tags are included automatically. Edit @mentions in the name or notes to change them; existing tag assignments are kept.")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(OTodoTheme.secondaryText)
             }
             Text("Projects and tags are comma-separated. Use #project and @tag in the name or notes for automatic assignment.")
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(OTodoTheme.secondaryText)
         }
     }
 
-    private var subtaskSection: some View {
-        Section("Subtasks") {
+    private var subtaskFields: some View {
+        Group {
             if let taskID = draft.preservedTask?.id {
                 ForEach((attachmentModel?.hierarchy ?? hierarchy).children(of: taskID), id: \.id) { child in
                     if let model = attachmentModel {
@@ -776,7 +879,7 @@ struct TaskEditorView: View {
                             Text(child.name)
                             Text(workflowStates.first(where: { $0.id == child.state })?.name ?? child.state)
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(OTodoTheme.secondaryText)
                         }
                         .accessibilityElement(children: .combine)
                         .accessibilityIdentifier("task-editor-existing-subtask-\(child.id.rawValue)")
@@ -796,7 +899,7 @@ struct TaskEditorView: View {
                             Text(draft.subtaskNames[index])
                             Text("Not saved yet")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(OTodoTheme.secondaryText)
                         }
                         Spacer()
                         Button(role: .destructive) {
@@ -820,11 +923,11 @@ struct TaskEditorView: View {
                 .id(nameFocusRequest)
                 Text("Tap + to queue each child. Save creates the parent and queued subtasks together with the parent's projects, without inheriting tags, dates, or links. Completing the parent also completes its active subtasks.")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(OTodoTheme.secondaryText)
             } else {
                 Text("Subtasks require a schema 2 store. This schema 1 store is not upgraded automatically.")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(OTodoTheme.secondaryText)
                     .accessibilityIdentifier("task-editor-subtasks-unavailable")
             }
         }
@@ -889,10 +992,11 @@ struct TaskEditorView: View {
                         Button {
                             onSelect(suggestion)
                         } label: {
-                            Label("\(kind.marker)\(suggestion.value)", systemImage: kind.systemImage)
+                            Text("\(kind.marker)\(suggestion.value)")
+                                .font(.footnote)
+                                .fixedSize()
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        .buttonStyle(OTodoChipStyle())
                         .accessibilityLabel("\(kind.name): \(suggestion.value)")
                         .accessibilityIdentifier("task-editor-\(field)-\(kind.identifier)-suggestion-\(suggestion.value)")
                     }
@@ -907,9 +1011,9 @@ struct TaskEditorView: View {
         Button {
             save(createAnother: true)
         } label: {
-            Text("Save & Create Another")
+            Text("Save & Add Another")
                 .font(.subheadline.weight(.medium))
-                .frame(maxWidth: .infinity, minHeight: 44)
+                .frame(minHeight: 44)
         }
         .accessibilityIdentifier("task-editor-save-another")
         .disabled(isSaveDisabled)
@@ -942,8 +1046,7 @@ struct TaskEditorView: View {
         } label: {
             Label(project, systemImage: isSelected ? "checkmark.circle.fill" : "circle")
         }
-        .buttonStyle(.bordered)
-        .tint(isSelected ? OTodoTheme.accent : .secondary)
+        .buttonStyle(OTodoChipStyle(isSelected: isSelected))
         .accessibilityLabel("\(project) project")
         .accessibilityValue(isSelected ? "Selected" : "Not selected")
         .accessibilityHint(isDetected ? "Assigned by a #mention in the name or notes." : "")
@@ -1104,6 +1207,8 @@ struct TaskEditorView: View {
                 didSaveAndContinue = true
                 isScheduleExpanded = false
                 isDetailsExpanded = false
+                isLinkExpanded = false
+                isSubtasksExpanded = false
                 nameFocusRequest += 1
                 requestsNameFocus = true
             } else {
@@ -1305,9 +1410,10 @@ private struct TaskEditorDisclosureStyle: DisclosureGroupStyle {
                     Spacer(minLength: 12)
                     Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(OTodoTheme.secondaryText)
                         .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
                 }
+                .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -1318,7 +1424,7 @@ private struct TaskEditorDisclosureStyle: DisclosureGroupStyle {
                 configuration.content
             }
             .buttonStyle(.borderless)
-            .padding(.top, configuration.isExpanded ? 20 : 0)
+            .padding(.top, configuration.isExpanded ? OTodoTheme.Spacing.medium : 0)
             .frame(height: configuration.isExpanded ? nil : 0, alignment: .top)
             .clipped()
             .opacity(configuration.isExpanded ? 1 : 0)
@@ -1390,7 +1496,7 @@ private struct TaskRecurrenceFields: View {
                         .accessibilityLabel("Repeat interval")
                         .accessibilityIdentifier("task-editor-repeat-interval")
                     Text(intervalUnit(for: frequency))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(OTodoTheme.secondaryText)
                 }
 
                 if frequency == .weekly {
@@ -1463,7 +1569,7 @@ private struct TaskRecurrenceFields: View {
                 }
             }
             .font(.footnote)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(OTodoTheme.secondaryText)
         }
         .onChange(of: settings) { _, _ in publishRule() }
     }
@@ -1517,7 +1623,7 @@ private struct TaskRecurrenceFields: View {
         HStack {
             Text(title).foregroundStyle(.primary)
             Spacer()
-            Text(value).foregroundStyle(.secondary).multilineTextAlignment(.trailing)
+            Text(value).foregroundStyle(OTodoTheme.secondaryText).multilineTextAlignment(.trailing)
         }
         .accessibilityElement(children: .combine)
     }

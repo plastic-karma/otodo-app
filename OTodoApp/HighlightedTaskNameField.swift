@@ -9,6 +9,8 @@ struct HighlightedTaskNameField: UIViewRepresentable {
     @Binding var selection: NSRange
     @Binding var isFocused: Bool
     @Binding var isComposing: Bool
+    var saveAnotherAction: (() -> Void)? = nil
+    var canSaveAnother = false
 
     @MainActor
     func makeCoordinator() -> Coordinator {
@@ -19,7 +21,9 @@ struct HighlightedTaskNameField: UIViewRepresentable {
     func makeUIView(context: Context) -> NameTextField {
         let textField = NameTextField()
         textField.borderStyle = .none
-        textField.placeholder = "Todo name"
+        textField.attributedPlaceholder = NSAttributedString(
+            string: "Todo name", attributes: [.foregroundColor: UIColor(OTodoTheme.secondaryText)]
+        )
         textField.backgroundColor = .clear
         textField.textColor = .label
         textField.clearButtonMode = .whileEditing
@@ -40,6 +44,7 @@ struct HighlightedTaskNameField: UIViewRepresentable {
         textField.didFulfillFocusRequest = { [weak coordinator = context.coordinator] in
             coordinator?.parent.requestsFocus = false
         }
+        textField.inputAccessoryView = CaptureKeyboardToolbar(responder: textField)
         return textField
     }
 
@@ -49,6 +54,9 @@ struct HighlightedTaskNameField: UIViewRepresentable {
         context.coordinator.isUpdating = true
         defer { context.coordinator.isUpdating = false }
         textField.isEnabled = context.environment.isEnabled
+        (textField.inputAccessoryView as? CaptureKeyboardToolbar)?.update(
+            canSave: canSaveAnother && context.environment.isEnabled, onSave: saveAnotherAction
+        )
         textField.wantsFocus = requestsFocus
         if requestsFocus || !textField.highlightRanges.isEmpty {
             textField.setNeedsLayout()

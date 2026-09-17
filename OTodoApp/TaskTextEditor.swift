@@ -8,6 +8,9 @@ struct TaskTextEditor: UIViewRepresentable {
     @Binding var isFocused: Bool
     @Binding var isComposing: Bool
     let style: Style
+    var expandsWithContent = false
+    var saveAnotherAction: (() -> Void)? = nil
+    var canSaveAnother = false
 
     enum Style: Equatable {
         case filterQuery
@@ -41,19 +44,9 @@ struct TaskTextEditor: UIViewRepresentable {
             view.autocorrectionType = .default
             view.accessibilityIdentifier = "task-editor-notes"
             view.accessibilityLabel = "Todo notes"
-            let done = UIBarButtonItem(
-                barButtonSystemItem: .done, target: view,
-                action: #selector(UIResponder.resignFirstResponder)
-            )
-            done.accessibilityIdentifier = "task-editor-keyboard-done"
-            let toolbar = UIToolbar()
-            toolbar.items = [
-                UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil),
-                done,
-            ]
-            toolbar.tintColor = UIColor(OTodoTheme.accent)
-            toolbar.sizeToFit()
-            view.inputAccessoryView = toolbar
+            view.textContainer.lineFragmentPadding = 0
+            view.textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
+            view.inputAccessoryView = CaptureKeyboardToolbar(responder: view)
         }
         view.keyboardDismissMode = .interactive
         view.delegate = context.coordinator
@@ -66,6 +59,9 @@ struct TaskTextEditor: UIViewRepresentable {
         context.coordinator.isUpdating = true
         defer { context.coordinator.isUpdating = false }
         view.isEditable = context.environment.isEnabled
+        (view.inputAccessoryView as? CaptureKeyboardToolbar)?.update(
+            canSave: canSaveAnother && context.environment.isEnabled, onSave: saveAnotherAction
+        )
         let font = context.coordinator.font(for: view.traitCollection)
         // Never replace marked text or move the IME's composition selection.
         if view.markedTextRange == nil {
@@ -82,6 +78,14 @@ struct TaskTextEditor: UIViewRepresentable {
             view.selectedRange = selection
             view.scrollRangeToVisible(selection)
         }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        guard expandsWithContent, let width = proposal.width, width > 0 else { return nil }
+        let lineHeight = uiView.font?.lineHeight ?? 22
+        let measured = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        // Grow with the text; long notes retain their own scrolling inside the form.
+        return CGSize(width: width, height: min(max(44, measured.height), lineHeight * 8 + 16))
     }
 
     @MainActor
