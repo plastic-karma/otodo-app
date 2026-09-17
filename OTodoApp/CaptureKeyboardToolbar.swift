@@ -22,7 +22,7 @@ final class CaptureKeyboardToolbar: UIToolbar {
         update(canSave: false, onSave: nil)
     }
 
-    required init?(coder: NSCoder) { nil }
+    required init?(coder: NSCoder) { return nil }
 
     func update(canSave: Bool, onSave: (() -> Void)?) {
         self.onSave = onSave

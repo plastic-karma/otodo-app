@@ -19,7 +19,7 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         app.revealTaskEditorElement(url, panel: "link")
         url.tap()
         url.typeText("https://example.com/Reference?item=One#Notes")
-        queueChild("Discarded child", in: app)
+        queueChild("Discarded child", verifyCollapse: true, in: app)
         let remove = app.buttons["task-editor-remove-subtask-0"]
         app.revealTaskEditorElement(remove, panel: "subtasks")
         remove.tap()
@@ -260,13 +260,23 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
     }
 
     @MainActor
-    private func queueChild(_ title: String, in app: XCUIApplication) {
+    private func queueChild(_ title: String, verifyCollapse: Bool = false, in app: XCUIApplication) {
         let input = app.textFields["task-editor-subtask-name"]
         app.revealTaskEditorElement(input, panel: "subtasks")
         input.tap()
         input.typeText(title)
         XCTAssertFalse(app.buttons["task-editor-save"].isEnabled,
                        "Unqueued typing must be added or cleared before saving")
+        if verifyCollapse {
+            let disclosure = app.buttons["task-editor-subtasks"]
+            app.revealTaskEditorElement(disclosure)
+            disclosure.tap()
+            XCTAssertFalse(app.buttons["task-editor-save"].isEnabled,
+                           "Collapsing must not discard an unqueued subtask")
+            disclosure.tap()
+            app.revealTaskEditorElement(input)
+            XCTAssertEqual(input.value as? String, title)
+        }
         let add = app.buttons["task-editor-subtask-add"]
         app.revealTaskEditorElement(add, panel: "subtasks")
         add.tap()

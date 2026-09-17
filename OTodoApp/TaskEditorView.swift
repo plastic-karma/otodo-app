@@ -116,6 +116,7 @@ struct TaskEditorView: View {
     @State private var requestsNameFocus = false
     @State private var isParentPickerPresented = false
     @State private var hasPendingSubtask = false
+    @State private var pendingSubtaskName = ""
     @State private var notesFocused = false
     @State private var isScheduleExpanded = false
     @State private var isDetailsExpanded = false
@@ -243,14 +244,29 @@ struct TaskEditorView: View {
                             identifier: "task-editor-link", beforeToggle: dismissKeyboard
                         ))
 
-                        DisclosureGroup(isExpanded: $isSubtasksExpanded) {
-                            subtaskFields
+                    }
+
+                    Section {
+                        Button {
+                            dismissKeyboard()
+                            withAnimation(.easeInOut(duration: 0.2)) { isSubtasksExpanded.toggle() }
                         } label: {
-                            Label(subtaskSummary, systemImage: "checklist")
+                            HStack {
+                                Label(subtaskSummary, systemImage: "checklist")
+                                Spacer(minLength: 12)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(OTodoTheme.secondaryText)
+                                    .rotationEffect(.degrees(isSubtasksExpanded ? 90 : 0))
+                            }
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                         }
-                        .disclosureGroupStyle(TaskEditorDisclosureStyle(
-                            identifier: "task-editor-subtasks", beforeToggle: dismissKeyboard
-                        ))
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("task-editor-subtasks")
+                        .accessibilityValue(isSubtasksExpanded ? "Expanded" : "Collapsed")
+                        // Saved children remain separate Form rows so their native swipe actions work.
+                        if isSubtasksExpanded { subtaskFields }
                     }
 
                     if let attachmentModel, let attachmentSelection, AttachmentLinks.enabled(configuration: configuration) {
@@ -913,6 +929,7 @@ struct TaskEditorView: View {
                     }
                 }
                 TaskEditorSubtaskInput(
+                    name: $pendingSubtaskName,
                     onFocus: {
                         requestsNameFocus = false
                         notesFocused = false
@@ -1190,6 +1207,7 @@ struct TaskEditorView: View {
                 draft.body = ""
                 draft.url = nil
                 draft.subtaskNames = []
+                pendingSubtaskName = ""
                 hasPendingSubtask = false
                 draft.dueDate = defaultDueDate
                 draft.dueTime = nil
@@ -1346,12 +1364,12 @@ private struct TaskEditorLinkFields: View {
     }
 }
 
-/// Only Add and pending-state transitions reach the parent; typing never rebuilds date inputs.
+/// The parent retains unqueued text while the optional subtask section is collapsed.
 private struct TaskEditorSubtaskInput: View {
+    @Binding var name: String
     let onFocus: () -> Void
     let onPendingChange: (Bool) -> Void
     let onAdd: (String) -> Void
-    @State private var name = ""
     @FocusState private var isFocused: Bool
 
     var body: some View {

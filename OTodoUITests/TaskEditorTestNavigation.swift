@@ -10,7 +10,8 @@ extension XCUIApplication {
         line: UInt = #line
     ) {
         if let panel {
-            let disclosure = buttons["task-editor-\(panel)"]
+            let panels = buttons.matching(identifier: "task-editor-\(panel)")
+            let disclosure = panels.element(boundBy: max(0, panels.count - 1))
             revealTaskEditorElement(disclosure, file: file, line: line)
             if disclosure.value as? String != "Expanded" { disclosure.tap() }
         }
