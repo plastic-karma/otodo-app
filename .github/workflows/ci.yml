@@ -318,8 +318,9 @@ jobs:
     name: Apple Watch companion
     needs: preflight
     if: needs.preflight.outputs.mode != 'focused'
-    # Give the paired integration check 14 GB while keeping hosted iOS on Arm.
-    runs-on: macos-15-intel
+    # Use the native Arm runner, as in the hosted iOS suite. Cold Intel pairs
+    # stalled during startup and installation even with the larger RAM budget.
+    runs-on: macos-15
     timeout-minutes: 45
     env:
       PROJECT: OTodo.xcodeproj
@@ -346,7 +347,7 @@ jobs:
         run: |
           python3 .github/scripts/validate_bundles.py built --platform simulator \
             --app "$RUNNER_TEMP/WatchDerivedData/Build/Products/Debug-iphonesimulator/OTodo.app"
-      - name: Create, activate, and boot a fresh compatible simulator pair
+      - name: Create, activate, and boot the compatible simulator pair
         run: python3 .github/scripts/watch_smoke.py prepare --output "$RUNNER_TEMP/watch-smoke"
       - name: Verify real live delivery and offline Watch relaunch
         run: |

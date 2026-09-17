@@ -88,6 +88,21 @@ def create_device(state, runtime, family, name):
                stage=f"create-{family.replace(' ', '-').lower()}", capture=True)
 
 
+def select_phone(state, runtime):
+    # Reuse the image-provided phones, as in the hosted iOS suite and the last
+    # successful paired run, instead of adding another newly created device.
+    # Never take a running phone or one already assigned to another pair.
+    paired = {pair.get("phone", {}).get("udid", "").lower() for pair in state.get("pairs", {}).values()}
+    choices = [device for device in state.get("devices", {}).get(runtime["identifier"], [])
+               if device.get("isAvailable") and device.get("state") == "Shutdown"
+               and device.get("name", "").startswith("iPhone")
+               and device["udid"].lower() not in paired]
+    if choices:
+        phone = max(choices, key=lambda device: (device["name"].endswith("Pro"), device["name"]))
+        return phone["udid"], {"source": "runner-image", "name": phone["name"]}
+    return create_device(state, runtime, "iPhone", "OTodo companion smoke iPhone"), {"source": "created"}
+
+
 def prepare(output):
     run("sysctl", "hw.memsize", "hw.ncpu", stage="host-resources",
         log_path=output / "host-resources.log")
@@ -105,9 +120,9 @@ def prepare(output):
                            f"(minimum {'.'.join(map(str, minimum_phone_version))})")
     progress(output, "runtimes-selected", phone=phone_runtime["name"], watch=watch_runtime["name"],
              phoneVersion=phone_runtime["version"], watchVersion=watch_runtime["version"])
-    # Own both ends of the pair. A runner image's existing phone can retain
-    # pairing/unlock state even though simctl reports a successful boot.
-    phone = create_device(state, phone_runtime, "iPhone", "OTodo companion smoke iPhone")
+    phone, origin = select_phone(state, phone_runtime)
+    save_json(output / "device-origins.json", {"phone": origin, "watch": {"source": "created"}})
+    progress(output, "phone-selected", phone=phone, **origin)
     # Retain partial preparation evidence even if Watch creation/pairing fails.
     save_json(output / "devices.json", {"phone": phone})
     watch = create_device(state, watch_runtime, "Apple Watch", "OTodo companion smoke Watch")
@@ -416,7 +431,7 @@ def diagnostics(output):
 
 def cleanup(output):
     # Always run after evidence collection, including partial preparation. Only
-    # stop devices created by this attempt; never shut down all runner devices.
+    # stop this attempt's assigned devices; never shut down all runner devices.
     devices_path = output / "devices.json"
     if not devices_path.exists():
         save_json(output / "cleanup.json", {"complete": True, "devices": {}, "failures": []})

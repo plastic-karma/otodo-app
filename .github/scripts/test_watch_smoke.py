@@ -134,6 +134,35 @@ class WatchRuntimeTests(unittest.TestCase):
             watch_smoke.selected_runtime(self.state, "iOS", "18.6")
 
 
+class WatchPhoneSelectionTests(unittest.TestCase):
+    def setUp(self):
+        self.runtime = {"identifier": "iOS-18-6", "version": "18.6"}
+        self.state = {"devices": {"iOS-18-6": [
+            {"name": "iPhone 16 Pro", "udid": "PRO", "state": "Shutdown", "isAvailable": True},
+            {"name": "iPhone 16e", "udid": "E", "state": "Shutdown", "isAvailable": True},
+        ]}}
+
+    def test_selects_image_phone_on_the_requested_runtime_and_prefers_pro(self):
+        self.state["devices"]["iOS-26-2"] = [
+            {"name": "iPhone 17 Pro", "udid": "NEW", "state": "Shutdown", "isAvailable": True}]
+        with patch.object(watch_smoke, "create_device") as create:
+            phone, origin = watch_smoke.select_phone(self.state, self.runtime)
+        self.assertEqual(phone, "PRO")
+        self.assertEqual(origin["source"], "runner-image")
+        create.assert_not_called()
+
+    def test_does_not_take_a_running_unavailable_or_already_paired_phone(self):
+        self.state["devices"]["iOS-18-6"].append(
+            {"name": "iPhone 16 Pro Max", "udid": "UNAVAILABLE", "state": "Shutdown", "isAvailable": False})
+        self.state["devices"]["iOS-18-6"][0]["state"] = "Booted"
+        self.state["pairs"] = {"pair": {"phone": {"udid": "e"}}}
+        with patch.object(watch_smoke, "create_device", return_value="FRESH") as create:
+            phone, origin = watch_smoke.select_phone(self.state, self.runtime)
+        self.assertEqual(phone, "FRESH")
+        self.assertEqual(origin["source"], "created")
+        create.assert_called_once()
+
+
 class WatchCleanupTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
