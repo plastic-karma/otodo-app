@@ -318,12 +318,15 @@ jobs:
     name: Apple Watch companion
     needs: preflight
     if: needs.preflight.outputs.mode != 'focused'
-    # Two live simulator runtimes need the standard Intel runner's 14 GB RAM.
-    # The 7 GB Arm runner stalled in migration and WCSession transport.
+    # Give the paired integration check 14 GB while keeping hosted iOS on Arm.
     runs-on: macos-15-intel
     timeout-minutes: 45
     env:
       PROJECT: OTodo.xcodeproj
+      # Cold 26.2 pairs stalled in migration, install, and WCSession transport.
+      # Keep a fixed installed pair; compilation still uses the current SDK.
+      WATCH_SMOKE_IOS_VERSION: '18.6'
+      WATCH_SMOKE_WATCHOS_VERSION: '11.5'
     steps:
       - name: Checkout complete build history
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -352,6 +355,9 @@ jobs:
       - name: Collect bounded Watch diagnostics
         if: always()
         run: python3 .github/scripts/watch_smoke.py diagnostics --output "$RUNNER_TEMP/watch-smoke"
+      - name: Shut down this attempt's simulators after collecting evidence
+        if: always()
+        run: python3 .github/scripts/watch_smoke.py cleanup --output "$RUNNER_TEMP/watch-smoke"
       - name: Summarize Watch timing and issues
         if: always()
         run: python3 .github/scripts/ci_runtime.py summary --title 'Real Watch delivery and offline persistence'

@@ -49,13 +49,25 @@ def simulator_state():
     return json.loads(run("xcrun", "simctl", "list", "--json", stage="inventory", timeout=180, capture=True))
 
 
+def simulator_pairs():
+    # Refresh only pair metadata once the devices are running. Enumerating every
+    # installed runtime/type after a cold boot has stalled for several minutes.
+    return json.loads(run("xcrun", "simctl", "list", "pairs", "--json",
+                          stage="pair-inventory", timeout=60, capture=True))
+
+
 def version(value):
     return tuple(int(part) for part in value.split("."))
 
 
-def newest_runtime(state, platform):
+def selected_runtime(state, platform, requested=None):
     choices = [item for item in state["runtimes"]
                if item.get("isAvailable") and f".SimRuntime.{platform}-" in item["identifier"]]
+    if requested:
+        choices = [item for item in choices if version(item["version"]) == version(requested)]
+        if not choices:
+            raise RuntimeError(f"The requested {platform} {requested} runtime is not installed and available; "
+                               "no fallback or platform download is performed")
     return max(choices, key=lambda item: version(item["version"]), default=None)
 
 
@@ -81,10 +93,10 @@ def prepare(output):
         log_path=output / "host-resources.log")
     state = simulator_state()
     save_json(output / "runtime-inventory.json", state)
-    watch_runtime = newest_runtime(state, "watchOS")
+    watch_runtime = selected_runtime(state, "watchOS", os.environ.get("WATCH_SMOKE_WATCHOS_VERSION"))
     if watch_runtime is None:
         raise RuntimeError("A preinstalled available watchOS simulator runtime is required; no platform downloads are performed")
-    phone_runtime = newest_runtime(state, "iOS")
+    phone_runtime = selected_runtime(state, "iOS", os.environ.get("WATCH_SMOKE_IOS_VERSION"))
     watch_version = version(watch_runtime["version"])
     minimum_phone_version = (watch_version[0] if watch_version[0] >= 26 else watch_version[0] + 7,
                              *watch_version[1:])
@@ -114,7 +126,7 @@ def prepare(output):
 def verify_pair(output, *, activate=False):
     devices = json.loads((output / "devices.json").read_text())
     pair_id = json.loads((output / "pair.json").read_text())["id"]
-    state = simulator_state()
+    state = simulator_pairs()
     save_json(output / "paired-inventory.json", state)
     # UUID casing is not meaningful, including in simctl's dictionary keys.
     pairs = {identifier.lower(): pair for identifier, pair in state.get("pairs", {}).items()}
@@ -402,9 +414,44 @@ def diagnostics(output):
     return record_diagnostics(output, failures)
 
 
+def cleanup(output):
+    # Always run after evidence collection, including partial preparation. Only
+    # stop devices created by this attempt; never shut down all runner devices.
+    devices_path = output / "devices.json"
+    if not devices_path.exists():
+        save_json(output / "cleanup.json", {"complete": True, "devices": {}, "failures": []})
+        return True
+    owned = json.loads(devices_path.read_text())
+    failures = []
+    states = {}
+    try:
+        inventory = json.loads(run("xcrun", "simctl", "list", "devices", "--json",
+                                   stage="cleanup-inventory", timeout=60, capture=True))
+        states = {device["udid"].lower(): device["state"]
+                  for devices in inventory["devices"].values() for device in devices}
+    except (CommandError, OSError, ValueError, KeyError, RuntimeError) as error:
+        failures.append({"stage": "cleanup-inventory", "error": str(error)})
+    results = {}
+    for role, device in owned.items():
+        if states.get(device.lower()) == "Shutdown":
+            results[role] = "already-shutdown"
+            continue
+        try:
+            run("xcrun", "simctl", "shutdown", device, stage=f"cleanup-{role}", timeout=60)
+            results[role] = "shutdown"
+        except (CommandError, OSError, RuntimeError) as error:
+            failures.append({"stage": f"cleanup-{role}", "error": str(error)})
+            results[role] = "failed"
+    save_json(output / "cleanup.json", {"complete": not failures, "devices": results, "failures": failures})
+    for failure in failures:
+        annotate("warning", f"Watch simulator cleanup ({failure['stage']}): {failure['error']}")
+    progress(output, "cleanup-finished", devices=results, complete=not failures)
+    return not failures
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("prepare", "build", "verify", "diagnostics"))
+    parser.add_argument("mode", choices=("prepare", "build", "verify", "diagnostics", "cleanup"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--derived-data", type=Path)
     arguments = parser.parse_args()
@@ -418,8 +465,11 @@ def main():
             build(arguments.output, arguments.derived_data)
         elif arguments.mode == "verify":
             verify(arguments.output, arguments.derived_data)
-        else:
+        elif arguments.mode == "diagnostics":
             if not diagnostics(arguments.output):
+                return 1
+        else:
+            if not cleanup(arguments.output):
                 return 1
     except (CommandError, OSError, ValueError, KeyError, RuntimeError) as error:
         annotate("error", f"Watch {arguments.mode} failed: {error}")

@@ -75,14 +75,14 @@ class WatchPairTests(unittest.TestCase):
                      "state": "(active, disconnected)"}
 
     def verify(self, pair):
-        with patch.object(watch_smoke, "simulator_state", return_value={"pairs": {self.pair_id: pair}}):
+        with patch.object(watch_smoke, "simulator_pairs", return_value={"pairs": {self.pair_id: pair}}):
             watch_smoke.verify_pair(self.output)
 
     def test_active_pair_can_be_disconnected_before_boot(self):
         self.verify(self.pair)
 
     def test_already_active_pair_needs_no_activation_command(self):
-        with patch.object(watch_smoke, "simulator_state", return_value={"pairs": {self.pair_id: self.pair}}), \
+        with patch.object(watch_smoke, "simulator_pairs", return_value={"pairs": {self.pair_id: self.pair}}), \
                 patch.object(watch_smoke, "run") as command:
             watch_smoke.verify_pair(self.output, activate=True)
             command.assert_not_called()
@@ -92,7 +92,7 @@ class WatchPairTests(unittest.TestCase):
         active = {"pairs": {self.pair_id: self.pair}}
         for after, success in ((active, True), (inactive, False)):
             with self.subTest(success=success), \
-                    patch.object(watch_smoke, "simulator_state", side_effect=[inactive, after]), \
+                    patch.object(watch_smoke, "simulator_pairs", side_effect=[inactive, after]), \
                     patch.object(watch_smoke, "run", return_value="") as command:
                 if success:
                     watch_smoke.verify_pair(self.output, activate=True)
@@ -109,6 +109,62 @@ class WatchPairTests(unittest.TestCase):
                 self.verify({**self.pair, **change})
 
     def test_missing_pair_cannot_authorize_verification(self):
-        with patch.object(watch_smoke, "simulator_state", return_value={"pairs": {}}):
+        with patch.object(watch_smoke, "simulator_pairs", return_value={"pairs": {}}):
             with self.assertRaises(RuntimeError):
                 watch_smoke.verify_pair(self.output)
+
+
+class WatchRuntimeTests(unittest.TestCase):
+    def setUp(self):
+        self.state = {"runtimes": [
+            {"identifier": "com.apple.CoreSimulator.SimRuntime.iOS-18-6", "version": "18.6", "isAvailable": True},
+            {"identifier": "com.apple.CoreSimulator.SimRuntime.iOS-26-2", "version": "26.2", "isAvailable": True},
+            {"identifier": "com.apple.CoreSimulator.SimRuntime.watchOS-11-5", "version": "11.5", "isAvailable": True},
+        ]}
+
+    def test_pin_is_exact_even_when_a_newer_runtime_is_installed(self):
+        self.assertEqual(watch_smoke.selected_runtime(self.state, "iOS", "18.6")["version"], "18.6")
+        self.assertEqual(watch_smoke.selected_runtime(self.state, "iOS")["version"], "26.2")
+
+    def test_missing_or_unavailable_pin_cannot_silently_change_coverage(self):
+        with self.assertRaises(RuntimeError):
+            watch_smoke.selected_runtime(self.state, "watchOS", "26.2")
+        self.state["runtimes"][0]["isAvailable"] = False
+        with self.assertRaises(RuntimeError):
+            watch_smoke.selected_runtime(self.state, "iOS", "18.6")
+
+
+class WatchCleanupTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.output = Path(temporary.name)
+        watch_smoke.save_json(self.output / "devices.json", {"phone": "PHONE", "watch": "WATCH"})
+
+    def test_only_owned_running_devices_are_stopped(self):
+        inventory = {"devices": {"runtime": [
+            {"udid": "phone", "state": "Shutdown"},
+            {"udid": "watch", "state": "Booted"},
+            {"udid": "unrelated", "state": "Booted"},
+        ]}}
+        with patch.object(watch_smoke, "run", side_effect=[json.dumps(inventory), ""]) as command:
+            self.assertTrue(watch_smoke.cleanup(self.output))
+        shutdowns = [call.args for call in command.call_args_list if "shutdown" in call.args]
+        self.assertEqual(shutdowns, [("xcrun", "simctl", "shutdown", "WATCH")])
+        self.assertTrue(json.loads((self.output / "cleanup.json").read_text())["complete"])
+
+    def test_failed_phone_shutdown_still_attempts_watch_and_preserves_failure(self):
+        inventory = {"devices": {"runtime": [{"udid": role, "state": "Booted"} for role in ("PHONE", "WATCH")]}}
+        failure = watch_smoke.CommandError("watch-cleanup-phone", 124)
+        with patch.object(watch_smoke, "run", side_effect=[json.dumps(inventory), failure, ""]) as command:
+            self.assertFalse(watch_smoke.cleanup(self.output))
+        self.assertEqual(command.call_args_list[-1].args, ("xcrun", "simctl", "shutdown", "WATCH"))
+        result = json.loads((self.output / "cleanup.json").read_text())
+        self.assertEqual(result["devices"], {"phone": "failed", "watch": "shutdown"})
+        self.assertEqual(result["failures"][0]["stage"], "cleanup-phone")
+
+    def test_no_device_created_requires_no_simulator_commands(self):
+        (self.output / "devices.json").unlink()
+        with patch.object(watch_smoke, "run") as command:
+            self.assertTrue(watch_smoke.cleanup(self.output))
+        command.assert_not_called()
