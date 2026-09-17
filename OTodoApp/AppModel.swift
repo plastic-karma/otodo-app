@@ -98,6 +98,7 @@ final class AppModel {
             isUITesting && launchArguments.contains("-ui-testing-reset-workspace")
         if resetsUITestingWorkspace {
             UserDefaults.standard.removeObject(forKey: Self.sortOrderDefaultsKey)
+            DailyReviewPreferences.reset()
         }
         taskSortOrder = TaskSortOrder(
             rawValue: UserDefaults.standard.string(forKey: Self.sortOrderDefaultsKey) ?? ""

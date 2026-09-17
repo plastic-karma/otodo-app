@@ -29,6 +29,16 @@ struct TaskListView: View {
     @State private var isChangelogPresented = false
     @State private var isStatsPresented = false
     @State private var isReminderSettingsPresented = false
+    @State private var isDailyReviewSettingsPresented = false
+    @State private var dailyReviewPresentation: DailyReviewKind?
+    @State private var pendingDailyReviewKind: DailyReviewKind?
+    @State private var reviewClock = Date.now
+    @AppStorage(DailyReviewPreferences.kickstartEnabledKey) private var kickstartEnabled = false
+    @AppStorage(DailyReviewPreferences.wrapUpEnabledKey) private var wrapUpEnabled = false
+    @AppStorage(DailyReviewPreferences.kickstartTimeKey) private var kickstartMinutes = DailyReviewKind.kickstart.defaultMinutes
+    @AppStorage(DailyReviewPreferences.wrapUpTimeKey) private var wrapUpMinutes = DailyReviewKind.wrapUp.defaultMinutes
+    @AppStorage(DailyReviewPreferences.kickstartCompletedKey) private var kickstartCompleted = ""
+    @AppStorage(DailyReviewPreferences.wrapUpCompletedKey) private var wrapUpCompleted = ""
     @State private var isBulkEditorPresented = false
     @State private var bulkCreationDefaults: (projectSlugs: [String], tags: [String], dueDate: CivilDate?) = ([], [], nil)
     @State private var reschedulePresentation: ReschedulePresentation?
@@ -73,6 +83,23 @@ struct TaskListView: View {
                                 )
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(Color.clear)
+                        }
+
+                        if !isUpcoming, !isSearching, selectedProject == nil,
+                           selectedFilterID == "today", let kind = promptedDailyReview
+                        {
+                            Section {
+                                DailyReviewPromptCard(
+                                    kind: kind, taskCount: dailyReviewTaskCount
+                                ) {
+                                    dailyReviewPresentation = kind
+                                }
+                                .listRowInsets(
+                                    EdgeInsets(top: 0, leading: 20, bottom: 8, trailing: 20)
+                                )
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                            }
                         }
 
                         if isUpcoming && !isSearching {
@@ -212,7 +239,7 @@ struct TaskListView: View {
                                 .font(.body.weight(.semibold))
                         }
                         .accessibilityLabel("Projects")
-                        .accessibilityHint("Shows Upcoming, Inbox, project filters, Stats, and changelog")
+                        .accessibilityHint("Shows Upcoming, Inbox, projects, Daily rhythm, Stats, and changelog")
                         .accessibilityIdentifier("project-sidebar-toggle")
                     }
                     if isUpcoming && !isSearching {
@@ -380,6 +407,32 @@ struct TaskListView: View {
                 states: model.configuration?.states ?? []
             )
         }
+        .sheet(
+            isPresented: $isDailyReviewSettingsPresented,
+            onDismiss: dailyReviewSettingsDismissed
+        ) {
+            DailyReviewSettingsView { kind in
+                pendingDailyReviewKind = kind
+                isDailyReviewSettingsPresented = false
+            }
+            .presentationDetents([.large])
+        }
+        .sheet(item: $dailyReviewPresentation, onDismiss: presentPendingNotificationRequest) { kind in
+            if let configuration = model.configuration {
+                DailyReviewView(
+                    kind: kind, tasks: model.tasks, states: configuration.states
+                ) { task in
+                    await model.completeTask(task)
+                    return model.errorMessage
+                } onReschedule: { tasks, date, time in
+                    await model.rescheduleTasks(tasks, dueDate: date, dueTime: time)
+                    return model.errorMessage
+                } onFinish: {
+                    finishDailyReview(kind)
+                }
+                .presentationDetents([.large])
+            }
+        }
         .task(id: model.workspaceSelection.map(FileWorkspaceStore.selectionKey(for:))) {
             searchText = ""
             selectedFilterID = "today"
@@ -405,10 +458,12 @@ struct TaskListView: View {
                 .receive(on: RunLoop.main)
         ) { _ in
             dates = TaskDateContext()
+            reviewClock = .now
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 dates = TaskDateContext()
+                reviewClock = .now
                 presentPendingNotificationRequest()
             }
         }
@@ -623,6 +678,9 @@ struct TaskListView: View {
         isStatsPresented = false
         isBulkEditorPresented = false
         isReminderSettingsPresented = false
+        isDailyReviewSettingsPresented = false
+        dailyReviewPresentation = nil
+        pendingDailyReviewKind = nil
         reschedulePresentation = nil
         presentNewTodo()
     }
@@ -640,6 +698,8 @@ struct TaskListView: View {
               !isChangelogPresented,
               !isStatsPresented,
               !isReminderSettingsPresented,
+              !isDailyReviewSettingsPresented,
+              dailyReviewPresentation == nil,
               let taskID = notifications.consumePendingTaskRequest()
         else { return }
 
@@ -921,6 +981,10 @@ struct TaskListView: View {
 
             Divider()
                 .padding(.horizontal, 16)
+            dailyReviewControl
+
+            Divider()
+                .padding(.horizontal, 16)
 
             Button {
                 dismissProjectSidebar()
@@ -957,6 +1021,56 @@ struct TaskListView: View {
             .accessibilityIdentifier("sign-out")
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
+        }
+    }
+
+    private var dailyReviewControl: some View {
+        Button {
+            dismissProjectSidebar()
+            isDailyReviewSettingsPresented = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "sunrise.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(OTodoTheme.gold)
+                    .frame(width: 38, height: 38)
+                    .background(
+                        OTodoTheme.gold.opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 11)
+                    )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Daily rhythm")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(dailyReviewDetail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.bold())
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Daily rhythm")
+        .accessibilityValue(dailyReviewDetail)
+        .accessibilityHint("Configures morning Kickstart and evening Wrap-up")
+        .accessibilityIdentifier("daily-review-settings-open")
+    }
+
+    private var dailyReviewDetail: String {
+        switch (kickstartEnabled, wrapUpEnabled) {
+        case (true, true): "Kickstart and Wrap-up enabled"
+        case (true, false): "Kickstart enabled"
+        case (false, true): "Wrap-up enabled"
+        case (false, false): "Off"
         }
     }
 
@@ -1205,6 +1319,53 @@ struct TaskListView: View {
 
     private func dismissProjectSidebar() {
         isProjectSidebarPresented = false
+    }
+
+    private var dailyReviewTaskCount: Int {
+        guard let today = TaskSchedule.civilDate(from: reviewClock) else { return 0 }
+        let terminalStates = Set(
+            (model.configuration?.states ?? []).lazy.filter(\.isTerminal).map(\.id)
+        )
+        return model.tasks.lazy.filter { task in
+            !terminalStates.contains(task.state)
+                && task.dueDate.map { $0.rawValue <= today.rawValue } == true
+        }.count
+    }
+
+    private var promptedDailyReview: DailyReviewKind? {
+        DailyReviewPreferences.promptedKind(
+            at: reviewClock,
+            kickstartEnabled: kickstartEnabled,
+            wrapUpEnabled: wrapUpEnabled,
+            kickstartMinutes: kickstartMinutes,
+            wrapUpMinutes: wrapUpMinutes,
+            kickstartCompleted: kickstartCompleted,
+            wrapUpCompleted: wrapUpCompleted
+        )
+    }
+
+    private func dailyReviewSettingsDismissed() {
+        guard let kind = pendingDailyReviewKind else {
+            presentPendingNotificationRequest()
+            return
+        }
+        pendingDailyReviewKind = nil
+        Task { @MainActor in
+            await Task.yield()
+            dailyReviewPresentation = kind
+        }
+    }
+
+    private func finishDailyReview(_ kind: DailyReviewKind) {
+        let stamp = DailyReviewPreferences.dayStamp(for: .now)
+        switch kind {
+        case .kickstart:
+            kickstartCompleted = stamp
+        case .wrapUp:
+            wrapUpCompleted = stamp
+        }
+        reviewClock = .now
+        dailyReviewPresentation = nil
     }
 
     private var loadingRow: some View {
