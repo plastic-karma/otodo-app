@@ -12,51 +12,59 @@ struct SyncStatusView: View {
     }
 
     var body: some View {
-        Group {
-            if dynamicTypeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 8) {
-                    Button {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 4) {
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) {
                         isShowingDetails.toggle()
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: primarySymbol)
-                                .font(.system(size: 16))
-                            Text(compactText)
-                                .font(.caption.weight(.semibold))
-                                .fixedSize(horizontal: false, vertical: true)
-                            Spacer(minLength: 0)
-                            Image(systemName: isShowingDetails ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 12, weight: .semibold))
-                        }
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(primaryColor)
-                    .accessibilityLabel(primaryText)
-                    .accessibilityValue(detailText ?? "")
-                    .accessibilityHint(
-                        isShowingDetails
-                            ? "Hides workspace details"
-                            : model.isLocalOnly
-                                ? "Shows local workspace details and relationship repair actions"
-                                : "Shows sync details and workspace repair actions"
-                    )
-                    .accessibilityIdentifier("sync-details-toggle")
-
-                    if isShowingDetails {
-                        ScrollView {
-                            statusContent
-                        }
-                        .frame(maxHeight: 240)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: primarySymbol)
+                            .font(.system(size: 16))
+                        Text(compactText)
+                            .font(.caption.weight(.semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        Image(systemName: isShowingDetails ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
                     }
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-            } else {
-                statusContent
+                .buttonStyle(.plain)
+                .foregroundStyle(primaryColor)
+                .accessibilityLabel(primaryText)
+                .accessibilityValue(detailText ?? "")
+                .accessibilityHint(
+                    isShowingDetails
+                        ? "Hides workspace details"
+                        : model.isLocalOnly
+                            ? "Shows local workspace details and relationship repair actions"
+                            : "Shows sync details and workspace repair actions"
+                )
+                .accessibilityIdentifier("sync-details-toggle")
+
+                refreshButton
+            }
+
+            if isShowingDetails {
+                Divider()
+                    .padding(.horizontal, 4)
+
+                if dynamicTypeSize.isAccessibilitySize {
+                    ScrollView {
+                        statusDetails
+                    }
+                    .frame(maxHeight: 240)
+                } else {
+                    statusDetails
+                }
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
         .background(OTodoTheme.formCanvas, in: RoundedRectangle(cornerRadius: 16))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("sync-status")
@@ -68,70 +76,16 @@ struct SyncStatusView: View {
         }
     }
 
-    private var statusContent: some View {
-        let layout = dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
-            : AnyLayout(HStackLayout(spacing: 4))
-
-        return VStack(alignment: .leading, spacing: 4) {
-            layout {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Image(systemName: primarySymbol)
-                            .foregroundStyle(primaryColor)
-                            .accessibilityHidden(true)
-                        Text(primaryText)
-                            .foregroundStyle(requiresAttention ? .primary : .secondary)
-                    }
-                    .font(.caption.weight(.medium))
-
-                    if let detailText {
-                        Text(detailText)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                if !hasRelationshipIssues {
-                    if dynamicTypeSize.isAccessibilitySize {
-                        relationshipReviewButton
-                    } else {
-                        relationshipReviewButton
-                            .labelStyle(.iconOnly)
-                    }
-                }
-
-                if model.isBusy {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(width: 44, height: 44)
-                        .accessibilityLabel(model.isLocalOnly ? "Local save in progress" : "Sync in progress")
-                } else {
-                    Button {
-                        Task { @MainActor in
-                            await model.refresh()
-                        }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.body)
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(!model.isLocalOnly && !model.isOnline)
-                    .accessibilityLabel(
-                        model.isLocalOnly
-                            ? "Refresh local workspace"
-                            : model.isOnline ? "Sync now" : "Sync unavailable while offline"
-                    )
-                    .accessibilityIdentifier("sync-refresh")
-                }
+    private var statusDetails: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let detailText {
+                Text(detailText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
 
-            if hasRelationshipIssues {
-                relationshipReviewButton
-            }
+            relationshipReviewButton
+
             if !model.conflicts.isEmpty {
                 Button {
                     isReviewingConflicts = true
@@ -145,12 +99,44 @@ struct SyncStatusView: View {
                 .accessibilityHint("Shows each affected task and the available resolution choices")
                 .accessibilityIdentifier("sync-review-conflicts")
             }
+
             if !model.attachmentRefreshErrors.isEmpty {
                 Text("\(model.attachmentRefreshErrors.count) offline attachment updates failed. Older cached files remain available.")
                     .font(.caption2)
                     .foregroundStyle(.orange)
                     .accessibilityIdentifier("attachment-refresh-status")
             }
+        }
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var refreshButton: some View {
+        if model.isBusy {
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 44, height: 44)
+                .accessibilityLabel(model.isLocalOnly ? "Local save in progress" : "Sync in progress")
+        } else {
+            Button {
+                Task { @MainActor in
+                    await model.refresh()
+                }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 16, weight: .medium))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .disabled(!model.isLocalOnly && !model.isOnline)
+            .accessibilityLabel(
+                model.isLocalOnly
+                    ? "Refresh local workspace"
+                    : model.isOnline ? "Sync now" : "Sync unavailable while offline"
+            )
+            .accessibilityIdentifier("sync-refresh")
         }
     }
 
@@ -166,7 +152,7 @@ struct SyncStatusView: View {
             isReviewingRelationships = true
         } label: {
             Label(
-                hasRelationshipIssues ? "Review relationship issues" : "Relationships",
+                hasRelationshipIssues ? "Review hierarchy issues" : "Hierarchy",
                 systemImage: hasRelationshipIssues ? "exclamationmark.triangle" : "arrow.turn.down.right"
             )
             .font(.caption.weight(.medium))
@@ -268,7 +254,7 @@ struct SyncStatusView: View {
             return OTodoTheme.mint
         }
         if !model.isOnline {
-            return .secondary
+            return .primary
         }
         if model.pendingChangeCount > 0 {
             return OTodoTheme.accent

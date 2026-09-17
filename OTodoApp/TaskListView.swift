@@ -79,7 +79,7 @@ struct TaskListView: View {
                         Section {
                             workspaceHeader(taskCount: displayedTasks.count)
                                 .listRowInsets(
-                                    EdgeInsets(top: 12, leading: 20, bottom: 10, trailing: 20)
+                                    EdgeInsets(top: 8, leading: 20, bottom: 6, trailing: 20)
                                 )
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(Color.clear)
@@ -208,11 +208,11 @@ struct TaskListView: View {
                         await model.refresh()
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
-                        VStack(spacing: 12) {
+                        VStack(spacing: 10) {
                             if isSelecting {
                                 selectionActions
                             }
-                            HStack(alignment: .bottom, spacing: 16) {
+                            HStack(alignment: .bottom, spacing: 12) {
                                 SyncStatusView(model: model)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                 if !isSelecting {
@@ -220,13 +220,13 @@ struct TaskListView: View {
                                 }
                             }
                         }
-                        .padding(.horizontal, 20)
-                        .padding(.top, 12)
-                        .padding(.bottom, 18)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                        .padding(.bottom, 12)
                         .background(OTodoCanvas())
                     }
                 }
-                .navigationTitle(isSearching ? "Search" : isUpcoming ? "Upcoming" : selectedProject.map(projectDisplayName) ?? "Todos")
+                .navigationTitle(workspaceTitle)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(Color(uiColor: .systemBackground), for: .navigationBar)
                 .toolbarBackground(.visible, for: .navigationBar)
@@ -258,7 +258,7 @@ struct TaskListView: View {
                         }
                     }
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("Filters", systemImage: "line.3.horizontal.decrease") {
+                        Button("Filters", systemImage: "slider.horizontal.3") {
                             isFilterLibraryPresented = true
                         }
                         .labelStyle(.iconOnly)
@@ -526,13 +526,13 @@ struct TaskListView: View {
                                     selectedFilterID == filter.id ? .semibold : .regular
                                 ))
                                 .foregroundStyle(
-                                    selectedFilterID == filter.id ? Color.white : Color.secondary
+                                    selectedFilterID == filter.id ? OTodoTheme.accent : Color.primary
                                 )
                                 .padding(.horizontal, 14)
                                 .frame(minHeight: 44)
                                 .background(
                                     selectedFilterID == filter.id
-                                        ? OTodoTheme.filledAccent : Color.secondary.opacity(0.06),
+                                        ? OTodoTheme.accent.opacity(0.10) : Color(uiColor: .tertiarySystemFill),
                                     in: Capsule()
                                 )
                         }
@@ -598,28 +598,22 @@ struct TaskListView: View {
     }
 
     private func workspaceHeader(taskCount: Int) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text(workspaceTitle)
-                    .font(.largeTitle.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .accessibilityAddTraits(.isHeader)
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 12))
 
-                Text("\(taskCount)")
-                    .font(.subheadline.weight(.medium).monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Color.secondary.opacity(0.08), in: Capsule())
-                    .fixedSize()
-                    .accessibilityLabel("\(taskCount) \(taskCount == 1 ? "todo" : "todos")")
-            }
-
+        return layout {
             Text(workspaceSubtitle)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("\(taskCount) \(taskCount == 1 ? "todo" : "todos")")
+                .font(.caption.weight(.medium).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .fixedSize()
+                .accessibilityLabel("\(taskCount) \(taskCount == 1 ? "todo" : "todos")")
         }
-        .padding(.bottom, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("workspace-header")
@@ -647,11 +641,11 @@ struct TaskListView: View {
             .accessibilityIdentifier("project-add")
         } label: {
             Image(systemName: "plus")
-                .font(.title2.weight(.medium))
+                .font(.title3.weight(.semibold))
                 .foregroundStyle(.white)
-                .frame(width: 54, height: 54)
+                .frame(width: 50, height: 50)
                 .background(OTodoTheme.filledAccent, in: Circle())
-                .shadow(color: .black.opacity(0.12), radius: 5, y: 3)
+                .shadow(color: .black.opacity(0.10), radius: 3, y: 2)
         } primaryAction: {
             presentNewTodo()
         }
@@ -817,6 +811,11 @@ struct TaskListView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
+                    Text("Views")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 11)
+                        .accessibilityAddTraits(.isHeader)
                     agendaModeButtons
                     inboxButton
                     Button {
@@ -829,7 +828,7 @@ struct TaskListView: View {
                             .padding(.vertical, 13)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(OTodoTheme.accent)
+                    .foregroundStyle(.primary)
                     .accessibilityIdentifier("stats-open")
 
                     HStack {
@@ -1031,7 +1030,7 @@ struct TaskListView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.primary)
             .accessibilityIdentifier("changelog-open")
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
@@ -1051,7 +1050,7 @@ struct TaskListView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.primary)
             .disabled(model.isBusy)
             .accessibilityIdentifier("sign-out")
             .padding(.horizontal, 20)
@@ -1065,18 +1064,16 @@ struct TaskListView: View {
             isDailyReviewSettingsPresented = true
         } label: {
             HStack(spacing: 12) {
-                Image(systemName: "sunrise.fill")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(OTodoTheme.gold)
-                    .frame(width: 38, height: 38)
-                    .background(
-                        OTodoTheme.gold.opacity(0.12),
-                        in: RoundedRectangle(cornerRadius: 11)
+                Image(systemName: "sunrise")
+                    .font(.body)
+                    .foregroundStyle(
+                        kickstartEnabled || wrapUpEnabled ? OTodoTheme.accent : Color.secondary
                     )
+                    .frame(width: sidebarIconWidth)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Daily rhythm")
-                        .font(.subheadline.weight(.semibold))
+                        .font(.subheadline)
                         .foregroundStyle(.primary)
                     Text(dailyReviewDetail)
                         .font(.caption)
@@ -1089,7 +1086,7 @@ struct TaskListView: View {
                     .font(.caption.bold())
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 25)
             .padding(.vertical, 12)
             .contentShape(Rectangle())
         }
@@ -1116,17 +1113,13 @@ struct TaskListView: View {
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: notificationIcon)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.body)
                     .foregroundStyle(notificationColor)
-                    .frame(width: 38, height: 38)
-                    .background(
-                        notificationColor.opacity(0.12),
-                        in: RoundedRectangle(cornerRadius: 11)
-                    )
+                    .frame(width: sidebarIconWidth)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Due reminders")
-                        .font(.subheadline.weight(.semibold))
+                        .font(.subheadline)
                         .foregroundStyle(.primary)
                     Text(notificationDetail)
                         .font(.caption)
@@ -1150,7 +1143,7 @@ struct TaskListView: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 25)
             .padding(.vertical, 12)
             .contentShape(Rectangle())
         }
@@ -1197,7 +1190,7 @@ struct TaskListView: View {
         case .denied:
             return OTodoTheme.coral
         case .checking, .notRequested, .disabled:
-            return OTodoTheme.accent
+            return .secondary
         }
     }
 
@@ -1227,7 +1220,7 @@ struct TaskListView: View {
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "tray")
-                    .foregroundStyle(OTodoTheme.accent)
+                    .foregroundStyle(isSelected ? OTodoTheme.accent : Color.secondary)
                     .frame(width: sidebarIconWidth)
                 Text("Inbox")
                     .font(.body.weight(isSelected ? .semibold : .regular))
@@ -1237,13 +1230,11 @@ struct TaskListView: View {
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Color.secondary.opacity(0.08), in: Capsule())
                     .accessibilityIdentifier("inbox-open-count")
-                Image(systemName: "checkmark")
-                    .foregroundStyle(OTodoTheme.accent)
-                    .opacity(isSelected ? 1 : 0)
+                if !dynamicTypeSize.isAccessibilitySize {
+                    Spacer()
+                        .frame(width: 32)
+                }
             }
             .padding(.horizontal, 11)
             .frame(minHeight: 48)
@@ -1261,9 +1252,9 @@ struct TaskListView: View {
 
     private func projectFilterButton(_ project: String?) -> some View {
         let isSelected = selectedProject == project && selectedFilterID != "inbox"
-        let title = project.map(projectDisplayName) ?? (isUpcoming ? "All projects" : "All Todos")
+        let title = project.map(projectDisplayName) ?? "Entire workspace"
         let count = taskCount(for: project)
-        let color = projectColor(project)
+        let color = isSelected ? OTodoTheme.accent : Color.secondary
         let layout = dynamicTypeSize.isAccessibilitySize
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
             : AnyLayout(HStackLayout(spacing: 12))
@@ -1274,7 +1265,7 @@ struct TaskListView: View {
         } label: {
             layout {
                 HStack(spacing: 12) {
-                    Image(systemName: project == nil ? "checklist"
+                    Image(systemName: project == nil ? "square.grid.2x2"
                           : project.flatMap { model.projectDetails[$0] }?.isArchived == true ? "archivebox" : "folder")
                         .font(.body)
                         .foregroundStyle(color)
@@ -1290,19 +1281,16 @@ struct TaskListView: View {
                         .font(.caption)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color.secondary.opacity(0.08), in: Capsule())
                         .accessibilityIdentifier(project.map { "project-open-count-\($0)" } ?? "project-open-count")
                     if dynamicTypeSize.isAccessibilitySize {
                         Text("open")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    Image(systemName: "checkmark")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(OTodoTheme.accent)
-                        .opacity(isSelected ? 1 : 0)
+                    if project == nil, !dynamicTypeSize.isAccessibilitySize {
+                        Spacer()
+                            .frame(width: 36)
+                    }
                 }
                 .fixedSize()
             }
@@ -1321,20 +1309,6 @@ struct TaskListView: View {
         .accessibilityIdentifier(project.map { "project-filter-\($0)" } ?? "project-filter-all")
     }
 
-    private func projectColor(_ project: String?) -> Color {
-        guard let project else { return OTodoTheme.accent }
-        let paletteIndex = project.utf8.reduce(0) { ($0 + Int($1)) % 4 }
-        switch paletteIndex {
-        case 0:
-            return OTodoTheme.violet
-        case 1:
-            return OTodoTheme.coral
-        case 2:
-            return OTodoTheme.gold
-        default:
-            return OTodoTheme.mint
-        }
-    }
 
     private func taskCount(for project: String?, inboxOnly: Bool = false) -> Int {
         model.tasks.lazy.filter { task in
@@ -1655,7 +1629,7 @@ struct TaskListView: View {
             } label: {
                 HStack(spacing: 12) {
                     Image(systemName: "checklist")
-                        .foregroundStyle(OTodoTheme.accent)
+                        .foregroundStyle(isUpcoming ? Color.secondary : OTodoTheme.accent)
                         .frame(width: sidebarIconWidth)
                     Text("Todos")
                         .font(.body.weight(isUpcoming ? .regular : .semibold))
@@ -1666,10 +1640,6 @@ struct TaskListView: View {
                 .padding(.vertical, 12)
                 .frame(minHeight: 48)
                 .contentShape(Rectangle())
-                .background(
-                    isUpcoming ? Color.clear : OTodoTheme.accent.opacity(0.08),
-                    in: RoundedRectangle(cornerRadius: 10)
-                )
             }
             .tint(isUpcoming ? .secondary : OTodoTheme.accent)
             .accessibilityIdentifier("tasks-open")
@@ -1685,7 +1655,7 @@ struct TaskListView: View {
             } label: {
                 HStack(spacing: 12) {
                     Image(systemName: "calendar")
-                        .foregroundStyle(OTodoTheme.accent)
+                        .foregroundStyle(isUpcoming ? OTodoTheme.accent : Color.secondary)
                         .frame(width: sidebarIconWidth)
                     Text("Upcoming")
                         .font(.body.weight(isUpcoming ? .semibold : .regular))
@@ -1696,10 +1666,6 @@ struct TaskListView: View {
                 .padding(.vertical, 12)
                 .frame(minHeight: 48)
                 .contentShape(Rectangle())
-                .background(
-                    isUpcoming ? OTodoTheme.accent.opacity(0.08) : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 10)
-                )
             }
             .tint(isUpcoming ? OTodoTheme.accent : .secondary)
             .accessibilityIdentifier("upcoming-open")

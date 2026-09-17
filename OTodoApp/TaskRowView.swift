@@ -86,7 +86,7 @@ struct TaskRowView: View {
                         .lineLimit(1)
                     }
                 }
-                .padding(.vertical, 14)
+                .padding(.vertical, 11)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }

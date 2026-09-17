@@ -104,7 +104,7 @@ struct TaskEditorView: View {
     @State private var nameFocused = false
     @State private var nameComposing = false
     @State private var notesComposing = false
-    @ScaledMetric(relativeTo: .body) private var notesHeight = 120
+    @ScaledMetric(relativeTo: .body) private var notesHeight = 96
     @State private var recurrenceError: String?
     @State private var recurrenceRule: RecurrenceRule?
     @State private var initialRecurrenceSettings: TaskRecurrenceFields.Settings
@@ -395,7 +395,6 @@ struct TaskEditorView: View {
                         ))
                     }
 
-                    workflowSetupSection
 
                     Section("Link") {
                         TaskEditorLinkFields(url: $draft.url, onFocus: {
@@ -640,27 +639,25 @@ struct TaskEditorView: View {
     }
 
     @ViewBuilder
-    private var workflowSetupSection: some View {
+    private var workflowSetupFields: some View {
         if attachmentModel != nil, !workflowStates.contains(where: \.isInProgress) {
-            Section("Workspace workflow") {
-                Button {
-                    dismissKeyboard()
-                    workflowError = nil
-                    isAddingInProgressState = true
-                } label: {
-                    Text("Add In Progress state…")
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                        .contentShape(Rectangle())
-                }
-                .accessibilityIdentifier("task-editor-enable-in-progress")
-                .buttonStyle(.borderless)
-                .foregroundStyle(OTodoTheme.accent)
-                if let workflowError {
-                    Text(workflowError)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .accessibilityIdentifier("task-editor-workflow-error")
-                }
+            Button {
+                dismissKeyboard()
+                workflowError = nil
+                isAddingInProgressState = true
+            } label: {
+                Label("Add In Progress state…", systemImage: "play.circle")
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityIdentifier("task-editor-enable-in-progress")
+            .buttonStyle(.borderless)
+            .foregroundStyle(OTodoTheme.accent)
+            if let workflowError {
+                Text(workflowError)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("task-editor-workflow-error")
             }
         }
     }
@@ -673,6 +670,8 @@ struct TaskEditorView: View {
                 }
             }
             .accessibilityIdentifier("task-editor-state")
+
+            workflowSetupFields
 
             Button {
                 requestsNameFocus = false
@@ -1196,7 +1195,7 @@ private struct TaskEditorLinkFields: View {
 
     var body: some View {
         HStack {
-            TextField("https://example.com", text: Binding(
+            TextField("Add link…", text: Binding(
                 get: { url ?? "" },
                 set: { url = $0.isEmpty ? nil : $0 }
             ))
