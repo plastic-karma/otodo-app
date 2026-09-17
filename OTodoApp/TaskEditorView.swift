@@ -738,7 +738,7 @@ struct TaskEditorView: View {
                     onAdd: { draft.subtaskNames.append($0) }
                 )
                 .id(nameFocusRequest)
-                Text("Tap Add to queue each child. Save creates the parent and queued subtasks together with the parent's projects, without inheriting tags, dates, or links. Completing the parent also completes its active subtasks.")
+                Text("Tap + to queue each child. Save creates the parent and queued subtasks together with the parent's projects, without inheriting tags, dates, or links. Completing the parent also completes its active subtasks.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
@@ -1140,7 +1140,7 @@ private struct TaskEditorSubtaskInput: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 12) {
             TextField("New subtask name", text: $name)
                 .accessibilityLabel("New subtask name")
                 .accessibilityIdentifier("task-editor-subtask-name")
@@ -1153,19 +1153,13 @@ private struct TaskEditorSubtaskInput: View {
                 .onChange(of: !name.isEmpty) { _, pending in
                     onPendingChange(pending)
                 }
-            HStack {
-                Button("Add Subtask", systemImage: "plus", action: add)
-                    .buttonStyle(.borderless)
-                    .accessibilityIdentifier("task-editor-subtask-add")
-                    .disabled(!canAdd)
-                if !name.isEmpty {
-                    Spacer()
-                    Button("Clear") { name = "" }
-                        .buttonStyle(.borderless)
-                        .accessibilityLabel("Clear new subtask name")
-                        .accessibilityIdentifier("task-editor-subtask-clear")
-                }
+            Button(action: add) {
+                Label("Add subtask", systemImage: "plus")
+                    .labelStyle(.iconOnly)
             }
+            .buttonStyle(.borderless)
+            .accessibilityIdentifier("task-editor-subtask-add")
+            .disabled(!canAdd)
         }
     }
 
