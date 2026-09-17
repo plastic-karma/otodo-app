@@ -96,8 +96,7 @@ def prepare(output):
     save_json(output / "devices.json", {"phone": phone, "watch": watch})
     pair = str(UUID(run("xcrun", "simctl", "pair", watch, phone, stage="pair", capture=True)))
     save_json(output / "pair.json", {"id": pair})
-    run("xcrun", "simctl", "pair_activate", pair, stage="activate-pair")
-    verify_pair(output)
+    verify_pair(output, activate=True)
     if os.environ.get("GITHUB_ENV"):
         with open(os.environ["GITHUB_ENV"], "a") as environment:
             environment.write(f"WATCH_PHONE_SIMULATOR_ID={phone}\nWATCH_SIMULATOR_ID={watch}\n")
@@ -106,7 +105,7 @@ def prepare(output):
     verify_pair(output)
 
 
-def verify_pair(output):
+def verify_pair(output, *, activate=False):
     devices = json.loads((output / "devices.json").read_text())
     pair_id = json.loads((output / "pair.json").read_text())["id"]
     state = simulator_state()
@@ -119,6 +118,11 @@ def verify_pair(output):
         raise RuntimeError(f"Simulator pair {pair_id} does not contain the requested phone and Watch")
     statuses = {item.strip() for item in pair.get("state", "").strip("()").split(",")}
     if "active" not in statuses:
+        if activate:
+            # simctl pair normally activates a phone's first pair itself.
+            # pair_activate rejects that already-active state with errno 37.
+            run("xcrun", "simctl", "pair_activate", pair_id, stage="activate-pair")
+            return verify_pair(output)
         raise RuntimeError(f"Simulator pair {pair_id} is not active: {pair.get('state')}")
     progress(output, "pair-verified", pair=pair_id, state=pair["state"])
 

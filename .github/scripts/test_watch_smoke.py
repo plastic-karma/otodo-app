@@ -54,6 +54,27 @@ class WatchPairTests(unittest.TestCase):
     def test_active_pair_can_be_disconnected_before_boot(self):
         self.verify(self.pair)
 
+    def test_already_active_pair_needs_no_activation_command(self):
+        with patch.object(watch_smoke, "simulator_state", return_value={"pairs": {self.pair_id: self.pair}}), \
+                patch.object(watch_smoke, "run") as command:
+            watch_smoke.verify_pair(self.output, activate=True)
+            command.assert_not_called()
+
+    def test_activation_requires_observed_active_state_after_the_command(self):
+        inactive = {"pairs": {self.pair_id: {**self.pair, "state": "(inactive, disconnected)"}}}
+        active = {"pairs": {self.pair_id: self.pair}}
+        for after, success in ((active, True), (inactive, False)):
+            with self.subTest(success=success), \
+                    patch.object(watch_smoke, "simulator_state", side_effect=[inactive, after]), \
+                    patch.object(watch_smoke, "run", return_value="") as command:
+                if success:
+                    watch_smoke.verify_pair(self.output, activate=True)
+                else:
+                    with self.assertRaises(RuntimeError):
+                        watch_smoke.verify_pair(self.output, activate=True)
+                command.assert_called_once_with("xcrun", "simctl", "pair_activate", self.pair_id.lower(),
+                                                stage="activate-pair")
+
     def test_inactive_or_other_devices_cannot_authorize_verification(self):
         for change in ({"state": "(inactive, disconnected)"}, {"watch": {"udid": "stale-watch"}},
                        {"phone": {"udid": "runner-image-phone"}}):
