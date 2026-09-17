@@ -134,6 +134,95 @@ final class DueDatePhraseDetectorTests: XCTestCase {
         }
     }
 
+    func testDetectsCalendarDatesWithOptionalOrdinalsAndYears() throws {
+        let cases = [
+            ("File taxes Oct 1", "2026-10-01", "File taxes", "Oct 1"),
+            ("Plan travel May 5", "2027-05-05", "Plan travel", "May 5"),
+            (
+                "Renew passport June 12th 2027", "2027-06-12",
+                "Renew passport", "June 12th 2027"
+            ),
+            (
+                "Celebrate December 31st, 2026!", "2026-12-31",
+                "Celebrate", "December 31st, 2026"
+            ),
+            ("Schedule leap review Feb 29", "2028-02-29", "Schedule leap review", "Feb 29"),
+        ]
+
+        for (input, dueDate, strippedText, phrase) in cases {
+            let detection = try XCTUnwrap(
+                DueDatePhraseDetector.detect(
+                    in: input,
+                    from: referenceDate,
+                    calendar: calendar
+                ),
+                input
+            )
+            XCTAssertEqual(detection.dueDate.rawValue, dueDate, input)
+            XCTAssertEqual(detection.nameWithoutPhrase, strippedText, input)
+            XCTAssertEqual(detection.phrases, [phrase], input)
+            XCTAssertEqual(
+                detection.utf16Ranges.map { (input as NSString).substring(with: $0) },
+                [phrase],
+                input
+            )
+        }
+    }
+
+    func testLastCalendarDateWinsAndInvalidDatesRemainText() throws {
+        let input = "Compare May 5 with June 12th 2027"
+        let detection = try XCTUnwrap(
+            DueDatePhraseDetector.detect(
+                in: input,
+                from: referenceDate,
+                calendar: calendar
+            )
+        )
+        XCTAssertEqual(detection.dueDate.rawValue, "2027-06-12")
+        XCTAssertEqual(detection.nameWithoutPhrase, "Compare May 5 with")
+        XCTAssertEqual(detection.phrases, ["June 12th 2027"])
+
+        for invalid in [
+            "Discuss February 30",
+            "Review June 12nd 2027",
+            "Summarize May results",
+            "Revisit Oct 0",
+        ] {
+            XCTAssertNil(
+                try DueDatePhraseDetector.detect(
+                    in: invalid,
+                    from: referenceDate,
+                    calendar: calendar
+                ),
+                invalid
+            )
+        }
+    }
+
+    func testRemovingCalendarDateFromNotesPreservesMarkdownLayout() throws {
+        let notes = """
+        Agenda:
+        - June 12th 2027 Venue
+        - Send invites
+        """
+        let detection = try XCTUnwrap(
+            DueDatePhraseDetector.detect(
+                in: notes,
+                from: referenceDate,
+                calendar: calendar
+            )
+        )
+
+        XCTAssertEqual(
+            detection.textWithoutPhrasePreservingLayout,
+            """
+            Agenda:
+            - Venue
+            - Send invites
+            """
+        )
+    }
+
     func testRejectsUnsupportedOrEmbeddedPhrases() throws {
         for input in [
             "Visit Tomorrowland",

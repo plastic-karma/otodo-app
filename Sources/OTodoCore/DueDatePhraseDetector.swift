@@ -7,6 +7,7 @@ public struct DetectedDueDatePhrase: Sendable, Equatable {
     public let hasExplicitDate: Bool
     public let utf16Ranges: [NSRange]
     public let nameWithoutPhrase: String
+    public let textWithoutPhrasePreservingLayout: String
 
     /// A clock alone supplies today's date only when the editor has no selected date.
     public func resolvedDueDate(selectedDate: CivilDate?) -> CivilDate {
@@ -33,6 +34,38 @@ public enum DueDatePhraseDetector {
                 dateCandidate = DateCandidate(range: words[index].range, meaning: .days(0))
             } else if word == "tomorrow" {
                 dateCandidate = DateCandidate(range: words[index].range, meaning: .days(1))
+            } else if let month = monthNumber(for: word),
+                      words.indices.contains(index + 1) {
+                let dayWord = words[index + 1]
+                guard isWhitespace(
+                    value[words[index].range.upperBound ..< dayWord.range.lowerBound]
+                ),
+                !addressRanges.contains(where: { $0.overlaps(dayWord.range) }),
+                let day = calendarDayNumber(dayWord.normalized)
+                else { continue }
+                var year: Int?
+                var upperBound = dayWord.range.upperBound
+                if words.indices.contains(index + 2) {
+                    let yearWord = words[index + 2]
+                    let separator = value[dayWord.range.upperBound ..< yearWord.range.lowerBound]
+                    if isCalendarDateSeparator(separator),
+                       !addressRanges.contains(where: { $0.overlaps(yearWord.range) }),
+                       yearWord.normalized.utf8.count == 4,
+                       let parsedYear = positiveInteger(yearWord.normalized)
+                    {
+                        year = parsedYear
+                        upperBound = yearWord.range.upperBound
+                    }
+                }
+                if let date = calendarDate(
+                    month: month, day: day, year: year,
+                    from: referenceDate, calendar: calendar
+                ) {
+                    dateCandidate = DateCandidate(
+                        range: words[index].range.lowerBound ..< upperBound,
+                        meaning: .resolved(date)
+                    )
+                }
             } else if let weekday = weekdayNumber(for: word) {
                 dateCandidate = DateCandidate(range: words[index].range, meaning: .weekday(weekday))
             } else if word == "next", words.indices.contains(index + 1),
@@ -109,7 +142,10 @@ public enum DueDatePhraseDetector {
             dueTime: timeCandidate?.time,
             hasExplicitDate: dateCandidate != nil,
             utf16Ranges: ranges.map { NSRange($0, in: value) },
-            nameWithoutPhrase: removingPhrases(from: value, ranges: ranges)
+            nameWithoutPhrase: removingPhrases(from: value, ranges: ranges),
+            textWithoutPhrasePreservingLayout: removingPhrasesPreservingLayout(
+                from: value, ranges: ranges
+            )
         )
     }
 
@@ -224,6 +260,87 @@ public enum DueDatePhraseDetector {
         return amount
     }
 
+    private static func calendarDayNumber(_ value: String) -> Int? {
+        let digitCount = value.utf8.prefix(while: { (48 ... 57).contains($0) }).count
+        guard digitCount > 0,
+              let day = Int(value.prefix(digitCount)),
+              (1 ... 31).contains(day)
+        else { return nil }
+        let suffix = String(value.dropFirst(digitCount))
+        guard suffix.isEmpty || suffix == ordinalSuffix(for: day) else { return nil }
+        return day
+    }
+
+    private static func ordinalSuffix(for day: Int) -> String {
+        if (11 ... 13).contains(day % 100) { return "th" }
+        switch day % 10 {
+        case 1: return "st"
+        case 2: return "nd"
+        case 3: return "rd"
+        default: return "th"
+        }
+    }
+
+    private static func monthNumber(for value: String) -> Int? {
+        switch value {
+        case "january", "jan": 1
+        case "february", "feb": 2
+        case "march", "mar": 3
+        case "april", "apr": 4
+        case "may": 5
+        case "june", "jun": 6
+        case "july", "jul": 7
+        case "august", "aug": 8
+        case "september", "sep", "sept": 9
+        case "october", "oct": 10
+        case "november", "nov": 11
+        case "december", "dec": 12
+        default: nil
+        }
+    }
+
+    private static func isCalendarDateSeparator(_ value: Substring) -> Bool {
+        value.contains(where: \.isWhitespace)
+            && value.allSatisfy { $0.isWhitespace || $0 == "," }
+    }
+
+    private static func calendarDate(
+        month: Int,
+        day: Int,
+        year: Int?,
+        from referenceDate: Date,
+        calendar: Calendar
+    ) -> CivilDate? {
+        let referenceStart = calendar.startOfDay(for: referenceDate)
+        let referenceYear = calendar.component(.year, from: referenceStart)
+        let years: ClosedRange<Int>
+        if let year {
+            guard (1 ... 9999).contains(year) else { return nil }
+            years = year ... year
+        } else {
+            years = referenceYear ... min(referenceYear + 8, 9999)
+        }
+        for candidateYear in years {
+            var components = DateComponents()
+            components.calendar = calendar
+            components.timeZone = calendar.timeZone
+            components.year = candidateYear
+            components.month = month
+            components.day = day
+            guard let date = calendar.date(from: components) else { continue }
+            let resolved = calendar.dateComponents([.year, .month, .day], from: date)
+            guard resolved.year == candidateYear,
+                  resolved.month == month,
+                  resolved.day == day,
+                  year != nil || date >= referenceStart
+            else { continue }
+            return try? CivilDate(
+                rawValue: String(format: "%04d-%02d-%02d", candidateYear, month, day)
+            )
+        }
+        return nil
+    }
+
     private static func weekdayNumber(for value: String) -> Int? {
         switch value {
         case "sunday", "sun": 1
@@ -238,26 +355,10 @@ public enum DueDatePhraseDetector {
     }
 
     private static func removingPhrases(from value: String, ranges: [Range<String.Index>]) -> String {
-        // Clean punctuation around each actual phrase as before, but derive every
-        // boundary from the original string so separated phrases never erase title words.
-        var removals: [Range<String.Index>] = []
-        for range in ranges {
-            var lower = range.lowerBound
-            var upper = range.upperBound
-            while lower > value.startIndex {
-                let previous = value.index(before: lower)
-                guard isPhraseSeparator(value[previous]) else { break }
-                lower = previous
-            }
-            while upper < value.endIndex, isPhraseSeparator(value[upper]) {
-                upper = value.index(after: upper)
-            }
-            if let last = removals.last, lower <= last.upperBound {
-                removals[removals.count - 1] = last.lowerBound ..< max(last.upperBound, upper)
-            } else {
-                removals.append(lower ..< upper)
-            }
-        }
+        // Flattening is intentional for single-line task names.
+        let removals = expandedRemovalRanges(
+            in: value, ranges: ranges, preservingLineBreaks: false
+        )
         var parts: [String] = []
         var cursor = value.startIndex
         for range in removals {
@@ -270,9 +371,83 @@ public enum DueDatePhraseDetector {
         return parts.joined(separator: " ")
     }
 
-    private static func isPhraseSeparator(_ character: Character) -> Bool {
+    private static func removingPhrasesPreservingLayout(
+        from value: String,
+        ranges: [Range<String.Index>]
+    ) -> String {
+        let removals = expandedRemovalRanges(
+            in: value, ranges: ranges, preservingLineBreaks: true
+        )
+        var result = ""
+        result.reserveCapacity(value.count)
+        var cursor = value.startIndex
+        for range in removals {
+            result.append(contentsOf: value[cursor ..< range.lowerBound])
+            if range.lowerBound > value.startIndex, range.upperBound < value.endIndex {
+                let previous = value[value.index(before: range.lowerBound)]
+                let next = value[range.upperBound]
+                if !previous.isWhitespace, !next.isWhitespace {
+                    result.append(" ")
+                }
+            }
+            cursor = range.upperBound
+        }
+        result.append(contentsOf: value[cursor...])
+        return result
+    }
+
+    private static func expandedRemovalRanges(
+        in value: String,
+        ranges: [Range<String.Index>],
+        preservingLineBreaks: Bool
+    ) -> [Range<String.Index>] {
+        var removals: [Range<String.Index>] = []
+        removals.reserveCapacity(ranges.count)
+        for range in ranges {
+            var lower = range.lowerBound
+            var upper = range.upperBound
+            while lower > value.startIndex {
+                let previous = value.index(before: lower)
+                guard preservingLineBreaks
+                    ? isHorizontalWhitespace(value[previous])
+                    : isPhraseSeparator(value[previous])
+                else { break }
+                lower = previous
+            }
+            while upper < value.endIndex,
+                  isPhraseSeparator(
+                    value[upper], preservingLineBreaks: preservingLineBreaks
+                  )
+            {
+                upper = value.index(after: upper)
+            }
+            if let last = removals.last, lower <= last.upperBound {
+                removals[removals.count - 1] =
+                    last.lowerBound ..< max(last.upperBound, upper)
+            } else {
+                removals.append(lower ..< upper)
+            }
+        }
+        return removals
+    }
+
+    private static func isPhraseSeparator(
+        _ character: Character,
+        preservingLineBreaks: Bool = false
+    ) -> Bool {
+        if preservingLineBreaks,
+           character.unicodeScalars.allSatisfy(CharacterSet.newlines.contains)
+        {
+            return false
+        }
         // URL paths and identifier punctuation are title content, not phrase separators.
-        character.isWhitespace || (character.isPunctuation && !"/\\#@_".contains(character))
+        return character.isWhitespace
+            || (character.isPunctuation && !"/\\#@_".contains(character))
+    }
+
+    private static func isHorizontalWhitespace(_ character: Character) -> Bool {
+        character.isWhitespace
+            && !character.unicodeScalars.allSatisfy(CharacterSet.newlines.contains)
     }
 
     private static var resolutionError: OTodoError {

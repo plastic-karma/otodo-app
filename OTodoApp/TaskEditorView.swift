@@ -91,6 +91,7 @@ struct TaskEditorView: View {
     @State private var dueDate: Date
     @State private var hasPendingRelativeDueDate = false
     @State private var detectedDueDatePhrase: DetectedDueDatePhrase?
+    @State private var detectedNotesDueDatePhrase: DetectedDueDatePhrase?
     @State private var nameProjectMentions: TaskTextMentions
     @State private var nameTagMentions: TaskTextMentions
     @State private var notesProjectMentions: TaskTextMentions
@@ -153,11 +154,13 @@ struct TaskEditorView: View {
         _hasDueTime = State(initialValue: draft.dueTime != nil)
         _dueDate = State(initialValue: TaskSchedule.date(from: draft.dueDate, time: draft.dueTime))
         let duePhrase = Self.detectDueDatePhrase(in: draft.name)
+        let notesDuePhrase = Self.detectDueDatePhrase(in: draft.body)
         let nameProjectMentions = TaskTextMentions(in: draft.name, marker: "#")
         let nameTagMentions = TaskTextMentions(in: draft.name, marker: "@")
         let notesProjectMentions = TaskTextMentions(in: draft.body, marker: "#")
         let notesTagMentions = TaskTextMentions(in: draft.body, marker: "@")
         _detectedDueDatePhrase = State(initialValue: duePhrase)
+        _detectedNotesDueDatePhrase = State(initialValue: notesDuePhrase)
         _nameProjectMentions = State(initialValue: nameProjectMentions)
         _nameTagMentions = State(initialValue: nameTagMentions)
         _notesProjectMentions = State(initialValue: notesProjectMentions)
@@ -268,6 +271,7 @@ struct TaskEditorView: View {
                             )
                                 .frame(height: notesHeight)
                                 .onChange(of: draft.body) { _, text in
+                                    detectedNotesDueDatePhrase = Self.detectDueDatePhrase(in: text)
                                     let projectMentions = TaskTextMentions(in: text, marker: "#")
                                     let tagMentions = TaskTextMentions(in: text, marker: "@")
                                     notesProjectMentions = projectMentions
@@ -298,6 +302,16 @@ struct TaskEditorView: View {
                                 }
                         }
                         .listRowSeparator(.hidden)
+                        if detectedDueDatePhrase == nil, let detectedNotesDueDatePhrase {
+                            let explanation =
+                                "Due \(resolvedDueDate?.rawValue ?? detectedNotesDueDatePhrase.dueDate.rawValue)\(resolvedDueTime.map { " at \($0.rawValue)" } ?? "") · “\(detectedNotesDueDatePhrase.phrases.joined(separator: "” and “"))” in notes will be removed when saved"
+                            Label(explanation, systemImage: "calendar.badge.checkmark")
+                                .font(.footnote)
+                                .foregroundStyle(OTodoTheme.accent)
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel(explanation)
+                                .accessibilityIdentifier("task-editor-detected-notes-due-date")
+                        }
                         if notesFocused, !notesComposing {
                             mentionSuggestions(
                                 notesProjectMentions.suggestions(at: notesSelection, choices: projectChoices),
@@ -1044,6 +1058,9 @@ struct TaskEditorView: View {
 
         var value = draft
         value.name = detectedDueDatePhrase?.nameWithoutPhrase ?? draft.name
+        if detectedDueDatePhrase == nil, let detectedNotesDueDatePhrase {
+            value.body = detectedNotesDueDatePhrase.textWithoutPhrasePreservingLayout
+        }
         value.projectSlugs = projectsIncludingMentions
         value.tags = tagsIncludingMentions
         value.dueDate = resolvedDueDate
@@ -1083,6 +1100,7 @@ struct TaskEditorView: View {
                 hasDueTime = false
                 dueDate = TaskSchedule.date(from: draft.dueDate, time: nil)
                 detectedDueDatePhrase = nil
+                detectedNotesDueDatePhrase = nil
                 hasPendingRelativeDueDate = false
                 didSaveAndContinue = true
                 isScheduleExpanded = false
@@ -1112,17 +1130,21 @@ struct TaskEditorView: View {
         return TaskSchedule.civilTime(from: dueDate)
     }
 
+    private var activeDueDatePhrase: DetectedDueDatePhrase? {
+        detectedDueDatePhrase ?? detectedNotesDueDatePhrase
+    }
+
     private var resolvedDueDate: CivilDate? {
-        detectedDueDatePhrase?.resolvedDueDate(selectedDate: selectedDueDate) ?? selectedDueDate
+        activeDueDatePhrase?.resolvedDueDate(selectedDate: selectedDueDate) ?? selectedDueDate
     }
 
     private var resolvedDueTime: CivilTime? {
-        detectedDueDatePhrase?.dueTime ?? selectedDueTime
+        activeDueDatePhrase?.dueTime ?? selectedDueTime
     }
 
     private var dueDateHelpText: String {
-        if let detectedDueDatePhrase {
-            return "The highlighted phrases set \(resolvedDueDate?.rawValue ?? detectedDueDatePhrase.dueDate.rawValue)\(resolvedDueTime.map { " at \($0.rawValue)" } ?? "") when saved. A time-only phrase keeps your selected calendar date."
+        if let activeDueDatePhrase {
+            return "The detected phrases set \(resolvedDueDate?.rawValue ?? activeDueDatePhrase.dueDate.rawValue)\(resolvedDueTime.map { " at \($0.rawValue)" } ?? "") when saved. A time-only phrase keeps your selected calendar date."
         }
         guard hasDueDate else {
             return "This todo has no due date."

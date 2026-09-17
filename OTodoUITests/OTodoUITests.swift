@@ -342,6 +342,54 @@ final class OTodoUITests: XCTestCase {
     }
 
     @MainActor
+    func testCalendarDateInNotesIsDetectedStrippedAndPersisted() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace"]
+        app.launch()
+        defer { app.terminate() }
+
+        guard selectFilter("Active", in: app) else { return }
+        app.buttons["task-add"].tap()
+
+        let editor = app.descendants(matching: .any)["task-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 8))
+        let name = app.textFields["task-editor-name"]
+        name.tap()
+        name.typeText("Plan conference")
+
+        let notes = app.textViews["task-editor-notes"]
+        XCTAssertTrue(notes.waitForExistence(timeout: 8))
+        notes.tap()
+        notes.typeText("Agenda:\n- June 12th 2027 Coordinate venue\n- Send invites")
+
+        let detection = app.descendants(matching: .any)[
+            "task-editor-detected-notes-due-date"
+        ]
+        XCTAssertTrue(detection.waitForExistence(timeout: 8))
+        XCTAssertTrue(detection.label.contains("2027-06-12"))
+        XCTAssertTrue(detection.label.contains("June 12th 2027"))
+        app.revealTaskEditorElement(detection)
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Calendar date detected in todo notes"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        app.buttons["task-editor-save"].tap()
+        XCTAssertTrue(editor.waitForNonExistence(timeout: 8))
+
+        let saved = taskRow(named: "Plan conference", state: "Pending", in: app)
+        XCTAssertTrue(saved.waitForExistence(timeout: 8))
+        saved.tap()
+        XCTAssertTrue(editor.waitForExistence(timeout: 8))
+        XCTAssertEqual(notes.value as? String, "Agenda:\n- Coordinate venue\n- Send invites")
+        XCTAssertFalse(detection.exists, "The persisted notes should not redetect the applied date")
+        revealEditorControl("task-editor-due-date-toggle", panel: "schedule", in: app)
+        XCTAssertEqual(app.switches["task-editor-due-date-toggle"].value as? String, "1")
+    }
+
+    @MainActor
     func testHomeScreenQuickActionOpensNewTodoEditor() {
         continueAfterFailure = false
 
