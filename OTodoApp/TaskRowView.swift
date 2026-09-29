@@ -43,49 +43,12 @@ struct TaskRowView: View {
             .padding(.top, 2)
 
             Button(action: onOpen) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(task.name)
-                        .font(.body.weight(workflowState?.isTerminal == true ? .regular : .medium))
-                        .foregroundStyle(workflowState?.isTerminal == true ? Color.secondary : Color.primary)
-                        .strikethrough(workflowState?.isTerminal == true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    let due = duePresentation
-                    let context = contextPresentation
-                    if due != nil || context != nil || task.recurrence != nil || workflowState?.isInProgress == true {
-                        HStack(spacing: 8) {
-                            if let due {
-                                Text(due.label)
-                                    .foregroundStyle(due.color)
-                                    .layoutPriority(1)
-                            }
-                            if let workflowState, workflowState.isInProgress {
-                                if due != nil {
-                                    Text("·")
-                                        .accessibilityHidden(true)
-                                }
-                                Text(workflowState.name)
-                                    .foregroundStyle(OTodoTheme.accent)
-                            }
-                            if task.recurrence != nil {
-                                Image(systemName: "repeat")
-                                    .accessibilityHidden(true)
-                            }
-                            if let context {
-                                if due != nil || workflowState?.isInProgress == true {
-                                    Text("·")
-                                        .accessibilityHidden(true)
-                                }
-                                Label(context.label, systemImage: context.icon)
-                                    .truncationMode(.tail)
-                            }
-                        }
-                        .fixedSize(horizontal: false, vertical: true)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    }
-                }
+                TaskRowLabel(
+                    name: task.name, dueDate: task.dueDate, dueTime: task.dueTime,
+                    isRecurring: task.recurrence != nil,
+                    projectSlugs: task.projectSlugs, tags: task.tags,
+                    workflowState: workflowState, today: today, ancestry: ancestry
+                )
                 .padding(.vertical, 11)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
@@ -136,96 +99,6 @@ struct TaskRowView: View {
         workflowState?.isTerminal == true ? OTodoTheme.mint : OTodoTheme.accent
     }
 
-    private var duePresentation: (label: String, color: Color)? {
-        guard let dueDate = task.dueDate else { return nil }
-        let formattedDate = formattedDate(dueDate.rawValue)
-        let formattedTime = task.dueTime.map { self.formattedTime($0) }
-        if workflowState?.isTerminal == true {
-            return (
-                [formattedDate, formattedTime].compactMap { $0 }.joined(separator: " · "),
-                .secondary
-            )
-        }
-        if dueDate.rawValue < today {
-            return (
-                ["Overdue", formattedDate, formattedTime].compactMap { $0 }.joined(separator: " · "),
-                .red
-            )
-        }
-        if dueDate.rawValue == today {
-            if let dueTime = task.dueTime,
-               let currentTime,
-               dueTime < currentTime
-            {
-                return ("Overdue · \(formattedTime ?? dueTime.rawValue)", .red)
-            }
-            if let formattedTime {
-                return ("Today · \(formattedTime)", OTodoTheme.accent)
-            }
-            return ("Today", OTodoTheme.accent)
-        }
-        return (
-            [formattedDate, formattedTime].compactMap { $0 }.joined(separator: " · "),
-            OTodoTheme.accent
-        )
-    }
-
-    private var contextPresentation: (label: String, icon: String)? {
-        if let ancestry {
-            return (ancestry, "arrow.turn.down.right")
-        }
-        if let project = task.projectSlugs.first {
-            let name = project.replacingOccurrences(of: "-", with: " ").capitalized
-            let remainder = task.projectSlugs.count - 1
-            return (remainder > 0 ? "\(name) +\(remainder)" : name, "folder")
-        }
-        if let tag = task.tags.first {
-            let remainder = task.tags.count - 1
-            return (remainder > 0 ? "\(tag) +\(remainder)" : tag, "number")
-        }
-        return nil
-    }
-
-    private func formattedDate(_ value: String) -> String {
-        let parts = value.split(separator: "-").compactMap { Int($0) }
-        guard parts.count == 3 else { return value }
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .autoupdatingCurrent
-        guard let date = calendar.date(
-            from: DateComponents(year: parts[0], month: parts[1], day: parts[2])
-        ) else {
-            return value
-        }
-        return date.formatted(.dateTime.month(.abbreviated).day())
-    }
-
-    private func formattedTime(_ value: CivilTime) -> String {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .autoupdatingCurrent
-        guard let date = calendar.date(
-            from: DateComponents(
-                timeZone: calendar.timeZone,
-                year: 2000,
-                month: 1,
-                day: 1,
-                hour: value.hour,
-                minute: value.minute
-            )
-        ) else {
-            return value.rawValue
-        }
-        return date.formatted(date: .omitted, time: .shortened)
-    }
-
-    private var currentTime: CivilTime? {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .autoupdatingCurrent
-        let components = calendar.dateComponents([.hour, .minute], from: .now)
-        guard let hour = components.hour, let minute = components.minute else {
-            return nil
-        }
-        return try? CivilTime(rawValue: String(format: "%02d:%02d", hour, minute))
-    }
 
     private var accessibilityDescription: String {
         var values = [task.name, "State: \(workflowState?.name ?? task.state)"]
@@ -248,5 +121,143 @@ struct TaskRowView: View {
             values.append("Tags: \(task.tags.joined(separator: ", "))")
         }
         return values.joined(separator: ". ")
+    }
+}
+
+private struct TaskRowLabel: View {
+    @Environment(\.locale) private var locale
+    let name: String
+    let dueDate: CivilDate?
+    let dueTime: CivilTime?
+    let isRecurring: Bool
+    let projectSlugs: [String]
+    let tags: [String]
+    let workflowState: WorkflowState?
+    let today: String
+    let ancestry: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(name)
+                .font(.body.weight(workflowState?.isTerminal == true ? .regular : .medium))
+                .foregroundStyle(workflowState?.isTerminal == true ? Color.secondary : Color.primary)
+                .strikethrough(workflowState?.isTerminal == true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            let due = duePresentation
+            let context = contextPresentation
+            if due != nil || context != nil || isRecurring || workflowState?.isInProgress == true {
+                HStack(spacing: 8) {
+                    if let due {
+                        Text(due.label)
+                            .foregroundStyle(due.color)
+                            .layoutPriority(1)
+                    }
+                    if let workflowState, workflowState.isInProgress {
+                        if due != nil {
+                            Text("·")
+                                .accessibilityHidden(true)
+                        }
+                        Text(workflowState.name)
+                            .foregroundStyle(OTodoTheme.accent)
+                    }
+                    if isRecurring {
+                        Image(systemName: "repeat")
+                            .accessibilityHidden(true)
+                    }
+                    if let context {
+                        if due != nil || workflowState?.isInProgress == true {
+                            Text("·")
+                                .accessibilityHidden(true)
+                        }
+                        Label(context.label, systemImage: context.icon)
+                            .truncationMode(.tail)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
+        }
+    }
+
+    private var duePresentation: (label: LocalizedStringKey, color: Color)? {
+        guard let dueDate else { return nil }
+        let date = formattedDate(dueDate.rawValue)
+        let time = dueTime.map { formattedTime($0) }
+        if workflowState?.isTerminal == true {
+            return (time.map { "\(date) · \($0)" } ?? "\(date)", .secondary)
+        }
+        if dueDate.rawValue < today {
+            return (time.map { "Overdue · \(date) · \($0)" } ?? "Overdue · \(date)", .red)
+        }
+        if dueDate.rawValue == today {
+            if let dueTime,
+               let currentTime,
+               dueTime < currentTime
+            {
+                return ("Overdue · \(time ?? dueTime.rawValue)", .red)
+            }
+            return (time.map { "Today · \($0)" } ?? "Today", OTodoTheme.accent)
+        }
+        return (time.map { "\(date) · \($0)" } ?? "\(date)", OTodoTheme.accent)
+    }
+
+    private var contextPresentation: (label: String, icon: String)? {
+        if let ancestry {
+            return (ancestry, "arrow.turn.down.right")
+        }
+        if let project = projectSlugs.first {
+            let name = project.replacingOccurrences(of: "-", with: " ").capitalized(with: locale)
+            let remainder = projectSlugs.count - 1
+            return (remainder > 0 ? "\(name) +\(remainder)" : name, "folder")
+        }
+        if let tag = tags.first {
+            let remainder = tags.count - 1
+            return (remainder > 0 ? "\(tag) +\(remainder)" : tag, "number")
+        }
+        return nil
+    }
+
+    private func formattedDate(_ value: String) -> String {
+        let parts = value.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return value }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        guard let date = calendar.date(
+            from: DateComponents(year: parts[0], month: parts[1], day: parts[2])
+        ) else {
+            return value
+        }
+        return date.formatted(.dateTime.month(.abbreviated).day().locale(locale))
+    }
+
+    private func formattedTime(_ value: CivilTime) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        guard let date = calendar.date(
+            from: DateComponents(
+                timeZone: calendar.timeZone,
+                year: 2000,
+                month: 1,
+                day: 1,
+                hour: value.hour,
+                minute: value.minute
+            )
+        ) else {
+            return value.rawValue
+        }
+        return date.formatted(Date.FormatStyle(date: .omitted, time: .shortened).locale(locale))
+    }
+
+    private var currentTime: CivilTime? {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        let components = calendar.dateComponents([.hour, .minute], from: .now)
+        guard let hour = components.hour, let minute = components.minute else {
+            return nil
+        }
+        return try? CivilTime(rawValue: String(format: "%02d:%02d", hour, minute))
     }
 }

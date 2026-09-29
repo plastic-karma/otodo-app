@@ -10,14 +10,25 @@ struct ReminderSettingsView: View {
     @State private var timing: Timing
     @State private var customValue: String
 
-    private enum Timing: String, CaseIterable, Identifiable {
-        case atDueTime = "At due time"
-        case fiveMinutes = "5 minutes before"
-        case oneHour = "1 hour before"
-        case customHours = "Custom hours before"
-        case customDays = "Custom days before"
+    private enum Timing: CaseIterable, Hashable, Identifiable {
+        case atDueTime
+        case fiveMinutes
+        case oneHour
+        case customHours
+        case customDays
 
-        var id: String { rawValue }
+        var id: Self { self }
+
+        var title: LocalizedStringKey {
+            switch self {
+            case .atDueTime: "At due time"
+            case .fiveMinutes: "5 minutes before"
+            case .oneHour: "1 hour before"
+            case .customHours: "Custom hours before"
+            case .customDays: "Custom days before"
+            }
+        }
+
         var isCustom: Bool { self == .customHours || self == .customDays }
     }
 
@@ -44,9 +55,11 @@ struct ReminderSettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    LabeledContent("Due reminders", value: authorizationDescription)
-                        .accessibilityElement(children: .combine)
-                        .accessibilityIdentifier("reminder-authorization-status")
+                    LabeledContent("Due reminders") {
+                        Text(authorizationDescription)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("reminder-authorization-status")
                     if notifications.isEnabled {
                         Button("Disable Reminders", role: .destructive) {
                             Task { await notifications.disable() }
@@ -73,7 +86,7 @@ struct ReminderSettingsView: View {
                 Section {
                     Picker("Remind me", selection: $timing) {
                         ForEach(Timing.allCases) { option in
-                            Text(option.rawValue).tag(option)
+                            Text(option.title).tag(option)
                         }
                     }
                     .pickerStyle(.inline)
@@ -92,9 +105,11 @@ struct ReminderSettingsView: View {
                         }
                     }
 
-                    LabeledContent("Saved timing", value: notifications.leadTime.displayName)
-                        .accessibilityElement(children: .combine)
-                        .accessibilityIdentifier("reminder-saved-timing")
+                    LabeledContent("Saved timing") {
+                        Text(notifications.leadTime.displayName)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("reminder-saved-timing")
                     Button("Apply Timing") {
                         guard let preference = selectedLeadTime else { return }
                         Task {
@@ -155,7 +170,7 @@ struct ReminderSettingsView: View {
         }
     }
 
-    private var authorizationDescription: String {
+    private var authorizationDescription: LocalizedStringKey {
         switch notifications.status {
         case .checking: "Checking notification access"
         case .notRequested: "Permission not requested"
@@ -167,12 +182,15 @@ struct ReminderSettingsView: View {
 }
 
 extension TaskReminderLeadTime {
-    var displayName: String {
+    var displayName: LocalizedStringKey {
         if self == .atDueTime { return "At due time (date-only: 9:00 AM)" }
         switch unit {
-        case .minutes: return "\(value) \(value == 1 ? "minute" : "minutes") before"
-        case .hours: return "\(value) \(value == 1 ? "hour" : "hours") before"
-        case .days: return "\(value) \(value == 1 ? "calendar day" : "calendar days") before"
+        case .minutes:
+            return value == 1 ? "\(value) minute before" : "\(value) minutes before"
+        case .hours:
+            return value == 1 ? "\(value) hour before" : "\(value) hours before"
+        case .days:
+            return value == 1 ? "\(value) calendar day before" : "\(value) calendar days before"
         }
     }
 }

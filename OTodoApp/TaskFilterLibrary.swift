@@ -5,7 +5,16 @@ import OTodoCore
 @MainActor
 @Observable
 final class TaskFilterLibrary {
-    private(set) var filters: [SavedTaskFilter] = SavedTaskFilter.defaults
+    private(set) var filters: [SavedTaskFilter] = SavedTaskFilter.defaults {
+        didSet {
+            builtInFilters = filters.filter(\.isBuiltIn)
+            savedFilters = filters.filter { !$0.isBuiltIn }
+            starredFilters = filters.filter(\.isStarred)
+        }
+    }
+    private(set) var builtInFilters = SavedTaskFilter.defaults.filter(\.isBuiltIn)
+    private(set) var savedFilters: [SavedTaskFilter] = []
+    private(set) var starredFilters = SavedTaskFilter.defaults.filter(\.isStarred)
     private(set) var isLoaded = false
     private(set) var isSaving = false
     private(set) var errorMessage: String?

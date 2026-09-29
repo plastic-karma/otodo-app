@@ -63,20 +63,26 @@ private struct WatchComplicationProvider: TimelineProvider {
 }
 
 private struct WatchComplicationView: View {
-    @Environment(\.widgetFamily) private var family
-    let entry: WatchComplicationEntry
+    let state: WatchComplicationState
 
     var body: some View {
         Group {
-            switch entry.state {
+            switch state {
             case .ready(let day):
-                readyContent(day)
+                let firstTask = day.overdue.first ?? day.today.first
+                WatchComplicationReadyContent(
+                    todayCount: day.today.count,
+                    overdueCount: day.overdue.count,
+                    taskName: firstTask?.name,
+                    dueDate: firstTask?.dueDate,
+                    dueTime: firstTask?.dueTime
+                )
             case .waiting:
-                statusContent("Open OTodo", detail: "Waiting for iPhone", symbol: "iphone")
+                WatchComplicationStatus(title: "Open OTodo", detail: "Waiting for iPhone", symbol: "iphone")
             case .setup:
-                statusContent("Set up OTodo", detail: "Open OTodo on iPhone", symbol: "iphone")
+                WatchComplicationStatus(title: "Set up OTodo", detail: "Open OTodo on iPhone", symbol: "iphone")
             case .unreadable:
-                statusContent("Open OTodo", detail: "Refresh saved todos", symbol: "arrow.clockwise")
+                WatchComplicationStatus(title: "Open OTodo", detail: "Refresh saved todos", symbol: "arrow.clockwise")
             }
         }
         .containerBackground(for: .widget) { Color.clear }
@@ -84,27 +90,50 @@ private struct WatchComplicationView: View {
         .privacySensitive()
     }
 
-    @ViewBuilder
-    private func readyContent(_ day: WatchDaySnapshot) -> some View {
+}
+
+private struct WatchComplicationReadyContent: View {
+    @Environment(\.widgetFamily) private var family
+    let todayCount: Int
+    let overdueCount: Int
+    let taskName: String?
+    let dueDate: String?
+    let dueTime: String?
+
+    private var totalCount: Int { todayCount + overdueCount }
+
+    var body: some View {
         switch family {
         case .accessoryInline:
-            Label(day.totalCount == 0 ? "OTodo: all clear" : "\(day.today.count) today · \(day.overdue.count) overdue", systemImage: "checklist")
-                .accessibilityLabel(summary(day))
+            Label {
+                if totalCount == 0 {
+                    Text("OTodo: all clear")
+                } else {
+                    Text("\(todayCount, format: .number) today · \(overdueCount, format: .number) overdue")
+                }
+            } icon: {
+                Image(systemName: "checklist")
+            }
+            .accessibilityLabel(summary)
         case .accessoryCorner:
-            Text("\(day.totalCount)")
+            Text(totalCount, format: .number)
                 .font(.title2.bold())
                 .widgetAccentable()
                 .widgetLabel {
-                    Text(day.totalCount == 0 ? "All clear" : "\(day.today.count) today · \(day.overdue.count) overdue")
+                    if totalCount == 0 {
+                        Text("All clear")
+                    } else {
+                        Text("\(todayCount, format: .number) today · \(overdueCount, format: .number) overdue")
+                    }
                 }
-                .accessibilityLabel(summary(day))
+                .accessibilityLabel(summary)
         case .accessoryCircular:
             ZStack {
                 AccessoryWidgetBackground()
                 VStack(spacing: 0) {
-                    Image(systemName: day.totalCount == 0 ? "checkmark" : "checklist")
+                    Image(systemName: totalCount == 0 ? "checkmark" : "checklist")
                         .font(.caption)
-                    Text("\(day.totalCount)")
+                    Text(totalCount, format: .number)
                         .font(.title2.bold())
                         .minimumScaleFactor(0.5)
                         .lineLimit(1)
@@ -112,19 +141,19 @@ private struct WatchComplicationView: View {
                 .widgetAccentable()
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(summary(day))
+            .accessibilityLabel(summary)
         default:
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(day.today.count) today · \(day.overdue.count) overdue")
+                Text("\(todayCount, format: .number) today · \(overdueCount, format: .number) overdue")
                     .font(.headline)
                     .widgetAccentable()
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
-                if let task = day.overdue.first ?? day.today.first {
-                    Text(task.name)
+                if let taskName {
+                    Text(taskName)
                         .font(.caption)
                         .lineLimit(2)
-                    Text(schedule(task, overdue: !day.overdue.isEmpty))
+                    schedule
                         .font(.caption2)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
@@ -137,12 +166,36 @@ private struct WatchComplicationView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(rectangularDescription(day))
+            .accessibilityLabel(rectangularDescription)
         }
     }
 
-    @ViewBuilder
-    private func statusContent(_ title: String, detail: String, symbol: String) -> some View {
+    private var summary: Text {
+        Text("OTodo. \(totalCount, format: .number) todos due or overdue. \(todayCount, format: .number) today. \(overdueCount, format: .number) overdue. Opens the saved task list.")
+    }
+
+    private var rectangularDescription: Text {
+        guard let taskName else { return summary }
+        return Text("OTodo. \(totalCount, format: .number) todos due or overdue. \(todayCount, format: .number) today. \(overdueCount, format: .number) overdue. Opens the saved task list. \(taskName). \(schedule).")
+    }
+
+    private var schedule: Text {
+        if overdueCount > 0, let dueDate {
+            if let dueTime { return Text("\(dueDate) at \(dueTime)") }
+            return Text("\(dueDate) · No time set")
+        }
+        if let dueTime { return Text("Today at \(dueTime)") }
+        return Text("Today · No time set")
+    }
+}
+
+private struct WatchComplicationStatus: View {
+    @Environment(\.widgetFamily) private var family
+    let title: LocalizedStringKey
+    let detail: LocalizedStringKey
+    let symbol: String
+
+    var body: some View {
         switch family {
         case .accessoryInline:
             Label(detail, systemImage: symbol)
@@ -150,14 +203,14 @@ private struct WatchComplicationView: View {
             Image(systemName: symbol)
                 .font(.title2)
                 .widgetLabel { Text(title) }
-                .accessibilityLabel("\(title). \(detail)")
+                .accessibilityLabel("\(Text(title)). \(Text(detail))")
         case .accessoryCircular:
             ZStack {
                 AccessoryWidgetBackground()
                 Image(systemName: symbol)
                     .font(.title2)
             }
-            .accessibilityLabel("\(title). \(detail)")
+            .accessibilityLabel("\(Text(title)). \(Text(detail))")
         default:
             VStack(alignment: .leading, spacing: 3) {
                 Label(title, systemImage: symbol)
@@ -170,20 +223,6 @@ private struct WatchComplicationView: View {
         }
     }
 
-    private func summary(_ day: WatchDaySnapshot) -> String {
-        "OTodo. \(day.totalCount) todos due or overdue. \(day.today.count) today. \(day.overdue.count) overdue. Opens the saved task list."
-    }
-
-    private func rectangularDescription(_ day: WatchDaySnapshot) -> String {
-        guard let task = day.overdue.first ?? day.today.first else { return summary(day) }
-        return "\(summary(day)) \(task.name). \(schedule(task, overdue: !day.overdue.isEmpty))."
-    }
-
-    private func schedule(_ task: TodayWidgetTask, overdue: Bool) -> String {
-        let date = overdue ? task.dueDate : "Today"
-        if let time = task.dueTime { return "\(date) at \(time)" }
-        return "\(date) · No time set"
-    }
 }
 
 private struct OTodoWatchTodayWidget: Widget {
@@ -191,7 +230,7 @@ private struct OTodoWatchTodayWidget: Widget {
 
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: WatchComplicationProvider()) { entry in
-            WatchComplicationView(entry: entry)
+            WatchComplicationView(state: entry.state)
                 .fontDesign(.rounded)
         }
         .configurationDisplayName("Today & Overdue")

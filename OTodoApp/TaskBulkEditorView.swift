@@ -3,6 +3,7 @@ import SwiftUI
 
 struct TaskBulkEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.locale) private var locale
     @FocusState private var isTextFocused: Bool
 
     private let projectSlugs: [String]
@@ -10,6 +11,7 @@ struct TaskBulkEditorView: View {
     private let defaultDueDate: CivilDate?
     private let onSave: @MainActor ([String]) async -> String?
     @State private var text = ""
+    @State private var entries: [PreviewEntry] = []
     @State private var isSaving = false
     @State private var saveError: String?
 
@@ -26,9 +28,6 @@ struct TaskBulkEditorView: View {
     }
 
     var body: some View {
-        let entries = text.split(whereSeparator: \.isNewline)
-            .filter { !$0.allSatisfy(\.isWhitespace) }
-
         NavigationStack {
             Form {
                 if let saveError {
@@ -41,10 +40,10 @@ struct TaskBulkEditorView: View {
                 if !projectSlugs.isEmpty || !tags.isEmpty || defaultDueDate != nil {
                     Section {
                         if !projectSlugs.isEmpty {
-                            LabeledContent("Projects", value: projectSlugs.joined(separator: ", "))
+                            LabeledContent("Projects", value: projectSlugs.formatted(.list(type: .and).locale(locale)))
                         }
                         if !tags.isEmpty {
-                            LabeledContent("Tags", value: tags.joined(separator: ", "))
+                            LabeledContent("Tags", value: tags.formatted(.list(type: .and).locale(locale)))
                         }
                         if let defaultDueDate {
                             LabeledContent("Default due date", value: defaultDueDate.rawValue)
@@ -72,18 +71,8 @@ struct TaskBulkEditorView: View {
                 }
                 if !entries.isEmpty {
                     Section("Preview") {
-                        ForEach(Array(entries.enumerated()), id: \.offset) { index, entry in
-                            let name = String(entry).trimmingCharacters(in: .whitespacesAndNewlines)
-                            let detected = try? DueDatePhraseDetector.detect(in: name, calendar: TaskSchedule.calendar)
-                            let date = detected?.resolvedDueDate(selectedDate: defaultDueDate) ?? defaultDueDate
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(detected?.nameWithoutPhrase ?? name)
-                                Text(date.map {
-                                    "\($0.rawValue)\(detected?.dueTime.map { " at \($0.rawValue)" } ?? "")"
-                                } ?? "No due date")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            }
+                        ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                            TaskBulkPreviewRow(name: entry.name, date: entry.date, time: entry.time)
                             .accessibilityElement(children: .combine)
                             .accessibilityIdentifier("task-bulk-preview-\(index)")
                         }
@@ -105,7 +94,7 @@ struct TaskBulkEditorView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Create \(entries.count)") {
-                        save(names: entries.map(String.init))
+                        save(names: entries.map(\.source))
                     }
                     .accessibilityIdentifier("task-bulk-save")
                     .disabled(entries.isEmpty || isSaving)
@@ -119,7 +108,39 @@ struct TaskBulkEditorView: View {
                 }
             }
             .task { isTextFocused = true }
+            .onChange(of: text) { _, _ in refreshPreview() }
+            .onChange(of: defaultDueDate) { _, _ in refreshPreview() }
         }
+    }
+
+    private struct PreviewEntry: Identifiable {
+        let id: UUID
+        let source: String
+        let name: String
+        let date: CivilDate?
+        let time: CivilTime?
+    }
+
+    private func refreshPreview() {
+        // Duplicate lines remain distinct, while unchanged lines keep their identity after insertion/removal.
+        var previousIDs: [String: [UUID]] = [:]
+        for entry in entries.reversed() {
+            previousIDs[entry.source, default: []].append(entry.id)
+        }
+        entries = text.split(whereSeparator: \.isNewline)
+            .filter { !$0.allSatisfy(\.isWhitespace) }
+            .map { line in
+                let source = String(line)
+                let name = source.trimmingCharacters(in: .whitespacesAndNewlines)
+                let detected = try? DueDatePhraseDetector.detect(in: name, calendar: TaskSchedule.calendar)
+                return PreviewEntry(
+                    id: previousIDs[source]?.popLast() ?? UUID(),
+                    source: source,
+                    name: detected?.nameWithoutPhrase ?? name,
+                    date: detected?.resolvedDueDate(selectedDate: defaultDueDate) ?? defaultDueDate,
+                    time: detected?.dueTime
+                )
+            }
     }
 
     private func save(names: [String]) {
@@ -132,6 +153,36 @@ struct TaskBulkEditorView: View {
             if saveError == nil {
                 dismiss()
             }
+        }
+    }
+}
+
+private struct TaskBulkPreviewRow: View {
+    let name: String
+    let date: CivilDate?
+    let time: CivilTime?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(name)
+            Group {
+                if let date {
+                    let value = TaskSchedule.date(from: date, time: time)
+                    if time != nil {
+                        Text(value, format: Date.FormatStyle(
+                            date: .abbreviated, time: .shortened, calendar: TaskSchedule.calendar
+                        ))
+                    } else {
+                        Text(value, format: Date.FormatStyle(
+                            date: .abbreviated, time: .omitted, calendar: TaskSchedule.calendar
+                        ))
+                    }
+                } else {
+                    Text("No due date")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 }

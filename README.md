@@ -508,6 +508,27 @@ To run or debug manually, generate `OTodo.xcodeproj` with
 `OTodo` scheme. Regenerate after changing `project.yml`; do not hand-edit generated
 project settings.
 
+### SwiftUI state and rendering
+
+The app, Share capture, widgets, and Watch separate independently changing sections
+into views with narrow inputs. Observable models stay main-actor isolated;
+authorization state remains observable, while internal operation handles do not.
+UIKit's quick-action scene delegate deliberately retains its `ObservableObject`
+bridge for SwiftUI's automatic environment injection.
+
+Saved-filter partitions and sidebar counts are prepared when their source data
+changes, rather than filtering or scanning the workspace for every rendered row.
+Counts also refresh when workflow terminal states change. Unchanged task reloads
+retain the existing hierarchy index. Queued subtasks and bulk-preview entries have
+stored identities, including when names repeat; persisted task IDs and formats
+are unchanged.
+
+User-facing labels preserve localization metadata, and ordinary dates, numbers,
+and lists use locale-aware formatting. Civil-date storage remains Gregorian and
+the changelog deliberately retains exact, second-resolution ISO-8601 UTC timestamps.
+Keep iOS 17/watchOS 10 availability when adopting newer SwiftUI or standard-library
+APIs; a newer compiler alone does not back-deploy collection conformances.
+
 ### Visual design survey
 
 The unchanged UI suite includes light/dark workspace, sidebar, filter library,

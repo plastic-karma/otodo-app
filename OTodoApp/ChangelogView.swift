@@ -5,14 +5,6 @@ struct ChangelogView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var content: Content = .loading
 
-    private static let timestampFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss'Z'"
-        return formatter
-    }()
 
     var body: some View {
         NavigationStack {
@@ -26,9 +18,8 @@ struct ChangelogView: View {
                             Text(entry.title)
                                 .font(.subheadline.weight(.medium))
                             Text(
-                                Self.timestampFormatter.string(
-                                    from: Date(timeIntervalSince1970: TimeInterval(entry.timestamp))
-                                )
+                                Date(timeIntervalSince1970: TimeInterval(entry.timestamp)),
+                                format: Date.ISO8601FormatStyle(dateTimeSeparator: .space, timeZone: .gmt)
                             )
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)

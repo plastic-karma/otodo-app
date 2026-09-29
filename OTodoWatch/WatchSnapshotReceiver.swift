@@ -22,7 +22,7 @@ final class WatchSnapshotReceiver: NSObject, WCSessionDelegate {
     static let shared = WatchSnapshotReceiver()
 
     private(set) var workspace: WatchWorkspaceSnapshot?
-    private(set) var errorMessage: String?
+    private(set) var errorMessage: LocalizedStringResource?
     private(set) var isReachable = false
     private(set) var isRequesting = false
 
@@ -133,7 +133,7 @@ final class WatchSnapshotReceiver: NSObject, WCSessionDelegate {
         data: Data?,
         isReply: Bool = false,
         invalidReply: Bool = false,
-        error: String? = nil,
+        error: LocalizedStringResource? = nil,
         receiptStarted: Bool = false
     ) {
         if !receiptStarted { pendingReceipts.begin() }
@@ -155,7 +155,7 @@ final class WatchSnapshotReceiver: NSObject, WCSessionDelegate {
                 accept(data)
             } else if let error {
                 errorMessage = error
-                WatchSmokeProgress.record("receipt-error", values: ["terminalError": error])
+                WatchSmokeProgress.record("receipt-error", values: ["terminalError": String(localized: error)])
             }
         }
     }

@@ -2,20 +2,20 @@ import OTodoCore
 import SwiftUI
 
 struct WatchTodayView: View {
-    @Bindable var receiver: WatchSnapshotReceiver
+    let receiver: WatchSnapshotReceiver
     @State private var path: [String] = []
 
     var body: some View {
         NavigationStack(path: $path) {
             // Minute boundaries include local midnight, even while the phone is offline.
             TimelineView(.periodic(from: Calendar.current.startOfDay(for: .now), by: 60)) { context in
-                mainList(on: context.date)
+                WatchTodayList(receiver: receiver, dateKey: TodayWidgetSnapshotBuilder.dateKey(for: context.date))
             }
             .navigationTitle("OTodo")
             .navigationDestination(for: String.self) { identifier in
                 if let workspace = receiver.workspace, workspace.workspaceAvailable,
                    let task = workspace.snapshot.tasks.first(where: { $0.id == identifier }) {
-                    WatchTaskDetail(task: task)
+                    WatchTaskDetail(name: task.name, dueDate: task.dueDate, dueTime: task.dueTime)
                 } else {
                     ContentUnavailableView("Task unavailable", systemImage: "checkmark.circle", description: Text("Return to Today for the latest todos."))
                 }
@@ -30,20 +30,24 @@ struct WatchTodayView: View {
             }
         }
     }
+}
 
-    @ViewBuilder
-    private func mainList(on date: Date) -> some View {
+private struct WatchTodayList: View {
+    let receiver: WatchSnapshotReceiver
+    let dateKey: String
+
+    var body: some View {
         List {
             if let workspace = receiver.workspace {
                 if workspace.workspaceAvailable {
-                    let day = workspace.day(on: TodayWidgetSnapshotBuilder.dateKey(for: date))
+                    let day = workspace.day(on: dateKey)
                     Section {
-                        Text("\(day.totalCount) due or overdue")
+                        Text("\(day.totalCount, format: .number) due or overdue")
                             .font(.headline)
                             .accessibilityAddTraits(.isHeader)
                     }
-                    taskSection("Overdue", tasks: day.overdue, overdue: true)
-                    taskSection("Today", tasks: day.today, overdue: false)
+                    WatchTaskSection(tasks: day.overdue, overdue: true)
+                    WatchTaskSection(tasks: day.today, overdue: false)
                 } else {
                     Section("Set up on iPhone") {
                         Text("Open OTodo on your paired iPhone, sign in, and select a workspace.")
@@ -56,39 +60,74 @@ struct WatchTodayView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            syncSection
+            WatchSyncSection(receiver: receiver)
         }
         .listStyle(.carousel)
     }
+}
 
-    private func taskSection(_ title: String, tasks: [TodayWidgetTask], overdue: Bool) -> some View {
-        Section("\(title) · \(tasks.count)") {
+private struct WatchTaskSection: View {
+    let tasks: [TodayWidgetTask]
+    let overdue: Bool
+
+    var body: some View {
+        Section {
             if tasks.isEmpty {
-                Text(overdue ? "Nothing overdue" : "Nothing due today")
+                Text(emptyMessage)
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(tasks) { task in
                     NavigationLink(value: task.id) {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(task.name)
-                                .font(.headline)
-                                .lineLimit(3)
-                            Text(WatchTaskDetail.schedule(for: task))
-                                .font(.caption)
-                                .foregroundStyle(overdue ? Color.orange : Color.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .privacySensitive()
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("\(task.name), \(overdue ? "overdue" : "today"), \(WatchTaskDetail.schedule(for: task))")
-                        .accessibilityHint("Opens the full task name and schedule")
+                        WatchTaskRow(name: task.name, dueDate: task.dueDate, dueTime: task.dueTime, overdue: overdue)
                     }
                 }
+            }
+        } header: {
+            if overdue {
+                Text("Overdue · \(tasks.count, format: .number)")
+            } else {
+                Text("Today · \(tasks.count, format: .number)")
             }
         }
     }
 
-    private var syncSection: some View {
+    private var emptyMessage: LocalizedStringKey {
+        overdue ? "Nothing overdue" : "Nothing due today"
+    }
+}
+
+private struct WatchTaskRow: View {
+    let name: String
+    let dueDate: String
+    let dueTime: String?
+    let overdue: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(name)
+                .font(.headline)
+                .lineLimit(3)
+            Text(WatchTaskDetail.schedule(dueDate: dueDate, dueTime: dueTime))
+                .font(.caption)
+                .foregroundStyle(overdue ? Color.orange : Color.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .privacySensitive()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityDescription)
+        .accessibilityHint("Opens the full task name and schedule")
+    }
+
+    private var accessibilityDescription: Text {
+        let schedule = Text(WatchTaskDetail.schedule(dueDate: dueDate, dueTime: dueTime))
+        return overdue ? Text("\(name), overdue, \(schedule)") : Text("\(name), today, \(schedule)")
+    }
+}
+
+private struct WatchSyncSection: View {
+    let receiver: WatchSnapshotReceiver
+
+    var body: some View {
         Section("Sync") {
             if let workspace = receiver.workspace {
                 VStack(alignment: .leading, spacing: 4) {
@@ -116,20 +155,26 @@ struct WatchTodayView: View {
             Button {
                 receiver.refresh()
             } label: {
-                Label(receiver.isRequesting ? "Refreshing…" : "Refresh from iPhone", systemImage: "arrow.clockwise")
+                Label(refreshTitle, systemImage: "arrow.clockwise")
             }
             .disabled(receiver.isRequesting)
         }
     }
+
+    private var refreshTitle: LocalizedStringKey {
+        receiver.isRequesting ? "Refreshing…" : "Refresh from iPhone"
+    }
 }
 
 private struct WatchTaskDetail: View {
-    let task: TodayWidgetTask
+    let name: String
+    let dueDate: String
+    let dueTime: String?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text(task.name)
+                Text(name)
                     .font(.headline)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
@@ -137,12 +182,16 @@ private struct WatchTaskDetail: View {
                     Text("Due date")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text(task.dueDate)
+                    Text(dueDate)
                     Text("Due time")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(.top, 6)
-                    Text(task.dueTime ?? "No time set")
+                    if let dueTime {
+                        Text(dueTime)
+                    } else {
+                        Text("No time set")
+                    }
                 }
                 .fixedSize(horizontal: false, vertical: true)
             }
@@ -153,8 +202,8 @@ private struct WatchTaskDetail: View {
         .navigationTitle("Task")
     }
 
-    static func schedule(for task: TodayWidgetTask) -> String {
-        if let time = task.dueTime { return "\(task.dueDate) at \(time)" }
-        return "\(task.dueDate) · No time set"
+    static func schedule(dueDate: String, dueTime: String?) -> LocalizedStringKey {
+        if let dueTime { return "\(dueDate) at \(dueTime)" }
+        return "\(dueDate) · No time set"
     }
 }

@@ -42,9 +42,9 @@ private final class ShareCaptureModel {
     var body = ""
     var url = ""
     private(set) var attachments: [AttachmentDraft] = []
-    private var attachmentContext: SharedTaskCapture.AttachmentContext?
+    @ObservationIgnored private var attachmentContext: SharedTaskCapture.AttachmentContext?
     private(set) var isCancelled = false
-    private var loadingTask: Task<Void, Never>?
+    @ObservationIgnored private var loadingTask: Task<Void, Never>?
     private(set) var isLoading = false
     private(set) var isSaving = false
     private(set) var hasCapture = false
@@ -153,67 +153,11 @@ private final class ShareCaptureModel {
 
 @MainActor
 private struct ShareCaptureView: View {
-    @Bindable var model: ShareCaptureModel
+    let model: ShareCaptureModel
 
     var body: some View {
         NavigationStack {
-            Form {
-                if model.isLoading {
-                    Section {
-                        ProgressView(model.isCancelled ? "Canceling import…" : "Reading shared content…")
-                    }
-                }
-                if let errorMessage = model.errorMessage {
-                    Section {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
-                            .accessibilityIdentifier("share-capture-error")
-                        if !model.hasCapture {
-                            Button("Try Again") {
-                                Task { await model.load() }
-                            }
-                            .disabled(model.isLoading)
-                        }
-                    }
-                }
-                if model.hasCapture {
-                    Section("Todo") {
-                        TextField("Todo name", text: $model.name)
-                            .accessibilityIdentifier("share-capture-name")
-                    }
-                    Section("Link") {
-                        TextField("https://example.com", text: $model.url)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .keyboardType(.URL)
-                            .accessibilityLabel("Todo link")
-                            .accessibilityIdentifier("share-capture-url")
-                    }
-                    if !model.attachments.isEmpty {
-                        Section("Attachments") {
-                            ForEach(model.attachments, id: \.id) { attachment in
-                                HStack {
-                                    Label(attachment.displayName, systemImage: "doc")
-                                    Spacer()
-                                    Button("Remove", role: .destructive) { model.remove(attachment) }
-                                        .buttonStyle(.borderless)
-                                }
-                            }
-                        }
-                    }
-                    Section {
-                        TextEditor(text: $model.body)
-                            .frame(minHeight: 180)
-                            .accessibilityLabel("Markdown context")
-                            .accessibilityIdentifier("share-capture-context")
-                    } header: {
-                        Text("Context")
-                    } footer: {
-                        Text("Saves to Inbox without a project or due date. Shared text and attachment links are kept as Markdown. Files are saved with the todo.")
-                    }
-                }
-            }
-            .disabled(model.isSaving)
+            ShareCaptureForm(model: model)
             .navigationTitle("Add Todo")
             .navigationBarTitleDisplayMode(.inline)
             .interactiveDismissDisabled(model.isSaving)
@@ -224,11 +168,7 @@ private struct ShareCaptureView: View {
                         .accessibilityIdentifier("share-capture-cancel")
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        Task { await model.save() }
-                    }
-                    .disabled(!model.canSave)
-                    .accessibilityIdentifier("share-capture-save")
+                    ShareCaptureSaveButton(model: model)
                 }
             }
             .overlay {
@@ -241,6 +181,126 @@ private struct ShareCaptureView: View {
             .task { await model.load() }
         }
         .tint(OTodoTheme.accent)
+    }
+}
+
+private struct ShareCaptureForm: View {
+    let model: ShareCaptureModel
+
+    var body: some View {
+        Form {
+            ShareCaptureStatus(model: model)
+            if model.hasCapture {
+                ShareCaptureNameSection(model: model)
+                ShareCaptureLinkSection(model: model)
+                ShareCaptureAttachmentsSection(model: model)
+                ShareCaptureContextSection(model: model)
+            }
+        }
+        .disabled(model.isSaving)
+    }
+}
+
+private struct ShareCaptureStatus: View {
+    let model: ShareCaptureModel
+
+    var body: some View {
+        if model.isLoading {
+            Section {
+                ProgressView(loadingTitle)
+            }
+        }
+        if let errorMessage = model.errorMessage {
+            Section {
+                Label(errorMessage, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("share-capture-error")
+                if !model.hasCapture {
+                    Button("Try Again") {
+                        Task { await model.load() }
+                    }
+                    .disabled(model.isLoading)
+                }
+            }
+        }
+    }
+
+    private var loadingTitle: LocalizedStringKey {
+        model.isCancelled ? "Canceling import…" : "Reading shared content…"
+    }
+}
+
+private struct ShareCaptureNameSection: View {
+    @Bindable var model: ShareCaptureModel
+
+    var body: some View {
+        Section("Todo") {
+            TextField("Todo name", text: $model.name)
+                .accessibilityIdentifier("share-capture-name")
+        }
+    }
+}
+
+private struct ShareCaptureLinkSection: View {
+    @Bindable var model: ShareCaptureModel
+
+    var body: some View {
+        Section("Link") {
+            TextField("https://example.com", text: $model.url)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .keyboardType(.URL)
+                .accessibilityLabel("Todo link")
+                .accessibilityIdentifier("share-capture-url")
+        }
+    }
+}
+
+private struct ShareCaptureAttachmentsSection: View {
+    let model: ShareCaptureModel
+
+    var body: some View {
+        if !model.attachments.isEmpty {
+            Section("Attachments") {
+                ForEach(model.attachments, id: \.id) { attachment in
+                    HStack {
+                        Label(attachment.displayName, systemImage: "doc")
+                        Spacer()
+                        Button("Remove", role: .destructive) { model.remove(attachment) }
+                            .buttonStyle(.borderless)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct ShareCaptureContextSection: View {
+    @Bindable var model: ShareCaptureModel
+
+    var body: some View {
+        Section {
+            TextEditor(text: $model.body)
+                .frame(minHeight: 180)
+                .accessibilityLabel("Markdown context")
+                .accessibilityIdentifier("share-capture-context")
+        } header: {
+            Text("Context")
+        } footer: {
+            Text("Saves to Inbox without a project or due date. Shared text and attachment links are kept as Markdown. Files are saved with the todo.")
+        }
+    }
+}
+
+private struct ShareCaptureSaveButton: View {
+    let model: ShareCaptureModel
+
+    var body: some View {
+        Button("Save") {
+            Task { await model.save() }
+        }
+        .disabled(!model.canSave)
+        .accessibilityIdentifier("share-capture-save")
     }
 }
 

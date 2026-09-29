@@ -96,7 +96,7 @@ struct ProjectArchiveView: View {
                                 .submitLabel(.done)
                                 .accessibilityIdentifier("project-archive-new-name")
                             LabeledContent("Slug") {
-                                Text(newProjectSlug.isEmpty ? "Generated from name" : newProjectSlug)
+                                (newProjectSlug.isEmpty ? Text("Generated from name") : Text(newProjectSlug))
                                     .foregroundStyle(.secondary)
                                     .accessibilityIdentifier("project-archive-new-slug")
                             }
@@ -118,19 +118,25 @@ struct ProjectArchiveView: View {
                     Text("Open todos")
                 } footer: {
                     if let completionStateName {
-                        Text(completesOpenTasks
-                             ? "Moves \(openTaskCount) open todos to \(completionStateName). Recurring todos are ended, not rescheduled. Already finished todos stay unchanged."
-                             : "Open todos keep their current state. Restoring the project later does not undo any task moves or completions.")
+                        if completesOpenTasks {
+                            Text("Moves \(openTaskCount) open todos to \(completionStateName). Recurring todos are ended, not rescheduled. Already finished todos stay unchanged.")
+                        } else {
+                            Text("Open todos keep their current state. Restoring the project later does not undo any task moves or completions.")
+                        }
                     } else {
                         Text("No terminal workflow state is configured. Todos will keep their current state.")
                     }
                 }
 
-                if let message = validationMessage ?? saveError {
+                if let message = validationMessage.map({ Text($0) }) ?? saveError.map({ Text($0) }) {
                     Section {
-                        Label(message, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
-                            .accessibilityIdentifier("project-archive-error")
+                        Label {
+                            message
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle")
+                        }
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("project-archive-error")
                     }
                 }
             }
@@ -167,7 +173,7 @@ struct ProjectArchiveView: View {
         ProjectEditorView.slug(from: newProjectName.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    private var destinationDescription: String {
+    private var destinationDescription: LocalizedStringKey {
         switch destination {
         case .leaveInProject:
             "Keeps every project link. Open todos still appear in All Todos."
@@ -178,7 +184,7 @@ struct ProjectArchiveView: View {
         }
     }
 
-    private var validationMessage: String? {
+    private var validationMessage: LocalizedStringKey? {
         if project.isArchived {
             return "This project is already archived."
         }

@@ -3,6 +3,8 @@ import SwiftUI
 
 struct StatsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.calendar) private var calendar
+    @Environment(\.locale) private var locale
     @Bindable var model: AppModel
     @State private var weekOffset = 0
 
@@ -10,7 +12,6 @@ struct StatsView: View {
         NavigationStack {
             TimelineView(.periodic(from: .now, by: 60)) { context in
                 if let configuration = model.configuration {
-                    let calendar = Calendar.autoupdatingCurrent
                     let selected = calendar.date(byAdding: .weekOfYear, value: weekOffset, to: context.date) ?? context.date
                     let stats = TaskStatistics(
                         tasks: model.tasks, configuration: configuration,
@@ -39,7 +40,7 @@ struct StatsView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     Text(weekOffset == 0 ? "This week" : "Weekly review")
                         .font(.title2.bold())
-                    Text("\(stats.week.start.formatted(date: .abbreviated, time: .omitted)) – \(calendar.date(byAdding: .day, value: -1, to: stats.week.end)!.formatted(date: .abbreviated, time: .omitted))")
+                    Text("\(stats.week.start, format: dateStyle) – \(calendar.date(byAdding: .day, value: -1, to: stats.week.end)!, format: dateStyle)")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("stats-week-range")
@@ -63,9 +64,9 @@ struct StatsView: View {
             .listRowBackground(OTodoTheme.card)
 
             Section {
-                metric("Finished total", value: "\(stats.finished)", symbol: "checkmark.circle.fill", id: "stats-finished")
-                metric("Finished on time", value: "\(stats.finishedOnTime) of \(stats.assessedDatedCompletions)", symbol: "clock.badge.checkmark", id: "stats-on-time")
-                metric("Created", value: "\(stats.created)", symbol: "plus.circle.fill", id: "stats-created")
+                StatisticsMetric(title: "Finished total", value: "\(stats.finished, format: .number)", symbol: "checkmark.circle.fill", id: "stats-finished")
+                StatisticsMetric(title: "Finished on time", value: "\(stats.finishedOnTime, format: .number) of \(stats.assessedDatedCompletions, format: .number)", symbol: "clock.badge.checkmark", id: "stats-on-time")
+                StatisticsMetric(title: "Created", value: "\(stats.created, format: .number)", symbol: "plus.circle.fill", id: "stats-created")
             } header: {
                 Text("Recorded this week")
             } footer: {
@@ -79,25 +80,25 @@ struct StatsView: View {
             }
 
             Section {
-                ranking("Projects", entries: stats.activeProjects)
-                ranking("Labels", entries: stats.activeTags)
+                StatisticsRanking(title: "Projects", emptyTitle: "No ranked projects", entries: stats.activeProjects)
+                StatisticsRanking(title: "Labels", emptyTitle: "No ranked labels", entries: stats.activeTags)
             } header: { Text("Most active this week") } footer: {
                 Text("One activity per creation or recorded completion, per project or label. Completion categories are snapshots; creation categories use the task’s current metadata. Unassigned activity has no ranking. Top five shown in each ranking.")
             }
             .listRowBackground(OTodoTheme.card)
 
             Section {
-                ranking("Projects", entries: stats.currentOverdueProjects)
-                ranking("Labels", entries: stats.currentOverdueTags)
+                StatisticsRanking(title: "Projects", emptyTitle: "No ranked projects", entries: stats.currentOverdueProjects)
+                StatisticsRanking(title: "Labels", emptyTitle: "No ranked labels", entries: stats.currentOverdueTags)
             } header: { Text("Most overdue · now") } footer: {
                 Text("Current nonterminal tasks past their due date or exact due time, not historical overdue counts for the selected week. Each task counts once per project or label.")
             }
             .listRowBackground(OTodoTheme.card)
 
             Section {
-                feature("Subtasks", completed: stats.completedFeatureUsage.subtasks, current: stats.currentFeatureUsage.subtasks)
-                feature("Attachments", completed: stats.completedFeatureUsage.attachments, current: stats.currentFeatureUsage.attachments)
-                feature("Recurring", completed: stats.completedFeatureUsage.recurring, current: stats.currentFeatureUsage.recurring)
+                StatisticsFeature(title: "Subtasks", completed: stats.completedFeatureUsage.subtasks, current: stats.currentFeatureUsage.subtasks)
+                StatisticsFeature(title: "Attachments", completed: stats.completedFeatureUsage.attachments, current: stats.currentFeatureUsage.attachments)
+                StatisticsFeature(title: "Recurring", completed: stats.completedFeatureUsage.recurring, current: stats.currentFeatureUsage.recurring)
             } header: { Text("Advanced features") } footer: {
                 Text("Weekly counts are completed occurrences using each feature at completion; current counts are retained tasks using it now. Subtasks includes children and parents with children. Attachments means at least one recognized local attachment link in the notes, not a verified downloaded file. Categories can overlap.")
             }
@@ -107,7 +108,7 @@ struct StatsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Based on \(stats.retainedTasks) retained tasks in this workspace, including offline changes. Not a complete Git history.")
                     if let earliest = stats.earliestRecordedCompletion {
-                        Text("Earliest retained completion evidence: \(earliest.formatted(date: .abbreviated, time: .shortened)). This is not a guarantee of continuous coverage.")
+                        Text("Earliest retained completion evidence: \(earliest, format: dateStyle.hour().minute()). This is not a guarantee of continuous coverage.")
                     } else {
                         Text("No completion evidence recorded yet. Previous completions are unknown, not zero.")
                     }
@@ -126,7 +127,19 @@ struct StatsView: View {
         .accessibilityIdentifier("stats-list")
     }
 
-    private func metric(_ title: String, value: String, symbol: String, id: String) -> some View {
+    private var dateStyle: Date.FormatStyle {
+        Date.FormatStyle(date: .abbreviated, time: .omitted, calendar: calendar, timeZone: calendar.timeZone)
+            .locale(locale)
+    }
+}
+
+private struct StatisticsMetric: View {
+    let title: LocalizedStringKey
+    let value: LocalizedStringKey
+    let symbol: String
+    let id: String
+
+    var body: some View {
         ViewThatFits(in: .horizontal) {
             HStack {
                 Label(title, systemImage: symbol).foregroundStyle(OTodoTheme.accent)
@@ -145,17 +158,24 @@ struct StatsView: View {
         .accessibilityIdentifier(id)
     }
 
-    private func ranking(_ title: String, entries: [TaskStatistics.Ranking]) -> some View {
+}
+
+private struct StatisticsRanking: View {
+    let title: LocalizedStringKey
+    let emptyTitle: LocalizedStringKey
+    let entries: [TaskStatistics.Ranking]
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title).font(.subheadline.bold())
             if entries.isEmpty {
-                Text("No ranked \(title.lowercased())").foregroundStyle(.secondary)
+                Text(emptyTitle).foregroundStyle(.secondary)
             } else {
                 ForEach(entries.prefix(5)) { entry in
                     HStack(alignment: .firstTextBaseline) {
                         Text(entry.name)
                         Spacer()
-                        Text(entry.count.formatted()).monospacedDigit().foregroundStyle(OTodoTheme.accent)
+                        Text(entry.count, format: .number).monospacedDigit().foregroundStyle(OTodoTheme.accent)
                     }
                     .accessibilityElement(children: .combine)
                 }
@@ -164,7 +184,14 @@ struct StatsView: View {
         .padding(.vertical, 4)
     }
 
-    private func feature(_ title: String, completed: Int, current: Int) -> some View {
+}
+
+private struct StatisticsFeature: View {
+    let title: LocalizedStringKey
+    let completed: Int
+    let current: Int
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.subheadline.bold())
             Text("\(completed) completed this week · \(current) tasks now")

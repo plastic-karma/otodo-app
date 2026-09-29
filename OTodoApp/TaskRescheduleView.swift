@@ -39,10 +39,15 @@ struct TaskRescheduleView: View {
         NavigationStack {
             Form {
                 Section(isBulk ? "Selected todos" : "Todo") {
-                    Label(
-                        isBulk ? "\(tasks.count) todos" : tasks.first?.name ?? "No todos selected",
-                        systemImage: isBulk ? "checkmark.circle.fill" : "checkmark.circle"
-                    )
+                    Label {
+                        if isBulk {
+                            Text("\(tasks.count) todos")
+                        } else {
+                            Text(tasks.first?.name ?? String(localized: "No todos selected"))
+                        }
+                    } icon: {
+                        Image(systemName: isBulk ? "checkmark.circle.fill" : "checkmark.circle")
+                    }
                     .font(.body.weight(.semibold))
                     .lineLimit(2)
                     if isBulk {
@@ -134,7 +139,7 @@ struct TaskRescheduleView: View {
             .accessibilityIdentifier("task-reschedule")
             .scrollContentBackground(.hidden)
             .background(OTodoTheme.formCanvas.ignoresSafeArea())
-            .navigationTitle(isBulk ? "Reschedule \(tasks.count) todos" : "Reschedule")
+            .navigationTitle(isBulk ? Text("Reschedule \(tasks.count) todos") : Text("Reschedule"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(OTodoTheme.formCanvas, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
@@ -172,7 +177,7 @@ struct TaskRescheduleView: View {
 
     private var isBulk: Bool { tasks.count > 1 }
 
-    private var scheduleExplanation: String {
+    private var scheduleExplanation: LocalizedStringKey {
         if dateChange == .clear {
             return "Removing dates also removes their times. Recurring todos require a due date."
         }

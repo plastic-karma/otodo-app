@@ -4,7 +4,7 @@ import SwiftUI
 struct ConflictResolutionView: View {
     @Environment(\.dismiss) private var dismiss
 
-    @Bindable private var model: AppModel
+    private let model: AppModel
     @State private var confirmation: ResolutionConfirmation?
     @State private var resolvingPath: String?
 
@@ -185,7 +185,7 @@ private struct ResolutionConfirmation {
     let resolution: WorkspaceConflictResolution
     var isAttachment = false
 
-    var title: String {
+    var title: LocalizedStringKey {
         switch resolution {
         case .keepLocal:
             return "Keep your version?"
@@ -194,7 +194,7 @@ private struct ResolutionConfirmation {
         }
     }
 
-    var actionTitle: String {
+    var actionTitle: LocalizedStringKey {
         switch resolution {
         case .keepLocal:
             return "Keep My Version"
@@ -203,7 +203,7 @@ private struct ResolutionConfirmation {
         }
     }
 
-    var message: String {
+    var message: LocalizedStringKey {
         switch resolution {
         case .keepLocal:
             return "For \(path), your version will replace GitHub’s current version during sync. If your version is a deletion, the GitHub todo will be deleted."

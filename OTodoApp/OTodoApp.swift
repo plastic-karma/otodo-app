@@ -7,7 +7,6 @@ struct OTodoApp: App {
     @UIApplicationDelegateAdaptor(OTodoApplicationDelegate.self)
     private var applicationDelegate
 
-    @Environment(\.scenePhase) private var scenePhase
     @State private var startup: Result<AppModel, Error> = Result { try AppModel() }
     private var notifications: TaskNotificationManager { applicationDelegate.notifications }
     private var watchSync: PhoneWatchSync { applicationDelegate.watchSync }
@@ -22,35 +21,11 @@ struct OTodoApp: App {
     #if DEBUG
                     .preferredColorScheme(testColorScheme)
     #endif
-                    .task {
-                        await model.start()
-                        await synchronizeSystemSurfaces(model: model)
-                    }
-                    .onChange(of: scenePhase) { _, phase in
-    #if DEBUG
-                        TaskNotificationTestHarness.scenePhaseDidChange(phase, notifications: notifications)
-    #endif
-                        guard phase == .active else { return }
-                        Task { @MainActor in
-                            await model.sceneDidBecomeActive()
-                            await synchronizeSystemSurfaces(model: model)
-                        }
-                    }
-                    .onChange(of: model.tasks) { _, _ in
-                        Task { @MainActor in
-                            await synchronizeSystemSurfaces(model: model)
-                        }
-                    }
-                    .onChange(of: model.configuration) { _, _ in
-                        Task { @MainActor in
-                            await synchronizeSystemSurfaces(model: model)
-                        }
-                    }
-                    .onChange(of: model.workspaceSelection) { _, _ in
-                        Task { @MainActor in
-                            await synchronizeSystemSurfaces(model: model)
-                        }
-                    }
+                    .modifier(SystemSurfacesSyncModifier(
+                        model: model,
+                        notifications: notifications,
+                        watchSync: watchSync
+                    ))
             case let .failure(error):
                 ContentUnavailableView {
                     Label("Unable to open workspace", systemImage: "externaldrive.badge.exclamationmark")
@@ -74,8 +49,49 @@ struct OTodoApp: App {
     }
 #endif
 
+}
 
-    private func synchronizeSystemSurfaces(model: AppModel) async {
+@MainActor
+private struct SystemSurfacesSyncModifier: ViewModifier {
+    @Environment(\.scenePhase) private var scenePhase
+    let model: AppModel
+    let notifications: TaskNotificationManager
+    let watchSync: PhoneWatchSync
+
+    func body(content: Content) -> some View {
+        content
+            .task {
+                await model.start()
+                await synchronizeSystemSurfaces()
+            }
+            .onChange(of: scenePhase) { _, phase in
+#if DEBUG
+                TaskNotificationTestHarness.scenePhaseDidChange(phase, notifications: notifications)
+#endif
+                guard phase == .active else { return }
+                Task { @MainActor in
+                    await model.sceneDidBecomeActive()
+                    await synchronizeSystemSurfaces()
+                }
+            }
+            .onChange(of: model.tasks) { _, _ in
+                Task { @MainActor in
+                    await synchronizeSystemSurfaces()
+                }
+            }
+            .onChange(of: model.configuration) { _, _ in
+                Task { @MainActor in
+                    await synchronizeSystemSurfaces()
+                }
+            }
+            .onChange(of: model.workspaceSelection) { _, _ in
+                Task { @MainActor in
+                    await synchronizeSystemSurfaces()
+                }
+            }
+    }
+
+    private func synchronizeSystemSurfaces() async {
         let workspaceAvailable = model.workspaceSelection != nil
         let tasks = workspaceAvailable ? model.tasks : []
         let states = model.configuration?.states ?? []

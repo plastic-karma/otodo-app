@@ -121,7 +121,7 @@ struct TaskCalendarView: View {
         }
     }
 
-    private func dayButton(_ date: CivilDate, month: TaskCalendarMonth, symbols: DateFormatter) -> some View {
+    private func dayButton(_ date: CivilDate, month: TaskCalendarMonth, symbols: Calendar) -> some View {
         let day = Int(date.rawValue.suffix(2))!
         let count = tasksByDate[date]?.count ?? 0
         let isSelected = selectedDate == date
@@ -160,11 +160,10 @@ struct TaskCalendarView: View {
         .accessibilityIdentifier("calendar-day-\(date.rawValue)")
     }
 
-    private var dateSymbols: DateFormatter {
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        formatter.calendar = Calendar(identifier: .gregorian)
-        return formatter
+    private var dateSymbols: Calendar {
+        var symbols = Calendar(identifier: .gregorian)
+        symbols.locale = locale
+        return symbols
     }
 
     private func select(_ date: CivilDate?) {

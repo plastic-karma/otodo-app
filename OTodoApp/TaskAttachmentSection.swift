@@ -11,8 +11,11 @@ import UniformTypeIdentifiers
 struct TaskAttachmentSection: View {
     let model: AppModel
     let selection: RepositorySelection
-    @Binding var draft: TaskEditorDraft
-    let configuration: StoreConfiguration
+    let bodyText: String
+    let taskPath: String
+    let storePrefix: String
+    @Binding var attachments: [AttachmentDraft]
+    @Binding var removingAttachmentPaths: [String]
     @State private var choosesFiles = false
     @State private var photos: [PhotosPickerItem] = []
     @Binding var isImporting: Bool
@@ -20,10 +23,9 @@ struct TaskAttachmentSection: View {
     @Binding var isEditorPresented: Bool
 
     private var links: [AttachmentLink] {
-        let path = draft.preservedTask?.relativePath ?? configuration.tasksDirectory + "/draft.md"
-        var seen: Set<String> = []
-        return AttachmentLinks.references(body: draft.body, taskPath: path, storePrefix: configuration.obsidianLinkPrefix).filter {
-            !draft.removingAttachmentPaths.contains($0.path) && seen.insert($0.path).inserted
+        let removedPaths = Set(removingAttachmentPaths)
+        return AttachmentLinks.references(body: bodyText, taskPath: taskPath, storePrefix: storePrefix).filter {
+            !removedPaths.contains($0.path)
         }
     }
 
@@ -32,13 +34,13 @@ struct TaskAttachmentSection: View {
             ForEach(links, id: \.path) { link in
                 AttachmentRow(model: model, selection: selection, path: link.path,
                               name: link.displayName, imported: nil) {
-                    draft.removingAttachmentPaths.append(link.path)
+                    removingAttachmentPaths.append(link.path)
                 }
             }
-            ForEach(draft.attachments, id: \.id) { attachment in
+            ForEach(attachments, id: \.id) { attachment in
                 AttachmentRow(model: model, selection: selection, path: attachment.path,
                               name: attachment.displayName, imported: attachment) {
-                    draft.attachments.removeAll { $0.id == attachment.id }
+                    attachments.removeAll { $0.id == attachment.id }
                     Task { await model.discardAttachmentDrafts([attachment], selection: selection) }
                 }
             }
@@ -125,7 +127,7 @@ struct TaskAttachmentSection: View {
             defer { isImporting = false }
             do {
                 let staged = try await operation()
-                if isEditorPresented { draft.attachments.append(contentsOf: staged) }
+                if isEditorPresented { attachments.append(contentsOf: staged) }
                 else { await model.discardAttachmentDrafts(staged, selection: selection) }
             } catch { importError = error.localizedDescription }
         }
@@ -203,15 +205,18 @@ private struct AttachmentRow: View {
         .sheet(item: $preview) { item in
             AttachmentPreview(item: item)
         }
-        .task(id: CacheRefreshKey(catalog: model.attachmentCatalog, revision: model.attachmentCacheRevision)) { await refreshCachedFile() }
+        .task(id: CacheRefreshKey(
+            metadata: model.attachmentMetadata(path: path, selection: selection),
+            revision: model.attachmentCacheRevision
+        )) { await refreshCachedFile() }
     }
 
     private struct CacheRefreshKey: Equatable {
-        let catalog: [AttachmentMetadata]
+        let metadata: AttachmentMetadata?
         let revision: UInt64
     }
 
-    private var status: String {
+    private var status: LocalizedStringKey {
         if imported != nil { return "Selected · saves with this todo" }
         if file?.isOlderVersion == true { return "Older cached version · update unavailable" }
         if file?.isPinned == true { return "Kept offline" }

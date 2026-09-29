@@ -8,31 +8,52 @@ enum DailyReviewKind: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var title: String {
+    var title: LocalizedStringKey {
         switch self {
         case .kickstart: "Kickstart"
         case .wrapUp: "Wrap-up"
         }
     }
 
-    var promptTitle: String {
+    var promptTitle: LocalizedStringKey {
         switch self {
         case .kickstart: "Start with intention"
         case .wrapUp: "Close the day clearly"
         }
     }
 
-    var introTitle: String {
+    var introTitle: LocalizedStringKey {
         switch self {
         case .kickstart: "Today, clearly."
         case .wrapUp: "Close the loop."
         }
     }
 
-    var closingTitle: String {
+    var closingTitle: LocalizedStringKey {
         switch self {
         case .kickstart: "You’re in motion."
         case .wrapUp: "The day is closed."
+        }
+    }
+
+    var readyTitle: LocalizedStringKey {
+        switch self {
+        case .kickstart: "Kickstart ready"
+        case .wrapUp: "Wrap-up ready"
+        }
+    }
+
+    var startTitle: LocalizedStringKey {
+        switch self {
+        case .kickstart: "Start Kickstart now"
+        case .wrapUp: "Start Wrap-up now"
+        }
+    }
+
+    var finishTitle: LocalizedStringKey {
+        switch self {
+        case .kickstart: "Finish Kickstart"
+        case .wrapUp: "Finish Wrap-up"
         }
     }
 
@@ -148,13 +169,13 @@ struct DailyReviewPromptCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(kind.title) ready")
+        .accessibilityLabel(kind.readyTitle)
         .accessibilityValue(taskCount == 1 ? "One todo" : "\(taskCount) todos")
         .accessibilityHint("Starts the daily review")
         .accessibilityIdentifier("daily-review-prompt-\(kind.rawValue)")
     }
 
-    private var promptDetail: String {
+    private var promptDetail: LocalizedStringKey {
         switch taskCount {
         case 0: "Your due list is clear."
         case 1: "One todo is ready for a decision."
@@ -229,7 +250,7 @@ struct DailyReviewSettingsView: View {
         kind: DailyReviewKind,
         isEnabled: Binding<Bool>,
         time: Binding<Date>,
-        detail: String
+        detail: LocalizedStringKey
     ) -> some View {
         Section {
             Toggle(isOn: isEnabled) {
@@ -242,7 +263,7 @@ struct DailyReviewSettingsView: View {
             if isEnabled.wrappedValue {
                 DatePicker("Time", selection: time, displayedComponents: .hourAndMinute)
                     .accessibilityIdentifier("daily-review-\(kind.rawValue)-time")
-                Button("Start \(kind.title) now") {
+                Button(kind.startTitle) {
                     onStart(kind)
                 }
                 .foregroundStyle(kind.tint)
@@ -268,8 +289,15 @@ struct DailyReviewSettingsView: View {
 
 struct DailyReviewView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.locale) private var locale
     private struct ReschedulePresentation: Identifiable {
         let task: TodoTask
+        var id: TaskID { task.id }
+    }
+
+    private struct SessionTask: Identifiable {
+        let task: TodoTask
+        let position: Int
         var id: TaskID { task.id }
     }
 
@@ -281,7 +309,7 @@ struct DailyReviewView: View {
     ) async -> String?
     private let onFinish: () -> Void
 
-    @State private var sessionTasks: [TodoTask]
+    @State private var sessionTasks: [SessionTask]
     @State private var page = 0
     @State private var completedCount = 0
     @State private var rescheduledCount = 0
@@ -320,7 +348,9 @@ struct DailyReviewView: View {
             }
             return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
         }
-        _sessionTasks = State(initialValue: reviewTasks)
+        _sessionTasks = State(initialValue: reviewTasks.enumerated().map {
+            SessionTask(task: $0.element, position: $0.offset + 1)
+        })
         completedTodayAtStart = tasks.lazy.filter { $0.lastCompletedDate == today }.count
     }
 
@@ -331,9 +361,9 @@ struct DailyReviewView: View {
                 TabView(selection: $page) {
                     summaryCard(isClosing: false)
                         .tag(0)
-                    ForEach(Array(sessionTasks.enumerated()), id: \.element.id) { offset, task in
-                        taskCard(task, position: offset + 1)
-                            .tag(offset + 1)
+                    ForEach(sessionTasks) { entry in
+                        taskCard(entry.task, position: entry.position)
+                            .tag(entry.position)
                     }
                     summaryCard(isClosing: true)
                         .tag(sessionTasks.count + 1)
@@ -387,7 +417,7 @@ struct DailyReviewView: View {
                 Spacer(minLength: 12)
 
                 if isClosing {
-                    Button("Finish \(kind.title)") { onFinish() }
+                    Button(kind.finishTitle) { onFinish() }
                         .buttonStyle(DailyReviewPrimaryButtonStyle())
                         .accessibilityIdentifier("daily-review-finish")
                 } else {
@@ -545,10 +575,10 @@ struct DailyReviewView: View {
             label = "Today"
         } else {
             label = TaskSchedule.date(from: dueDate, time: nil)
-                .formatted(.dateTime.month(.abbreviated).day())
+                .formatted(.dateTime.month(.abbreviated).day().locale(locale))
         }
         if let dueTime = task.dueTime {
-            return "\(label) · \(TaskSchedule.date(from: dueDate, time: dueTime).formatted(date: .omitted, time: .shortened))"
+            return "\(label) · \(TaskSchedule.date(from: dueDate, time: dueTime).formatted(Date.FormatStyle(date: .omitted, time: .shortened).locale(locale)))"
         }
         return label
     }

@@ -3,7 +3,7 @@ import SwiftUI
 
 struct TaskRelationshipReview: View {
     @Environment(\.dismiss) private var dismiss
-    @Bindable var model: AppModel
+    let model: AppModel
     @State private var editingTask: RepairPresentation?
 
     var body: some View {
@@ -16,7 +16,7 @@ struct TaskRelationshipReview: View {
                     if model.hierarchy.issues.isEmpty {
                         Text("No workspace relationship issues")
                     }
-                    ForEach(Array(model.hierarchy.issues.enumerated()), id: \.offset) { _, issue in
+                    ForEach(model.hierarchy.issues, id: \.reviewID) { issue in
                         VStack(alignment: .leading, spacing: 8) {
                             Text(issue.message)
                             Text(issue.code).font(.caption.monospaced()).foregroundStyle(.secondary)
@@ -28,7 +28,7 @@ struct TaskRelationshipReview: View {
                     if model.relationshipBlocks.isEmpty {
                         Text("No relationship changes withheld")
                     }
-                    ForEach(Array(model.relationshipBlocks.enumerated()), id: \.offset) { _, block in
+                    ForEach(model.relationshipBlocks, id: \.reviewID) { block in
                         VStack(alignment: .leading, spacing: 8) {
                             Text(block.message)
                             Text(block.path).font(.caption.monospaced())
@@ -91,4 +91,29 @@ struct TaskRelationshipReview: View {
 private struct RepairPresentation: Identifiable {
     let task: TodoTask
     var id: TaskID { task.id }
+}
+
+private struct HierarchyIssueReviewID: Hashable {
+    let taskID: TaskID
+    let code: String
+}
+
+private extension TaskHierarchyIssue {
+    var reviewID: HierarchyIssueReviewID {
+        HierarchyIssueReviewID(taskID: taskID, code: code)
+    }
+}
+
+private struct RelationshipBlockReviewID: Hashable {
+    let path: String
+    let code: String
+    let reason: String
+}
+
+private extension TaskRelationshipBlock {
+    var reviewID: RelationshipBlockReviewID {
+        // Sync can withhold the same path/code for distinct local and publish reasons.
+        // Match its diagnostic identity without including the changing repair targets.
+        RelationshipBlockReviewID(path: path, code: code, reason: message)
+    }
 }

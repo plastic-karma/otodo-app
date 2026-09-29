@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SyncStatusView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Bindable private var model: AppModel
+    private let model: AppModel
     @State private var isReviewingConflicts = false
     @State private var isReviewingRelationships = false
     @State private var isShowingDetails = false
@@ -22,7 +22,7 @@ struct SyncStatusView: View {
                     HStack(spacing: 8) {
                         Image(systemName: primarySymbol)
                             .font(.system(size: 16))
-                        Text(compactText)
+                        compactText
                             .font(.caption.weight(.semibold))
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
@@ -36,7 +36,7 @@ struct SyncStatusView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(primaryColor)
                 .accessibilityLabel(primaryText)
-                .accessibilityValue(detailText ?? "")
+                .accessibilityValue(detailText ?? Text(""))
                 .accessibilityHint(
                     isShowingDetails
                         ? "Hides workspace details"
@@ -46,7 +46,7 @@ struct SyncStatusView: View {
                 )
                 .accessibilityIdentifier("sync-details-toggle")
 
-                refreshButton
+                SyncRefreshButton(model: model)
             }
 
             if isShowingDetails {
@@ -79,7 +79,7 @@ struct SyncStatusView: View {
     private var statusDetails: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let detailText {
-                Text(detailText)
+                detailText
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -111,39 +111,11 @@ struct SyncStatusView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder
-    private var refreshButton: some View {
-        if model.isBusy {
-            ProgressView()
-                .controlSize(.small)
-                .frame(width: 44, height: 44)
-                .accessibilityLabel(model.isLocalOnly ? "Local save in progress" : "Sync in progress")
-        } else {
-            Button {
-                Task { @MainActor in
-                    await model.refresh()
-                }
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 16, weight: .medium))
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.borderless)
-            .disabled(!model.isLocalOnly && !model.isOnline)
-            .accessibilityLabel(
-                model.isLocalOnly
-                    ? "Refresh local workspace"
-                    : model.isOnline ? "Sync now" : "Sync unavailable while offline"
-            )
-            .accessibilityIdentifier("sync-refresh")
-        }
-    }
 
-    private var compactText: String {
-        if requiresAttention { return "Needs attention" }
+    private var compactText: Text {
+        if requiresAttention { return Text("Needs attention") }
         if model.isLocalOnly { return primaryText }
-        if !model.isOnline { return "Offline" }
+        if !model.isOnline { return Text("Offline") }
         return primaryText
     }
 
@@ -171,57 +143,53 @@ struct SyncStatusView: View {
         !model.conflicts.isEmpty || hasRelationshipIssues || !model.attachmentRefreshErrors.isEmpty
     }
 
-    private var detailText: String? {
+    private var detailText: Text? {
         if !model.relationshipBlocks.isEmpty {
-            return "\(model.relationshipBlocks.count) relationship changes withheld; saved locally"
+            return Text("\(model.relationshipBlocks.count) relationship changes withheld; saved locally")
         }
         if !model.hierarchy.issues.isEmpty {
-            return "\(model.hierarchy.issues.count) workspace relationship issues"
+            return Text("\(model.hierarchy.issues.count) workspace relationship issues")
         }
         if !model.conflicts.isEmpty {
-            return countText(
-                model.conflicts.count,
-                singular: "conflict needs attention",
-                plural: "conflicts need attention"
-            )
+            return model.conflicts.count == 1
+                ? Text("\(model.conflicts.count) conflict needs attention")
+                : Text("\(model.conflicts.count) conflicts need attention")
         }
         if model.isLocalOnly {
-            return model.statusMessage.flatMap { $0.isEmpty ? nil : $0 }
-                ?? "No GitHub connection"
+            return model.statusMessage.flatMap { $0.isEmpty ? nil : Text($0) }
+                ?? Text("No GitHub connection")
         }
         if model.pendingChangeCount > 0 {
-            return countText(
-                model.pendingChangeCount,
-                singular: "change waiting to sync",
-                plural: "changes waiting to sync"
-            )
+            return model.pendingChangeCount == 1
+                ? Text("\(model.pendingChangeCount) change waiting to sync")
+                : Text("\(model.pendingChangeCount) changes waiting to sync")
         }
-        return model.statusMessage.flatMap { $0.isEmpty ? nil : $0 }
+        return model.statusMessage.flatMap { $0.isEmpty ? nil : Text($0) }
     }
 
-    private var primaryText: String {
+    private var primaryText: Text {
         if hasRelationshipIssues {
-            return "Relationships need attention"
+            return Text("Relationships need attention")
         }
         if !model.conflicts.isEmpty {
-            return "Sync needs attention"
+            return Text("Sync needs attention")
         }
         if !model.attachmentRefreshErrors.isEmpty {
-            return "Attachment updates need attention"
+            return Text("Attachment updates need attention")
         }
         if model.isBusy {
-            return model.isLocalOnly ? "Saving" : "Syncing"
+            return model.isLocalOnly ? Text("Saving") : Text("Syncing")
         }
         if model.isLocalOnly {
-            return "On this device"
+            return Text("On this device")
         }
         if !model.isOnline {
-            return "Saved on this device"
+            return Text("Saved on this device")
         }
         if model.pendingChangeCount > 0 {
-            return "Waiting to sync"
+            return Text("Waiting to sync")
         }
-        return "Up to date"
+        return Text("Up to date")
     }
 
     private var primarySymbol: String {
@@ -262,7 +230,36 @@ struct SyncStatusView: View {
         return OTodoTheme.mint
     }
 
-    private func countText(_ count: Int, singular: String, plural: String) -> String {
-        "\(count) \(count == 1 ? singular : plural)"
+}
+
+private struct SyncRefreshButton: View {
+    let model: AppModel
+
+    var body: some View {
+        if model.isBusy {
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 44, height: 44)
+                .accessibilityLabel(model.isLocalOnly ? "Local save in progress" : "Sync in progress")
+        } else {
+            Button {
+                Task { @MainActor in
+                    await model.refresh()
+                }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 16, weight: .medium))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .disabled(!model.isLocalOnly && !model.isOnline)
+            .accessibilityLabel(
+                model.isLocalOnly
+                    ? "Refresh local workspace"
+                    : model.isOnline ? "Sync now" : "Sync unavailable while offline"
+            )
+            .accessibilityIdentifier("sync-refresh")
+        }
     }
 }

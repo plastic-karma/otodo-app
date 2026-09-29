@@ -39,6 +39,9 @@ final class AppModel {
     private(set) var activeProjectChoices: [String] = []
     private(set) var archivedProjectChoices: [String] = []
     private(set) var tagChoices: [String] = []
+    private(set) var openTaskCount = 0
+    private(set) var inboxTaskCount = 0
+    private(set) var openTaskCountsByProject: [String: Int] = [:]
 
     private(set) var pendingChangeCount = 0
     private(set) var attachmentCatalog: [AttachmentMetadata] = []
@@ -71,7 +74,7 @@ final class AppModel {
     var isAuthorizingGitHub: Bool { authorizationID != nil }
     @ObservationIgnored private var didStart = false
     @ObservationIgnored private var sessionID = UUID()
-    @ObservationIgnored private var authorizationID: UUID?
+    private var authorizationID: UUID?
     @ObservationIgnored private var authorizationTask: Task<Void, Never>?
     @ObservationIgnored private var syncTask: Task<Void, Never>?
     @ObservationIgnored private var syncFollowUpRequested = false
@@ -376,6 +379,9 @@ final class AppModel {
         syncEngine = nil
         workspaceSelection = nil
         tasks = []
+        openTaskCount = 0
+        inboxTaskCount = 0
+        openTaskCountsByProject = [:]
         configuration = nil
         projectChoices = []
         projectDetails = [:]
@@ -1206,6 +1212,9 @@ final class AppModel {
         storePath = ""
         discoveredStorePaths = []
         tasks = []
+        openTaskCount = 0
+        inboxTaskCount = 0
+        openTaskCountsByProject = [:]
         configuration = nil
         projectChoices = []
         projectDetails = [:]
@@ -1287,6 +1296,8 @@ final class AppModel {
     }
 
     private func apply(_ workspace: WorkspaceState) {
+        let tasksChanged = !tasks.elementsEqual(workspace.tasks.lazy.map(\.task))
+        let statesChanged = configuration?.states != workspace.configuration.states
         workspaceSelection = workspace.selection
         configuration = workspace.configuration
         attachmentCatalog = workspace.attachments
@@ -1306,10 +1317,18 @@ final class AppModel {
         }
         activeProjectChoices = activeProjects
         archivedProjectChoices = archivedProjects
-        tasks = workspace.tasks.map(\.task)
-        hierarchy = TaskHierarchy(tasks: tasks)
+        if tasksChanged {
+            tasks = workspace.tasks.map(\.task)
+            hierarchy = TaskHierarchy(tasks: tasks)
+            tagChoices = Set(tasks.lazy.flatMap(\.tags)).sorted()
+        }
+        if tasksChanged || statesChanged {
+            let counts = TaskListCounts(tasks: tasks, states: workspace.configuration.states)
+            openTaskCount = counts.open
+            inboxTaskCount = counts.inbox
+            openTaskCountsByProject = counts.byProject
+        }
         relationshipBlocks = workspace.relationshipBlocks
-        tagChoices = Set(tasks.lazy.flatMap(\.tags)).sorted()
         conflicts = workspace.conflicts
         pendingChangeCount = workspace.pendingChanges.count
         conflictCount = workspace.conflicts.count

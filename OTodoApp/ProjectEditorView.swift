@@ -55,7 +55,7 @@ struct ProjectEditorView: View {
                         .accessibilityIdentifier("project-editor-name")
 
                     LabeledContent("Slug") {
-                        Text(slug.isEmpty ? "Generated from name" : slug)
+                        (slug.isEmpty ? Text("Generated from name") : Text(slug))
                             .foregroundStyle(slug.isEmpty ? Color.secondary : Color.primary)
                             .accessibilityIdentifier("project-editor-slug")
                     }
@@ -78,11 +78,15 @@ struct ProjectEditorView: View {
                     }
                 }
 
-                if let message = validationMessage ?? saveError {
+                if let message = validationMessage.map({ Text($0) }) ?? saveError.map({ Text($0) }) {
                     Section {
-                        Label(message, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
-                            .accessibilityLabel("Cannot save. \(message)")
+                        Label {
+                            message
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle")
+                        }
+                        .foregroundStyle(.red)
+                        .accessibilityLabel(Text("Cannot save. \(message)"))
                     }
                 }
             }
@@ -138,19 +142,13 @@ struct ProjectEditorView: View {
         }
     }
 
-    private var validationMessage: String? {
-        if let message = Self.nameValidationMessage(name: name) {
-            return message
+    private var validationMessage: LocalizedStringKey? {
+        switch mode {
+        case let .create(existingSlugs, _):
+            Self.creationValidationMessage(name: name, existingSlugs: existingSlugs)
+        case .edit:
+            Self.nameValidationMessage(name: name)
         }
-        guard case let .create(existingSlugs, _) = mode else { return nil }
-        let generatedSlug = Self.slug(from: trimmedName)
-        guard !generatedSlug.isEmpty else {
-            return "Use at least one letter or number in the project name."
-        }
-        guard !existingSlugs.contains(generatedSlug) else {
-            return "A project with the slug \(generatedSlug) already exists."
-        }
-        return nil
     }
 
     private var hasChanges: Bool {
@@ -158,7 +156,7 @@ struct ProjectEditorView: View {
         return trimmedName != project.name || notes != project.body
     }
 
-    static func creationValidationMessage(name: String, existingSlugs: Set<String>) -> String? {
+    static func creationValidationMessage(name: String, existingSlugs: Set<String>) -> LocalizedStringKey? {
         if let message = nameValidationMessage(name: name) {
             return message
         }
@@ -172,7 +170,7 @@ struct ProjectEditorView: View {
         return nil
     }
 
-    private static func nameValidationMessage(name: String) -> String? {
+    private static func nameValidationMessage(name: String) -> LocalizedStringKey? {
         let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else {
             return "Enter a project name."
@@ -183,7 +181,7 @@ struct ProjectEditorView: View {
         return nil
     }
 
-    private var projectPathDescription: String {
+    private var projectPathDescription: LocalizedStringKey {
         switch mode {
         case let .create(_, projectsDirectory):
             guard !slug.isEmpty else {

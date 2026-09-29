@@ -3,7 +3,7 @@ import OTodoCore
 import SwiftUI
 
 struct RelativeDueDateField: View {
-    private static let helpText =
+    private static let helpText: LocalizedStringKey =
         "Set from now using minutes, hours, days, weeks, months, or years."
     private static let invalidText =
         "Use a phrase such as “in 3 days” or “in 6 hours”."

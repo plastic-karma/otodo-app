@@ -3,8 +3,7 @@ import SwiftUI
 import UIKit
 
 struct AuthenticationView: View {
-    @Bindable private var model: AppModel
-    @Environment(\.openURL) private var openURL
+    private let model: AppModel
 
     init(model: AppModel) {
         self.model = model
@@ -20,26 +19,12 @@ struct AuthenticationView: View {
                         header
 
                         if let deviceCode = model.deviceCode {
-                            authorizationCard(for: deviceCode)
+                            GitHubAuthorizationCard(model: model, deviceCode: deviceCode)
                         } else {
-                            startCard
+                            AuthenticationStartCard(model: model)
                         }
 
-                        if let errorMessage = model.errorMessage {
-                            Label {
-                                Text(errorMessage)
-                            } icon: {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                            }
-                            .foregroundStyle(.red)
-                            .accessibilityIdentifier("authentication.error")
-                        }
-
-                        if model.isBusy, let statusMessage = model.statusMessage {
-                            ProgressView(statusMessage)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .accessibilityIdentifier("authentication.progress")
-                        }
+                        AuthenticationStatus(model: model)
                     }
                     .frame(maxWidth: 560, alignment: .leading)
                     .padding(.horizontal, 22)
@@ -74,15 +59,47 @@ struct AuthenticationView: View {
         }
     }
 
-    @ViewBuilder
-    private var startCard: some View {
+}
+
+private struct AuthenticationStatus: View {
+    let model: AppModel
+
+    var body: some View {
+        if let errorMessage = model.errorMessage {
+            Label {
+                Text(errorMessage)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+            }
+            .foregroundStyle(.red)
+            .accessibilityIdentifier("authentication.error")
+        }
+
+        if model.isBusy, let statusMessage = model.statusMessage {
+            ProgressView(statusMessage)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("authentication.progress")
+        }
+    }
+}
+
+private struct AuthenticationStartCard: View {
+    let model: AppModel
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Choose where OTodo keeps this workspace.")
                 .font(.headline)
 
             if model.isBusy {
-                ProgressView(model.statusMessage ?? "Working…")
-                    .accessibilityIdentifier("authentication.requestingCode")
+                ProgressView {
+                    if let statusMessage = model.statusMessage {
+                        Text(statusMessage)
+                    } else {
+                        Text("Working…")
+                    }
+                }
+                .accessibilityIdentifier("authentication.requestingCode")
 
                 if model.isAuthorizingGitHub {
                     Button("Cancel", role: .cancel) {
@@ -148,7 +165,14 @@ struct AuthenticationView: View {
         .shadow(color: .black.opacity(0.06), radius: 12, y: 5)
     }
 
-    private func authorizationCard(for deviceCode: OAuthDeviceCode) -> some View {
+}
+
+private struct GitHubAuthorizationCard: View {
+    let model: AppModel
+    let deviceCode: OAuthDeviceCode
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let isExpired = context.date >= deviceCode.expiresAt
 

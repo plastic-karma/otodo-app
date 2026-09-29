@@ -21,16 +21,16 @@ struct TaskFiltersView: View {
                 }
 
                 Section("Predefined") {
-                    ForEach(library.filters) { filter in
-                        if filter.isBuiltIn { filterRow(filter) }
+                    ForEach(library.builtInFilters) { filter in
+                        filterRow(filter)
                     }
                 }
 
                 Section {
-                    ForEach(library.filters) { filter in
-                        if !filter.isBuiltIn { filterRow(filter) }
+                    ForEach(library.savedFilters) { filter in
+                        filterRow(filter)
                     }
-                    if !library.filters.contains(where: { !$0.isBuiltIn }) {
+                    if library.savedFilters.isEmpty {
                         Text("Save a query to make it a reusable view of your todos.")
                             .foregroundStyle(.secondary)
                     }
@@ -75,7 +75,7 @@ struct TaskFiltersView: View {
                     Text(filter.name)
                         .font(.body.weight(.medium))
                         .foregroundStyle(.primary)
-                    Text(filterDescription(filter))
+                    filterDescription(filter)
                         .font(filter.isBuiltIn ? .caption : .system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -121,14 +121,14 @@ struct TaskFiltersView: View {
         }
     }
 
-    private func filterDescription(_ filter: SavedTaskFilter) -> String {
-        guard filter.isBuiltIn else { return filter.query }
+    private func filterDescription(_ filter: SavedTaskFilter) -> Text {
+        guard filter.isBuiltIn else { return Text(filter.query) }
         switch filter.id {
-        case "today": return "Due today and overdue"
-        case "active": return "Everything still to do"
-        case "all": return "Including completed todos"
-        case "inbox": return "Without a project"
-        default: return filter.query
+        case "today": return Text("Due today and overdue")
+        case "active": return Text("Everything still to do")
+        case "all": return Text("Including completed todos")
+        case "inbox": return Text("Without a project")
+        default: return Text(filter.query)
         }
     }
 }
@@ -235,22 +235,7 @@ private struct TaskFilterEditorView: View {
                     }
                 }
 
-                Section("Query guide") {
-                    Text("Combine terms with AND, OR, NOT (or &, |, !). Parentheses group terms; NOT binds first, then AND, then OR.")
-                    Text("all · active · today · inbox\nToday includes active overdue todos. Inbox includes active todos without a project, regardless of due date.")
-                    Text("overdue · tomorrow · next-seven-days · undated\nDate predicates select active todos. Next-seven-days covers tomorrow through today + 7 local calendar days.")
-                    Text("due:2026-09-05\ndue:2026-09-01..2026-09-07\n(overdue OR next-seven-days) AND project:work")
-                        .font(.system(.footnote, design: .monospaced))
-                    Text("Use valid YYYY-MM-DD dates. Date ranges include both endpoints. Relative dates follow the device's local calendar and update when the day changes.")
-                    Text("project:work AND tag:focus\nactive AND NOT tag:waiting\n(project:home OR project:work) AND today")
-                        .font(.system(.footnote, design: .monospaced))
-                    Text("name:/report/i\ndescription:/invoice|receipt/i")
-                        .font(.system(.footnote, design: .monospaced))
-                    Text("Tags and project slugs match exactly. Double-quote values containing operators. Name and description use /regular expressions/; optional i ignores case, m enables line anchors, and s lets dots match newlines. Escape a slash as \\/.")
-                    Text("Type project: or tag: to see local suggestions. Tap a suggestion to replace the value at the cursor without changing the rest of your query.")
-                }
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+                TaskFilterQueryGuide()
             }
             .scrollContentBackground(.hidden)
             .background(OTodoTheme.formCanvas.ignoresSafeArea())
@@ -303,5 +288,26 @@ private enum FilterEditorPresentation: Identifiable {
     var filter: SavedTaskFilter? {
         if case let .edit(filter) = self { return filter }
         return nil
+    }
+}
+
+private struct TaskFilterQueryGuide: View {
+    var body: some View {
+        Section("Query guide") {
+            Text("Combine terms with AND, OR, NOT (or &, |, !). Parentheses group terms; NOT binds first, then AND, then OR.")
+            Text("all · active · today · inbox\nToday includes active overdue todos. Inbox includes active todos without a project, regardless of due date.")
+            Text("overdue · tomorrow · next-seven-days · undated\nDate predicates select active todos. Next-seven-days covers tomorrow through today + 7 local calendar days.")
+            Text("due:2026-09-05\ndue:2026-09-01..2026-09-07\n(overdue OR next-seven-days) AND project:work")
+                .font(.system(.footnote, design: .monospaced))
+            Text("Use valid YYYY-MM-DD dates. Date ranges include both endpoints. Relative dates follow the device's local calendar and update when the day changes.")
+            Text("project:work AND tag:focus\nactive AND NOT tag:waiting\n(project:home OR project:work) AND today")
+                .font(.system(.footnote, design: .monospaced))
+            Text("name:/report/i\ndescription:/invoice|receipt/i")
+                .font(.system(.footnote, design: .monospaced))
+            Text("Tags and project slugs match exactly. Double-quote values containing operators. Name and description use /regular expressions/; optional i ignores case, m enables line anchors, and s lets dots match newlines. Escape a slash as \\/.")
+            Text("Type project: or tag: to see local suggestions. Tap a suggestion to replace the value at the cursor without changing the rest of your query.")
+        }
+        .font(.footnote)
+        .foregroundStyle(.secondary)
     }
 }

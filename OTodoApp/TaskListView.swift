@@ -6,6 +6,7 @@ import UIKit
 struct TaskListView: View {
     @EnvironmentObject private var quickActions: QuickActionSceneDelegate
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.locale) private var locale
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .body) private var sidebarIconWidth = 24
 
@@ -116,9 +117,13 @@ struct TaskListView: View {
                             }
                         }
 
-                        if filterLibrary.filters.contains(where: \.isStarred) {
+                        if !filterLibrary.starredFilters.isEmpty {
                             Section {
-                                favoriteFilters
+                                FavoriteTaskFilters(
+                                    library: filterLibrary,
+                                    selectedFilterID: selectedFilterID,
+                                    onSelect: selectFilter
+                                )
                                     .listRowInsets(
                                         EdgeInsets(top: 0, leading: 20, bottom: 8, trailing: 20)
                                     )
@@ -513,72 +518,6 @@ struct TaskListView: View {
             ?? SavedTaskFilter.defaults[0]
     }
 
-    private var favoriteFilters: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal) {
-                HStack(spacing: 8) {
-                    ForEach(swipeableFilters) { filter in
-                        Button {
-                            selectFilter(filter.id)
-                        } label: {
-                            Text(filter.name)
-                                .font(.subheadline.weight(
-                                    selectedFilterID == filter.id ? .semibold : .regular
-                                ))
-                                .foregroundStyle(
-                                    selectedFilterID == filter.id ? OTodoTheme.accent : Color.primary
-                                )
-                                .padding(.horizontal, 14)
-                                .frame(minHeight: 44)
-                                .background(
-                                    selectedFilterID == filter.id
-                                        ? OTodoTheme.accent.opacity(0.10) : Color(uiColor: .tertiarySystemFill),
-                                    in: Capsule()
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .id(filter.id)
-                        .accessibilityIdentifier("task-filter-\(filter.id)")
-                        .accessibilityAddTraits(selectedFilterID == filter.id ? .isSelected : [])
-                    }
-                }
-            }
-            .scrollIndicators(.hidden)
-            .simultaneousGesture(filterSwipeGesture)
-            .onChange(of: selectedFilterID) { _, id in
-                withAnimation(.snappy(duration: 0.24)) {
-                    proxy.scrollTo(id, anchor: .center)
-                }
-            }
-            .accessibilityHint("Swipe left or right to choose the next or previous filter")
-            .accessibilityIdentifier("task-filters")
-        }
-    }
-
-    private var swipeableFilters: [SavedTaskFilter] {
-        filterLibrary.filters.filter(\.isStarred)
-    }
-
-    private var filterSwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 32)
-            .onEnded { value in
-                let horizontalDistance = value.translation.width
-                guard abs(horizontalDistance) >= 56,
-                      abs(horizontalDistance) > abs(value.translation.height)
-                else { return }
-                selectAdjacentFilter(offset: horizontalDistance < 0 ? 1 : -1)
-            }
-    }
-
-    private func selectAdjacentFilter(offset: Int) {
-        let filters = swipeableFilters
-        guard let currentIndex = filters.firstIndex(where: {
-            $0.id == selectedFilterID
-        }) else { return }
-        let destination = currentIndex + offset
-        guard filters.indices.contains(destination) else { return }
-        selectFilter(filters[destination].id)
-    }
 
     private func selectFilter(_ id: String) {
         clearSelection()
@@ -756,7 +695,7 @@ struct TaskListView: View {
 
 
 
-    private var workspaceSubtitle: String {
+    private var workspaceSubtitle: LocalizedStringKey {
         if isSearching {
             return "Names, notes, projects, tags, links, and IDs"
         }
@@ -770,7 +709,7 @@ struct TaskListView: View {
         }
         switch selectedFilter.id {
         case "today":
-            return Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day())
+            return "\(Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day().locale(locale)))"
         case "inbox":
             return "Active todos without a project"
         case "active":
@@ -1011,7 +950,10 @@ struct TaskListView: View {
         VStack(spacing: 0) {
             Divider()
 
-            notificationControl
+            TaskListReminderControl(notifications: notifications) {
+                dismissProjectSidebar()
+                isReminderSettingsPresented = true
+            }
 
             Divider()
                 .padding(.horizontal, 16)
@@ -1097,7 +1039,7 @@ struct TaskListView: View {
         .accessibilityIdentifier("daily-review-settings-open")
     }
 
-    private var dailyReviewDetail: String {
+    private var dailyReviewDetail: LocalizedStringKey {
         switch (kickstartEnabled, wrapUpEnabled) {
         case (true, true): "Kickstart and Wrap-up enabled"
         case (true, false): "Kickstart enabled"
@@ -1106,113 +1048,11 @@ struct TaskListView: View {
         }
     }
 
-    private var notificationControl: some View {
-        Button {
-            dismissProjectSidebar()
-            isReminderSettingsPresented = true
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: notificationIcon)
-                    .font(.body)
-                    .foregroundStyle(notificationColor)
-                    .frame(width: sidebarIconWidth)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Due reminders")
-                        .font(.subheadline)
-                        .foregroundStyle(.primary)
-                    Text(notificationDetail)
-                        .font(.caption)
-                        .foregroundStyle(
-                            notifications.errorMessage == nil ? Color.secondary : Color.red
-                        )
-                        .lineLimit(2)
-                }
-
-                Spacer(minLength: 8)
-
-                if notifications.isUpdating || notifications.status == .checking {
-                    ProgressView()
-                        .controlSize(.small)
-                } else if notifications.isEnabled {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(OTodoTheme.mint)
-                } else {
-                    Image(systemName: "chevron.right")
-                        .font(.caption.bold())
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .padding(.horizontal, 25)
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Due reminders")
-        .accessibilityValue(notificationAccessibilityValue)
-        .accessibilityHint("Opens this device’s reminder timing and notification access settings")
-        .accessibilityIdentifier("notification-settings")
-    }
-
-    private var notificationDetail: String {
-        if let errorMessage = notifications.errorMessage {
-            return errorMessage
-        }
-        switch notifications.status {
-        case .checking:
-            return "Checking notification access"
-        case .notRequested:
-            return "Get an alert when a todo is due"
-        case .enabled:
-            return notifications.leadTime.displayName
-        case .disabled:
-            return "Due-date alerts are off"
-        case .denied:
-            return "Allow notifications in iOS Settings"
-        }
-    }
-
-    private var notificationIcon: String {
-        switch notifications.status {
-        case .enabled:
-            return "bell.badge.fill"
-        case .denied:
-            return "bell.slash.fill"
-        case .checking, .notRequested, .disabled:
-            return "bell.fill"
-        }
-    }
-
-    private var notificationColor: Color {
-        switch notifications.status {
-        case .enabled:
-            return OTodoTheme.mint
-        case .denied:
-            return OTodoTheme.coral
-        case .checking, .notRequested, .disabled:
-            return .secondary
-        }
-    }
-
-    private var notificationAccessibilityValue: String {
-        switch notifications.status {
-        case .checking:
-            return "Checking"
-        case .notRequested:
-            return "Not configured"
-        case .enabled:
-            return "On"
-        case .disabled:
-            return "Off"
-        case .denied:
-            return "Permission required"
-        }
-    }
 
 
     private var inboxButton: some View {
         let isSelected = selectedFilterID == "inbox"
-        let count = taskCount(for: nil, inboxOnly: true)
+        let count = model.inboxTaskCount
 
         return Button {
             selectFilter("inbox")
@@ -1253,7 +1093,7 @@ struct TaskListView: View {
     private func projectFilterButton(_ project: String?) -> some View {
         let isSelected = selectedProject == project && selectedFilterID != "inbox"
         let title = project.map(projectDisplayName) ?? "Entire workspace"
-        let count = taskCount(for: project)
+        let count = project.map { model.openTaskCountsByProject[$0, default: 0] } ?? model.openTaskCount
         let color = isSelected ? OTodoTheme.accent : Color.secondary
         let layout = dynamicTypeSize.isAccessibilitySize
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
@@ -1310,20 +1150,9 @@ struct TaskListView: View {
     }
 
 
-    private func taskCount(for project: String?, inboxOnly: Bool = false) -> Int {
-        model.tasks.lazy.filter { task in
-            if inboxOnly, !task.projectSlugs.isEmpty {
-                return false
-            }
-            if let project, !task.projectSlugs.contains(project) {
-                return false
-            }
-            return state(for: task.state)?.isTerminal != true
-        }.count
-    }
 
     private func projectDisplayName(_ project: String) -> String {
-        model.projectDetails[project]?.name ?? project.replacingOccurrences(of: "-", with: " ").capitalized
+        model.projectDetails[project]?.name ?? project.replacingOccurrences(of: "-", with: " ").capitalized(with: locale)
     }
 
     private func dismissProjectSidebar() {
@@ -1886,4 +1715,179 @@ enum EditorPresentation: Identifiable {
 struct ReschedulePresentation: Identifiable {
     let id = UUID()
     let tasks: [TodoTask]
+}
+
+private struct FavoriteTaskFilters: View {
+    let library: TaskFilterLibrary
+    let selectedFilterID: String
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(library.starredFilters) { filter in
+                        Button {
+                            onSelect(filter.id)
+                        } label: {
+                            Text(filter.name)
+                                .font(.subheadline.weight(
+                                    selectedFilterID == filter.id ? .semibold : .regular
+                                ))
+                                .foregroundStyle(
+                                    selectedFilterID == filter.id ? OTodoTheme.accent : Color.primary
+                                )
+                                .padding(.horizontal, 14)
+                                .frame(minHeight: 44)
+                                .background(
+                                    selectedFilterID == filter.id
+                                        ? OTodoTheme.accent.opacity(0.10) : Color(uiColor: .tertiarySystemFill),
+                                    in: Capsule()
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .id(filter.id)
+                        .accessibilityIdentifier("task-filter-\(filter.id)")
+                        .accessibilityAddTraits(selectedFilterID == filter.id ? .isSelected : [])
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+            .simultaneousGesture(filterSwipeGesture)
+            .onChange(of: selectedFilterID) { _, id in
+                withAnimation(.snappy(duration: 0.24)) {
+                    proxy.scrollTo(id, anchor: .center)
+                }
+            }
+            .accessibilityHint("Swipe left or right to choose the next or previous filter")
+            .accessibilityIdentifier("task-filters")
+        }
+    }
+
+    private var filterSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 32)
+            .onEnded { value in
+                let horizontalDistance = value.translation.width
+                guard abs(horizontalDistance) >= 56,
+                      abs(horizontalDistance) > abs(value.translation.height)
+                else { return }
+                selectAdjacentFilter(offset: horizontalDistance < 0 ? 1 : -1)
+            }
+    }
+
+    private func selectAdjacentFilter(offset: Int) {
+        let filters = library.starredFilters
+        guard let currentIndex = filters.firstIndex(where: {
+            $0.id == selectedFilterID
+        }) else { return }
+        let destination = currentIndex + offset
+        guard filters.indices.contains(destination) else { return }
+        onSelect(filters[destination].id)
+    }
+}
+
+private struct TaskListReminderControl: View {
+    @ScaledMetric(relativeTo: .body) private var sidebarIconWidth = 24
+    let notifications: TaskNotificationManager
+    let onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: 12) {
+                Image(systemName: notificationIcon)
+                    .font(.body)
+                    .foregroundStyle(notificationColor)
+                    .frame(width: sidebarIconWidth)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Due reminders")
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                    Text(notificationDetail)
+                        .font(.caption)
+                        .foregroundStyle(
+                            notifications.errorMessage == nil ? Color.secondary : Color.red
+                        )
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 8)
+
+                if notifications.isUpdating || notifications.status == .checking {
+                    ProgressView()
+                        .controlSize(.small)
+                } else if notifications.isEnabled {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(OTodoTheme.mint)
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.bold())
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.horizontal, 25)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Due reminders")
+        .accessibilityValue(notificationAccessibilityValue)
+        .accessibilityHint("Opens this device’s reminder timing and notification access settings")
+        .accessibilityIdentifier("notification-settings")
+    }
+
+    private var notificationDetail: LocalizedStringKey {
+        if let errorMessage = notifications.errorMessage {
+            return "\(errorMessage)"
+        }
+        switch notifications.status {
+        case .checking:
+            return "Checking notification access"
+        case .notRequested:
+            return "Get an alert when a todo is due"
+        case .enabled:
+            return notifications.leadTime.displayName
+        case .disabled:
+            return "Due-date alerts are off"
+        case .denied:
+            return "Allow notifications in iOS Settings"
+        }
+    }
+
+    private var notificationIcon: String {
+        switch notifications.status {
+        case .enabled:
+            return "bell.badge.fill"
+        case .denied:
+            return "bell.slash.fill"
+        case .checking, .notRequested, .disabled:
+            return "bell.fill"
+        }
+    }
+
+    private var notificationColor: Color {
+        switch notifications.status {
+        case .enabled:
+            return OTodoTheme.mint
+        case .denied:
+            return OTodoTheme.coral
+        case .checking, .notRequested, .disabled:
+            return .secondary
+        }
+    }
+
+    private var notificationAccessibilityValue: LocalizedStringKey {
+        switch notifications.status {
+        case .checking:
+            return "Checking"
+        case .notRequested:
+            return "Not configured"
+        case .enabled:
+            return "On"
+        case .disabled:
+            return "Off"
+        case .denied:
+            return "Permission required"
+        }
+    }
 }
