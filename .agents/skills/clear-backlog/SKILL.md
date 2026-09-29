@@ -3,29 +3,30 @@ name: clear-backlog
 description: >
   Clear the OTodo coding issue backlog autonomously. Use when asked to clear
   the backlog or work through open issues in otodo project gitobstodo tagged
-  coding. Deliver each issue through implementation, full CI, TestFlight,
-  promotion to main, and otodo completion, then refresh and continue without
-  waiting for manual testing.
+  coding. Deliver each issue through implementation, local verification,
+  native TestFlight when required, and otodo completion, then refresh and
+  continue without waiting for manual testing.
 ---
 
 # clear-backlog
 
 Process one issue at a time until a fresh query finds no remaining issues.
 The backlog is the otodo store, not GitHub Issues. The required order is:
-**implement → CI → TestFlight → push to main → mark done → refresh**.
+**implement → local verification → native TestFlight when required → record delivery → mark done → refresh**.
 
 ## Prerequisites and discovery
 
 1. Read `~/obs/default/.agents/skills/otodo/SKILL.md` before using otodo.
    Follow its CLI, store, mutation, and error-handling rules. Do not replace
    otodo operations with direct Markdown edits or GitHub issue commands.
-2. Read this repository's `AGENTS.md`, `docs/RELEASE.md`, and current
-   `.github/workflows/ci.yml` and `.github/workflows/release.yml`. Use the
-   existing verification and release workflows; do not bypass their gates.
+2. Read this repository's `AGENTS.md`, `docs/RELEASE.md`, `scripts/test.sh`,
+   `scripts/build-release.sh`, and `xtool-release.yml`. Use the local verification
+   and native release paths. GitHub Actions is retired; never dispatch workflows
+   or re-enable Actions as a fallback.
 3. Work in this repository (`plastic-karma/otodo-app`). Preserve unrelated
-   changes and other worktrees. Fetch `origin/main` and create a dedicated
-   issue branch/worktree from it for each issue. Do not start from an unrelated
-   feature branch.
+   changes and other worktrees. Create a dedicated issue branch/worktree from
+   the current verified local baseline for each issue. Continue subsequent
+   issues from the last delivered local revision, not an unrelated or stale branch.
 4. Check the project and discover its coding issues with the real CLI:
 
    ```bash
@@ -43,8 +44,8 @@ The backlog is the otodo store, not GitHub Issues. The required order is:
 ## Per-issue delivery loop
 
 Replace angle-bracket placeholders with the selected task ID, issue branch,
-commit SHA, and exact workflow run IDs. Keep the issue branch unchanged while
-its CI and release runs execute.
+and exact commit SHA. Keep the committed source unchanged while local verification
+and native release run.
 
 ### 1. Implement the fix
 
@@ -62,82 +63,80 @@ verify any state change as prescribed by the otodo skill.
 Every new feature must also be mentioned in the app's changelog. Follow
 `README.md`'s **Product changelog entries** convention: give every
 product-feature commit a user-facing subject and a `Changelog: feature`
-trailer. Before pushing, verify the trailer on each product-feature commit
+trailer. Before delivery, verify the trailer on each product-feature commit
 and confirm the generated `Changelog.json` includes each feature.
 Do not mark maintenance-only commits as product features.
 
-Commit the scoped fix on the issue branch and push that branch to `origin`
-so GitHub Actions can run it. Record the full commit SHA. This preliminary
-branch push is required for CI; **do not push to `main` yet**.
+Commit the scoped fix locally on the issue branch and record the full SHA.
+This skill does not authorize pushing branches or updating remote `main`.
 
-### 2. Run CI and wait for success
+### 2. Run local verification
 
-Dispatch the canonical workflow at the issue branch:
-
-```bash
-gh workflow run ci.yml --repo plastic-karma/otodo-app --ref <issue-branch>
-gh run list --repo plastic-karma/otodo-app --workflow ci.yml --branch <issue-branch> --commit <sha> --event workflow_dispatch --json databaseId,headSha,headBranch,displayTitle,status,conclusion,url,createdAt
-gh run watch <ci-run-id> --repo plastic-karma/otodo-app --exit-status
-```
-
-Select the run matching this dispatch, branch, and exact SHA, not the latest
-repository-wide run. Require a completed successful **full** run, including
-`CI / full verification` and all required jobs. Do not set `test_filter`,
-`design_survey_only`, or `complete_diagnostics`; focused/diagnostic runs and
-local tests cannot replace full CI.
-
-Diagnose product failures, fix them, retest locally, commit and push the fix,
-and run full CI again for the new SHA. Retry transient runner/simulator
-infrastructure failures. Do not proceed on a failed, cancelled, queued, or
-incomplete run, or weaken tests to obtain a green result.
-
-### 3. When CI passes, run TestFlight
-
-Only after full CI succeeds, dispatch release on the same unchanged branch
-and verified SHA:
+Use the declared Swift 6.3.3 compiler and prepared Python dependencies described
+in `docs/RELEASE.md`, without changing the global compiler or shell environment:
 
 ```bash
-gh workflow run release.yml --repo plastic-karma/otodo-app --ref <issue-branch> -f publish_testflight=true
-gh run list --repo plastic-karma/otodo-app --workflow release.yml --branch <issue-branch> --commit <sha> --event workflow_dispatch --json databaseId,headSha,headBranch,status,conclusion,url,createdAt
-gh run watch <release-run-id> --repo plastic-karma/otodo-app --exit-status
+./scripts/test.sh
 ```
 
-Follow `docs/RELEASE.md` for marketing-version overrides and failure recovery.
-Confirm the selected run built the exact CI-verified SHA, finished
-successfully, and reports an attempted and **accepted App Store Connect
-upload**. An exported IPA, a green artifact-only run, or a dispatch receipt
-is not TestFlight delivery. Record the release URL, marketing version, build
-number, and upload result from the release evidence.
-
-If upload was accepted but certificate cleanup failed, retry only the failed
-cleanup job as documented; do not upload again. Fix product/release failures
-and retry transient infrastructure failures. Any source change requires a
-new full CI pass and TestFlight delivery for the new SHA. Run releases
-sequentially. Apple processing is asynchronous; do not wait for manual
-testing or claim Apple processing/tester installation was verified.
-
-### 4. When TestFlight passes, push to main
-
-Promote only the exact commit that passed both gates:
+For Apple-platform coverage on a local Mac with the selected Xcode and installed
+iOS/watchOS runtimes:
 
 ```bash
-git fetch origin main
-git merge-base --is-ancestor origin/main <verified-sha> && git push origin <verified-sha>:refs/heads/main
-git ls-remote origin refs/heads/main
+./scripts/test.sh --apple
 ```
 
-Verify that the remote main tip is the delivered SHA. Never force-push or
-create an unverified squash/merge commit during promotion. If main has
-advanced incompatibly or the push is rejected, integrate current
-`origin/main` into the issue branch without overwriting others' work, resolve
-conflicts, repeat local verification, and rerun **both full CI and TestFlight**
-for the resulting SHA before retrying promotion. If main has advanced after
-a successful push, fetch and verify it contains the delivered SHA instead of
-rewinding it.
+Run the checks appropriate to the acceptance criteria. Preserve complete hosted/UI,
+bundle and Watch coverage; focused tests do not replace an applicable full suite.
+Report unavailable platform coverage honestly. Do not substitute GitHub CI or
+claim a Linux run executed Apple simulators.
+
+Diagnose failures, fix them, retest locally and commit the fix. Do not weaken
+tests or ignore compiler failures. Keep command results and retained evidence
+associated with the exact source revision.
+
+### 3. Deliver through native TestFlight when required
+
+Completed product features require TestFlight delivery after appropriate local
+verification. Infrastructure/documentation-only changes do not require a new
+upload; record that scope decision rather than fabricating delivery evidence.
+
+Use the installed native xtool and existing external signing configuration as
+described in `docs/RELEASE.md`:
+
+```bash
+./scripts/build-release.sh --upload
+```
+
+This is the only build/sign/upload route. It must preserve all shipping components,
+entitlements and resources. Never put credentials in the repository or create,
+revoke or replace identities as a side effect of testing.
+
+Record the exact source SHA, marketing version, unique build number, IPA checksum,
+and release/verification/upload receipts. Confirm the uploaded build is `VALID`,
+unexpired, available for beta testing, and accessible to the internal tester group
+pinned by `appStoreConnect.groupIDs`. An exported IPA or accepted transport alone
+is not TestFlight availability. Do not submit a public App Store release.
+
+Run deliveries sequentially. Investigate failures without blindly re-uploading;
+query the exact existing build after an ambiguous upload result. Any source change
+requires fresh applicable local verification and a new delivery when required.
+Do not wait for manual tester acceptance or claim an unperformed device check.
+
+### 4. Record the delivered local revision
+
+Keep the verified commit and its evidence locally. Confirm the working revision
+matches the recorded source SHA, and do not mix later or unrelated changes into
+the delivered result. Continue the next issue from this verified local baseline.
+
+Do not automatically push issue branches, promote remote `main`, create a PR,
+or dispatch workflows. Repository publication requires a separate user request.
+If the baseline changes, reconcile it without overwriting another worker's work
+and repeat the affected verification/delivery before claiming the new revision.
 
 ### 5. Mark the issue done
 
-Only after successful TestFlight delivery and verified main promotion,
+Only after local verification and successful TestFlight delivery when required,
 re-read the issue, complete it through otodo, and verify the result:
 
 ```bash
@@ -153,19 +152,20 @@ occurrence is not permission to terminate the series. Do not delete issues
 or mark failed/undelivered work done. Run otodo `validate` after multi-record
 work, as required by the otodo skill.
 
-Report the issue ID/title, delivered commit SHA, CI run URL, release run URL,
-marketing version, build number, App Store Connect upload result, main
-promotion, and verified task state. This progress report is not a handoff or
+Report the issue ID/title, delivered commit SHA, local verification results,
+marketing version/build and artifact/receipt paths when applicable, Apple
+processing/tester-access results actually observed, and verified task state.
+This progress report is not a handoff or
 a reason to stop.
 
 ### 6. Refresh and pick the next issue
 
 Immediately rerun the discovery command for project `gitobstodo` and tag
-`coding`, read the next issue, and repeat from current `origin/main`. Never
-process only a startup snapshot, stop after one issue, ask for permission to
-continue, or wait for manual testing between issues. Invoking this skill
-authorizes the issue-branch pushes, CI and TestFlight dispatches, gated main
-pushes, and task completions needed for the loop.
+`coding`, read the next issue, and repeat from the last verified local revision.
+Never process only a startup snapshot, stop after one issue, ask for permission
+to continue, or wait for manual testing between issues. Invoking this skill
+authorizes scoped local commits, required native TestFlight deliveries and task
+completions—not remote pushes, public App Store releases or GitHub workflows.
 
 Finish only when a successful fresh query returns no remaining matching
 issues. If an external prerequisite cannot be resolved with available tools,

@@ -1,277 +1,176 @@
-# Release OTodo to an IPA or TestFlight
+# Local OTodo releases and TestFlight
 
-The [`Release IPA`](../.github/workflows/release.yml) workflow generates `OTodo.xcodeproj`, archives OTodo, signs it through Apple cloud signing, exports one App Store `.ipa`, and always uploads the signed file as the `otodo-ipa` workflow artifact. Successful full CI automatically calls it with TestFlight publishing enabled for same-repository PRs. A manual run uploads to TestFlight only when **publish_testflight** is selected, even if the selected ref is a tag. A pushed `v*` tag always uploads.
+OTodo is tested locally and released with native xtool. `scripts/build-release.sh`
+and `xtool-release.yml` are the only release build/sign/upload entrypoint and
+manifest. GitHub Actions is disabled and the workflows, composite action,
+cloud-signing helpers and automatic PR/tag publishing have been removed. Nothing
+uploads merely because a test, commit, push, or pull request completes.
 
-The workflow cannot create the external Apple or GitHub registrations below. Complete every one-time user action before the first run.
+## Product graph and external prerequisites
 
-## Exact identities
+Keep every shipping component and its entitlements:
 
-| Item | Required value |
-| --- | --- |
-| Product/app name | `OTodo` |
-| Xcode project | `OTodo.xcodeproj` (generated from `project.yml`) |
-| Xcode scheme | `OTodo` |
-| Platform/minimum OS | iOS / iOS 17 |
-| Apple Team ID | `9492A97LWY` |
-| Explicit application bundle ID | `plastickarma.otodo` |
-| Explicit widget extension bundle ID | `plastickarma.otodo.widget` |
-| Explicit Share extension bundle ID | `plastickarma.otodo.share` |
-| Explicit Watch application bundle ID | `plastickarma.otodo.watchkitapp` |
-| Explicit Watch complication bundle ID | `plastickarma.otodo.watchkitapp.widget` |
-| Watch platform/minimum OS | watchOS / watchOS 10 |
-| Shared App Group | `group.plastickarma.otodo` |
-| GitHub workflow | `Release IPA` / `.github/workflows/release.yml` |
-| IPA artifact | `otodo-ipa`, retained for 30 days |
-| Public OAuth Actions variable | `GH_OAUTH_CLIENT_ID` |
-| Xcode OAuth build setting | `GITHUB_CLIENT_ID` |
+| Target | Bundle identifier | Minimum platform |
+| --- | --- | --- |
+| OTodo | `plastickarma.otodo` | iOS 17 |
+| OTodoWidget | `plastickarma.otodo.widget` | iOS 17 |
+| OTodoShareExtension | `plastickarma.otodo.share` | iOS 17 |
+| OTodoWatch | `plastickarma.otodo.watchkitapp` | watchOS 10 |
+| OTodoWatchWidget | `plastickarma.otodo.watchkitapp.widget` | watchOS 10 |
 
-OTodo ships a Today widget, a Share extension, and an embedded Apple Watch app with WidgetKit complications. The iPhone application and widget share their snapshot through the App Group above; the application, Share extension, and Add Todo App Intent use the same durable workspace and outbox in that container. WatchConnectivity sends a dated-task snapshot to the Watch, where the Watch app and complication share a separate device-local App Group container.
+The Apple team is `9492A97LWY`, the shared App Group is
+`group.plastickarma.otodo`, and the existing App Store Connect app ID is
+`6808334170`. The extensions and Watch app do not need separate App Store Connect
+app records. The iPhone app/widget/Share extension share the workspace; the Watch
+app/complication share a separate device-local group container and receive data
+through WatchConnectivity.
 
-## One-time Apple registration
+Before an actual distribution build, maintain an active Apple Developer membership,
+accepted agreements, the existing App Store Connect app record, and all five
+explicit App IDs with the App Groups capability. Have a matching distribution
+certificate/private key and valid App Store provisioning profiles for every
+bundle. Do not create/revoke identities or change capabilities as a side effect of
+testing. Native xtool, the manifest-selected Swift **6.3.3**, Apple SDKs and the
+native asset/signing tools must be installed outside this repository.
 
-> **One-time external user action:** GitHub Actions cannot create the Apple Developer membership, accept agreements, register the identifiers and App Group, or create the App Store Connect app record. A user with the necessary Apple account access must complete these steps.
+The app's optional GitHub OAuth/sync functionality is unchanged. The public client
+identifier remains in `xtool-release.yml` under `settings.GITHUB_CLIENT_ID`; a
+command-scoped `GITHUB_CLIENT_ID` overrides it. See the
+[OAuth registration instructions](../README.md#one-time-github-oauth-registration-for-synced-workspaces).
+Do not configure an OAuth client secret or GitHub Actions variable for releases.
 
-### 1. Confirm the Apple team
+## Local verification
 
-Sign in to the [Apple Developer account](https://developer.apple.com/account/) belonging to Team ID **`9492A97LWY`**. Make sure the Apple Developer Program membership and any current App Store Connect agreements are active.
-
-### 2. Register the App Group and explicit bundle identifiers
-
-In **Certificates, Identifiers & Profiles → Identifiers**, select **+**, choose **App Groups**, and register:
-
-- **Description:** `OTodo`
-- **Identifier:** `group.plastickarma.otodo`
-
-Then register or update these five **App IDs → App** identifiers:
-
-| Description | Explicit bundle ID |
-| --- | --- |
-| `OTodo` | `plastickarma.otodo` |
-| `OTodo Today Widget` | `plastickarma.otodo.widget` |
-| `OTodo Share` | `plastickarma.otodo.share` |
-| `OTodo Watch` | `plastickarma.otodo.watchkitapp` |
-| `OTodo Watch Today & Overdue` | `plastickarma.otodo.watchkitapp.widget` |
-
-Enable the **App Groups** capability on all five identifiers, choose **Configure**, and assign `group.plastickarma.otodo`. Existing provisioning profiles that predate this capability must be regenerated; the release workflow's automatic cloud signing creates current distribution profiles after the identifiers are configured. The extensions and companion Watch app do not need separate App Store Connect app records.
-
-### 3. Create the App Store Connect app record
-
-In [App Store Connect](https://appstoreconnect.apple.com) open **My Apps → + → New App** and enter:
-
-- **Platforms:** iOS
-- **Name:** `OTodo`
-- **Primary language:** English (U.S.)
-- **Bundle ID:** `plastickarma.otodo`
-- **SKU:** `plastickarma.otodo`
-- **User Access:** Full Access
-
-This app record is separate from the Developer portal bundle identifier and must exist before a TestFlight upload. The workflow does not create it. If the public storefront name `OTodo` is unavailable, resolve the final product name in App Store Connect, but do not change the bundle ID or SKU used here.
-
-### 4. Request App Store Connect API access and create an Admin Team Key
-
-For an Apple account that has not enabled the App Store Connect API before, complete the access request first:
-
-1. Sign in to App Store Connect as the team's **Account Holder** and open **Users and Access → Integrations → App Store Connect API**.
-2. Select **Request Access**, review and accept Apple's terms, and submit the request.
-3. Wait until Apple approves the request and the Team Keys controls become available. Do not try to create the workflow credentials before approval.
-
-After approval, the **Account Holder** or an **Admin** creates the Team Key:
-
-1. Open **Users and Access → Integrations → App Store Connect API → Team Keys** and select **Generate API Key**.
-2. Give the key a recognizable name and select the **Admin** access role. Admin is required for Xcode cloud signing to create/use an Apple Distribution certificate and provisioning profile; an App Manager or Developer key may archive but then fail during export.
-3. Select **Generate**, then record the **Key ID** and **Issuer ID**.
-4. Download `AuthKey_<KEYID>.p8`. Apple permits this private-key download only once. Store it in a password manager or other approved secret store.
-
-No `.p12`, distribution-certificate secret, or provisioning-profile secret is required. The workflow uses automatic cloud signing for team `9492A97LWY`, all five bundle identifiers, and their shared App Group.
-
-## One-time GitHub OAuth and repository setup
-
-> **One-time external user action:** register and enable the GitHub OAuth App as documented in [the README](../README.md#one-time-github-oauth-registration). A workflow cannot create or enable that OAuth App.
-
-The OAuth App must have:
-
-- **Application name:** `OTodo`
-- **Enable Device Flow:** selected
-- **Requested scope:** `repo` (the app requests this during Device Flow)
-- **Credential used by this repository:** the public Client ID only
-
-Do not configure an OAuth client secret or a personal access token. Device Flow requires neither.
-
-> **One-time external user action:** create and initialize the GitHub repository containing the Obsidian Todo v1 store, including `.todo/config.toml`. The app and workflows do not create that external store. See [Repository and store onboarding](../README.md#repository-and-store-onboarding).
-
-## Configure GitHub Actions
-
-A repository administrator configures all four values at **Repository → Settings → Secrets and variables → Actions**.
-
-### Repository secrets
-
-Under **Secrets → New repository secret**, create exactly:
-
-| Secret name | Exact source/value |
-| --- | --- |
-| `APP_STORE_CONNECT_API_KEY_ID` | The App Store Connect API key's Key ID, for example `2X9R4HXF34` |
-| `APP_STORE_CONNECT_API_ISSUER_ID` | The issuer UUID shown on the App Store Connect API page |
-| `APP_STORE_CONNECT_API_KEY` | The entire contents of `AuthKey_<KEYID>.p8`, including the `-----BEGIN PRIVATE KEY-----` and `-----END PRIVATE KEY-----` lines |
-
-Paste the `.p8` as a multiline secret. Do not base64-encode it and do not add shell quotes. The workflow writes it to a permission-restricted temporary file, validates it, and does not include it in the IPA artifact.
-
-### Repository variable
-
-Under **Variables → New repository variable**, create exactly:
-
-| Variable name | Exact source/value |
-| --- | --- |
-| `GH_OAUTH_CLIENT_ID` | The public Client ID shown on the `OTodo` GitHub OAuth App page |
-
-This is intentionally an Actions **variable**, not a secret. During archive the workflow passes it to `GITHUB_CLIENT_ID`; XcodeGen places it in the app's `GitHubClientID` Info.plist entry. No client secret or PAT is accepted or needed.
-
-The release job checks these names before doing expensive work. A missing value produces one of these exact annotations:
-
-- `Missing required secret: APP_STORE_CONNECT_API_KEY_ID`
-- `Missing required secret: APP_STORE_CONNECT_API_ISSUER_ID`
-- `Missing required secret: APP_STORE_CONNECT_API_KEY`
-- `Missing required Actions variable: GH_OAUTH_CLIENT_ID`
-
-## Before every release
-
-1. Ensure the exact commit has a successful canonical **CI / full verification** check, including preflight, Linux core tests, iOS build and hosted tests, and Watch verification. Manual and tag releases require a completed successful CI run for their exact SHA. An automatic PR release instead verifies all five completed checks in its current CI run, which remains in progress during publishing. UI tests are excluded from this gate; check UI behavior manually in TestFlight. Focused or complete-diagnostics runs cannot authorize publishing.
-2. Confirm the Apple Developer membership and App Store Connect agreements are current.
-3. Confirm all five App IDs in **Exact identities** use `group.plastickarma.otodo`, and that the main app's App Store Connect record still belongs to team `9492A97LWY`.
-4. Choose a marketing version containing one to three dot-separated integers, such as `1.2.0`. Do not reuse an App Store Connect version train that is closed.
-5. Decide whether this is an artifact-only build or a TestFlight upload. A manual run follows **publish_testflight** regardless of whether its selected ref is a branch or tag; a pushed `v*` tag is never artifact-only.
-
-All release runs share one workflow-global concurrency group covering signing, upload, and cleanup. One workflow runs at a time and is never cancelled by a newer release. GitHub's default policy retains at most one pending workflow; a newer queued request replaces an older pending request. Dispatch releases sequentially when every requested build must be delivered. Different refs never sign concurrently. The workflow sets `CFBundleVersion` to UTC epoch seconds after acquiring the lock. It resolves and validates both the project-default and explicit marketing version before signing. A nonblank manual version is honored even at a tag; only a pushed `v*` tag derives its version from the tag suffix.
-
-The Watch companion job installs the embedded watchOS app and its complication on a paired simulator, verifies real WatchConnectivity delivery, then shuts down the phone and verifies a new Watch process reads its cached snapshot. Its attempt-specific `watch-smoke-*` artifact includes screenshots, bounded command timings, app-owned progress and pre-shutdown phone diagnostics. [WidgetKit activates its containing app directly](https://developer.apple.com/documentation/widgetkit/linking-to-specific-app-scenes-from-your-widget-or-live-activity); `simctl openurl` is not a proxy for a watch-face interaction. Physical devices are still required to check watch-face placement and complication tap routing, large-file transfers, and expedited complication updates. Shared source and built-product validation covers all five components, actual signed App Groups, executable/platform/companion identity, and matching versions/builds before export.
-
-For simulators, Xcode can leave the ordinary codesign entitlement dictionary empty: effective simulator permissions are linked into each executable's `__TEXT,__entitlements` Mach-O section. CI verifies the code signature and those sections for every architecture, then runs the hosted/live App Group checks. Physical-device archives use their actual codesign entitlement dictionary. Neither path accepts only a source-plist declaration as proof.
-
-Watch CI uses the same preinstalled iPhone selection as iOS CI, pairs it with a fresh compatible Watch, and completes both simulator boots before compilation. It requires `bootstatus` to report `Finished`: a zero exit status alone is insufficient because CoreSimulator can return zero after `Data Migration Failed`. A failed migration stops the job before app installation or connectivity checks; inspect the retained `boot-phone.log` and `boot-watch.log` before retrying on a fresh runner.
-
-The Watch snapshot wait has a fixed ten-minute deadline, including cold-pair readiness and actual request/reply delivery; progress never resets that deadline. UI partitions run only when `complete_diagnostics=true` is explicitly dispatched, with an 80-minute execution budget per partition, separate from simulator preparation and retained diagnostics. They are not required before TestFlight upload.
-
-## Automatic PR delivery to TestFlight
-
-Opening, updating, or reopening a same-repository PR starts full CI. When **CI / full verification** succeeds, its **TestFlight** job calls this workflow with `publish_testflight=true`; no CLI dispatch, tag, or separate approval is required. Fork and Dependabot PRs receive CI only.
-
-CI and release use the same `github.sha`: the PR's tested merge revision, not a later moving branch tip. The reusable workflow runs inside the caller's CI run and checks that run's five canonical non-UI verification jobs through the Actions API before installing the signing key. The run ID must match the current execution, the event must be a same-repository PR, and the workflow must be `.github/workflows/ci.yml`. GitHub's API may identify the PR by its branch head SHA while the checkouts use its synthetic merge SHA; the shared run identity binds verification and release to the same execution. Missing, unfinished, skipped, failed, or foreign-SHA required checks prevent publishing.
-
-The PR's Checks tab and CI run show both verification and the nested TestFlight jobs, including the IPA artifact and release summary. Apple acceptance is reported separately from asynchronous processing. A manual CI dispatch remains verification-only; use the manual release controls below when you need an artifact-only build or a marketing-version override.
-
-Active PR CI runs are not automatically cancelled by new commits because they may be signing, uploading, or cleaning up certificates. The existing global release queue applies to reusable, manual, and tag releases alike. GitHub may replace older pending requests; every pushed commit is not guaranteed a separate TestFlight build.
-
-## Run manually: artifact only
-
-In GitHub:
-
-1. Open **Actions → Release IPA → Run workflow**.
-2. Select the branch or tag to build. The selected ref does not change the manual inputs' behavior.
-3. Set **marketing_version** to the intended version, for example `1.2.0`, or leave it blank to use the project's value.
-4. Leave **publish_testflight** unchecked.
-5. Select **Run workflow**.
-
-Equivalent GitHub CLI commands:
+Use the application compiler declared by `xtool-release.yml`, not a different
+compiler selected only to run native host tools. On the current Linux workstation:
 
 ```sh
-gh workflow run release.yml --ref <branch> -f marketing_version=1.2.0
-gh run watch "$(gh run list --workflow=release.yml -L1 --json databaseId --jq '.[0].databaseId')" --exit-status
+source /home/benni/.local/share/swiftly/xtool-env.sh
+PATH=/home/benni/.local/share/swiftly/toolchains/6.3.3/usr/bin:$PATH ./.codex/setup.sh
+PATH=/home/benni/.local/share/swiftly/toolchains/6.3.3/usr/bin:$PATH ./scripts/test.sh
 ```
 
-After success, open the workflow run's **Artifacts** section and download **`otodo-ipa`**. It is retained for 30 days. This manual mode does not upload to TestFlight—even when run against a tag—and does not create a GitHub Release.
+The setup installs only repository-local Python dependencies and resolves Swift
+packages. It does not overwrite xtool, change shell startup files, or install
+credentials. The portable runner validates metadata/App Groups for all five
+bundles, runs local helper regressions, and runs the entire core Swift suite.
 
-The exported IPA uses App Store distribution and cannot be sideloaded directly onto an iPhone. Upload it later with Apple's Transporter app, Xcode Organizer, or an authenticated Apple upload tool, or rerun the workflow with TestFlight publishing enabled.
+On a local Mac with Xcode, XcodeGen 2.46.0 and compatible preinstalled iOS/watchOS
+simulators, run `scripts/test.sh --apple`. It additionally builds the full app
+and extension graph, enumerates and runs all hosted and UI tests without sharding,
+checks actual signed simulator App Group entitlements in every Mach-O slice, and
+verifies real live WatchConnectivity delivery and cached relaunch with the phone
+shut down. No fake snapshot substitutes for transport. Boot migration must report
+`Finished`; a zero exit alone does not pass. The fixed ten-minute snapshot wait
+includes cold-pair readiness and request/reply delivery.
 
-## Run manually: artifact and TestFlight
+The runner honors your selected Xcode or command-scoped `DEVELOPER_DIR`, creates
+and removes its own test simulators, and retains local evidence under
+`.build/local-tests/apple-*/`. Open `ios/tests.xcresult` in Xcode for UI screenshots
+or export its attachments with `xcrun xcresulttool`. Watch screenshots, snapshots,
+progress and pre-shutdown phone diagnostics stay in the sibling `watch` directory.
+It does not download runtimes, switch Xcode globally, or upload evidence.
 
-In **Actions → Release IPA → Run workflow**, enter the marketing version and select **publish_testflight**. With the GitHub CLI:
+Physical-device checks still include large-file WatchConnectivity delivery,
+expedited complication updates, watch-face placement and complication tap routing.
+Linux cannot execute any Apple simulator tests; the runner fails clearly rather
+than claiming a skip as success.
+
+## Prepare and build locally
+
+For the installed CLI on the current workstation, source its compatibility
+environment and set the launcher override command-scoped:
 
 ```sh
-gh workflow run release.yml --ref <branch> \
-  -f marketing_version=1.2.0 \
-  -f publish_testflight=true
-gh run watch "$(gh run list --workflow=release.yml -L1 --json databaseId --jq '.[0].databaseId')" --exit-status
+source /home/benni/.local/share/swiftly/xtool-env.sh
+XTOOL=/home/benni/.local/share/xtool/native/bin/xtool \
+  ./scripts/build-release.sh --prepare-only --unsigned
 ```
 
-This produces the same `otodo-ipa` artifact first, then uploads it to the existing `plastickarma.otodo` app record. A green upload means Apple accepted the package; App Store Connect processing still happens asynchronously.
+This parses the complete manifest/project graph and prepares `.xtool/workspace/app`
+and `.xtool/workspace/project.json`. It does not compile, sign, upload, or validate
+Apple acceptance. It requires no distribution credentials.
 
-The release summary distinguishes requested, attempted, accepted, and failed uploads from certificate cleanup. If upload was accepted but only **Revoke only this release's ephemeral certificates** failed, rerun that failed cleanup job after the workflow finishes; do not rebuild or upload again. Cleanup consumes an immutable allowlist captured by the signing job, skips already removed IDs, and cannot use a stale baseline to revoke certificates from intervening releases. The allowlist artifact contains certificate IDs only, never private signing material.
-
-Internal testers must be App Store Connect users with access to OTodo; an ordinary Apple ID cannot be added directly to an Internal Testing group. For each new tester, open **Users and Access**, select **+**, invite the person with a role eligible for internal testing, grant access to **OTodo**, and have them accept the invitation. Then open **My Apps → OTodo → TestFlight**, wait for the build to finish processing, open or create an Internal Testing group, select **Testers → +**, choose those App Store Connect users, and add the build. Internal testing does not require Beta App Review. External testing requires the usual TestFlight metadata and Beta App Review.
-
-## Release by tag: artifact and TestFlight
-
-Push a version tag whose name is `v` followed by one to three dot-separated integers:
+For a real ad-hoc local smoke build, use the same launcher with `--unsigned`:
 
 ```sh
-git tag v1.2.0
-git push origin v1.2.0
+XTOOL=/home/benni/.local/share/xtool/native/bin/xtool \
+  ./scripts/build-release.sh --unsigned
 ```
 
-For every pushed `v*` tag, the workflow:
+An unsigned/ad-hoc smoke artifact is not a TestFlight-installable distribution IPA.
+Do not remove the Share extension, widgets, Watch targets, resources, capabilities
+or entitlements to make it build.
 
-1. validates that the suffix is one to three dot-separated integers, then derives the marketing version from it (`v1.2.0` becomes `1.2.0`);
-2. sets the UTC-epoch build number after the run reaches the global release queue;
-3. archives, signs, and exports the IPA;
-4. uploads the `otodo-ipa` workflow artifact for 30 days; and
-5. always uploads that IPA to TestFlight.
+## External signing and explicit TestFlight delivery
 
-Valid examples are `v1`, `v1.2`, and `v1.2.0`. The workflow rejects a bare `v`, empty components, more than three components, and nonnumeric suffixes before archiving. This automatic version derivation and TestFlight upload apply only to a tag **push** event; manually dispatching the workflow at the same tag still honors **marketing_version** and **publish_testflight**. Tag-push runs do **not** create a GitHub Release or attach an asset outside the workflow artifact.
+Keep the signing configuration **outside** the repository. Native xtool accepts
+`--signing /private/path/otodo.yml`, `XTOOL_SIGNING_CONFIG`, or its default
+`$XDG_CONFIG_HOME/xtool/signing/plastickarma.otodo.yml` (with `~/.config` as the
+configuration-home default). Its configuration uses these fields:
 
-## What the workflow controls
+```yaml
+certificate: distribution.cer
+privateKey: distribution.key
+profiles:
+  plastickarma.otodo: otodo.mobileprovision
+  plastickarma.otodo.widget: widget.mobileprovision
+  plastickarma.otodo.share: share.mobileprovision
+  plastickarma.otodo.watchkitapp: watch.mobileprovision
+  plastickarma.otodo.watchkitapp.widget: watch-widget.mobileprovision
+```
 
-The workflow selects the newest installed Xcode, checksum-installs XcodeGen 2.46.0, and regenerates the project using shared bounded setup. It archives with automatic signing and App Store Connect API authentication and exports once with `app-store-connect`. There is no unconditional legacy-method retry: permissions, profile, and entitlement errors must be repaired rather than repeated under another spelling.
+Paths are relative to that external configuration or absolute. The certificate
+is DER; the matching private key and every profile must stay outside the project.
+Use private directory/file permissions (0700/0600) and never commit, print or copy
+credentials into public evidence. Configure App Store Connect authentication for
+the installed `asc` CLI externally; no repository secret file or Apple login is
+needed for portable tests or prepare-only.
 
-Workflow permissions are read-only (`contents: read`, `actions: read` for exact-SHA CI verification). Actions and Python dependencies are pinned; Python runs in an isolated environment. Read-only Apple preflight checks accessible Bundle ID/App Groups capability registrations and, for publishing, the matching App Store Connect app record. Capability presence does not prove the named App Group assignment, distribution permissions, current agreements, or Apple's later binary acceptance. Real signed output validation and synchronous upload remain authoritative.
+For a completed product feature request, or a separately requested TestFlight
+delivery, publish through the local native path after appropriate local verification
+using the existing external identities. Infrastructure/documentation-only cleanup
+does not require a new upload:
 
-All release jobs remain under one global lock. The signing job snapshots existing certificates and captures the exact newly created eligible IDs; an independently retryable cleanup job acts only on that run-bound allowlist. Pre-existing IDs are never eligible. This repository's lock does not coordinate unrelated Apple-team signing automation. Secrets stay in step-scoped environments and temporary private files; diagnostic logs/metrics are redacted before upload, and keys, profiles, certificates and keychains are excluded from artifact paths. A cleanup failure remains visible without turning an accepted upload into “not requested.”
+```sh
+source /home/benni/.local/share/swiftly/xtool-env.sh
+XTOOL=/home/benni/.local/share/xtool/native/bin/xtool \
+  ./scripts/build-release.sh --signing /private/path/otodo.yml --upload
+```
 
-## Troubleshooting
+Omit `--upload` for a distribution-signed local artifact only. `--unsigned` cannot
+be combined with signing or upload. Use the marketing version in `project.yml`
+and a fresh numeric build number (`--build-number` can set it explicitly); never
+overwrite historical accepted artifacts or reuse an accepted upload's number.
+Run deliveries sequentially and preserve release/verification/upload receipts.
+Native release artifacts live under `.xtool/releases/` by default; `--output`
+chooses another release parent and each build has its own directory.
 
-### A prerequisite annotation names a missing secret or variable
+Report the exact source revision, version/build, artifact path and checksum,
+upload outcome, and actual Apple processing/tester availability observed. A local
+build or upload transport success alone does not prove Apple acceptance or an
+installed-device check. Verify the exact build in App Store Connect/TestFlight;
+do not submit a public App Store release as a substitute for internal testing.
 
-Create the value under the exact category and spelling shown above. `GH_OAUTH_CLIENT_ID` belongs under Actions **Variables**; the three `APP_STORE_CONNECT_API_*` values belong under Actions **Secrets**. Environment-level values do not satisfy the workflow unless that environment is wired into the job.
+`xtool-release.yml` pins the existing **Internal Testers** group
+(`2a16b67b-f282-48d0-bf9f-42696c0bf03b`). The uploader requires that exact group
+relationship on the processed build, not merely membership in any beta group.
 
-### `APP_STORE_CONNECT_API_KEY is not a valid .p8 private key`
+## Cleanup verification recorded on 2026-09-29
 
-Replace the secret with the literal contents of the downloaded `AuthKey_<KEYID>.p8`, including both boundary lines. Do not store the filename, JSON, base64 output, escaped `\n` text, or a client secret. Confirm the file's Key ID matches `APP_STORE_CONNECT_API_KEY_ID`.
-
-### `Cloud signing permission error`, `No profiles for ... were found`, or provisioning fails
-
-Check all of the following:
-
-- the API key is an **Admin** Team Key, not an Individual Key with insufficient access;
-- it belongs to Apple team `9492A97LWY`;
-- the Developer portal contains all five explicit App IDs listed in **Exact identities**;
-- all five App IDs have the App Groups capability assigned to `group.plastickarma.otodo`;
-- the Developer Program membership and agreements are active; and
-- the team can create/use an Apple Distribution certificate.
-
-An existing non-Admin key cannot simply be made sufficient in all cases; create a new Admin key, download its `.p8`, and replace all three secrets together.
-
-### TestFlight reports no suitable application record or app not found
-
-The Developer portal App ID alone is not enough. Create the separate App Store Connect **My Apps** record for bundle ID `plastickarma.otodo`, then rerun. The workflow deliberately does not attempt this external registration.
-
-### TestFlight rejects the marketing version
-
-For a closed version train or a message that `CFBundleShortVersionString` must be higher, run manually with a higher `marketing_version` or push a higher `v*` tag. The automatically unique build number does not make a closed marketing version reusable.
-
-### TestFlight requires a newer iOS SDK
-
-The newest Xcode installed on the selected GitHub runner is still older than Apple's current upload requirement. Update `runs-on` in the workflow to a runner image that contains the required Xcode/SDK, keeping the selection and signing steps intact.
-
-### The run is green but the build is absent from TestFlight
-
-For a manual run, verify **publish_testflight** was selected; artifact-only is the default even when the manual run targets a tag. A pushed `v*` tag always publishes. If upload succeeded, wait for App Store Connect processing and check email/App Store Connect for processing issues. The `otodo-ipa` artifact being present proves export, not TestFlight publication.
-
-### TestFlight shows Missing Compliance
-
-OTodo's generated Info.plist sets `ITSAppUsesNonExemptEncryption` to `false`, because it uses standard system networking encryption and no non-exempt encryption. If App Store Connect still asks, verify the archived app contains that key and answer Apple's export-compliance prompt accurately.
-
-### GitHub sign-in in the released app says OAuth is not configured
-
-Confirm `GH_OAUTH_CLIENT_ID` exists as a repository Actions variable and contains the OAuth App's public Client ID, then rebuild. Confirm **Enable Device Flow** remains selected on that OAuth App. Do not substitute a client secret or PAT. Organization access may also require an organization owner to approve the OAuth App or authorize it for SAML SSO.
-
-### The IPA will not install directly on a device
-
-This is expected: `otodo-ipa` is App Store-distribution signed. Publish it to TestFlight and install through Apple's TestFlight app; it is not an ad hoc or development-signed IPA.
+- The actual portable entrypoint passed source metadata checks, **16 Python tests,
+  290 XCTest tests and 8 Swift Testing tests**, using the declared Swift 6.3.3.
+- An initial attempt with host-tools Swift 6.4 failed compiling unchanged
+  `Sources/OTodoCore/SyncEngine.swift:550`: `sending 'originalPaths' risks causing
+  data races`, with later actor-isolated accesses at lines 559/566. Product source
+  and concurrency checks were not changed; the documented command selects the
+  existing manifest compiler rather than suppressing the failure.
+- The installed native launcher completed `--prepare-only --unsigned`, producing
+  the workspace paths above. No full native app build, signing, upload, identity
+  change, or Apple processing check was performed in this cleanup.
+- `scripts/test.sh --apple` on Linux exited 1 with the explicit local-Mac
+  requirement. Hosted/UI/Watch simulator coverage remains runnable on a Mac, but
+  was not executed here.
+- The repository-local backlog skill now uses the same local verification and
+  native TestFlight path; obsolete workflow dispatch and automatic-push steps
+  have been removed while preserving issue discovery and completion logic.

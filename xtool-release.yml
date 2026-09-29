@@ -1,0 +1,16 @@
+version: 1
+project: project.yml
+target: OTodo
+swiftVersion: 6.3.3
+settings:
+  # Public OAuth client identifier; GITHUB_CLIENT_ID overrides this value.
+  GITHUB_CLIENT_ID: Ov23ligrC7gp3RiT3d77
+appStoreConnect:
+  appID: "6808334170"
+  groupIDs:
+    - 2a16b67b-f282-48d0-bf9f-42696c0bf03b
+  locale: en-US
+  testNotes: >-
+    Native Linux release including the iPhone app, widget, Share extension,
+    Watch app and Watch widget. Verify Watch installation and sync, widgets,
+    sharing, GitHub login and Add Todo Shortcuts.

@@ -1,12 +1,10 @@
 # Repository agent instructions
 
-## Required end-of-work verification
+## Local verification and delivery
 
-- After local coding and local tests are complete, push the completed commit(s) to their intended remote ref and run `.github/workflows/ci.yml` against that exact ref. Wait for the workflow to finish successfully; local compilation or tests do not replace this CI check.
-- Treat product failures as actionable: diagnose, fix, retest locally, push, and rerun CI. Retry transient GitHub-hosted runner or simulator infrastructure failures, and confirm a successful final attempt.
-
-## Required TestFlight delivery
-
-- A completed product feature request must be delivered to TestFlight after CI succeeds. Run `.github/workflows/release.yml` against the exact verified ref with `publish_testflight=true`, then monitor it through a successful App Store Connect upload.
-- The feature request itself authorizes the required push, CI dispatch, and TestFlight dispatch. Do not pause or ask the user for separate permission.
-- Report the commit SHA, CI run, release run, marketing version, build number, and App Store Connect upload result.
+- GitHub Actions is retired for this repository. Run `scripts/test.sh` for local portable checks. On a local Mac, run `scripts/test.sh --apple` for hosted app tests, the complete UI suite, signed simulator bundle checks, and live/offline paired Watch coverage. Report unavailable platform coverage honestly; Linux cannot run Apple simulators.
+- Honor the selected Xcode and any command-scoped `DEVELOPER_DIR`. Never change global Xcode selection, install global tool wrappers, or persist toolchain environment changes as part of testing.
+- Preserve product tests and all five shipping targets, entitlements, resources, App Groups, and GitHub OAuth/sync features. Diagnose test failures without suppressing coverage or claiming compilation failures as successful tests.
+- Use only `scripts/build-release.sh` and `xtool-release.yml` for native release build/sign/upload. `--prepare-only --unsigned` prepares the graph without a build, signing or upload; `--unsigned` builds a local smoke artifact; `--upload` explicitly publishes to TestFlight. Keep signing material and App Store Connect authentication outside the repository. See `docs/RELEASE.md`.
+- Do not automatically commit, push, or dispatch workflows. Preserve the product-delivery requirement: a completed product feature request must be delivered to TestFlight through the local native path after appropriate local verification, and the feature request authorizes that TestFlight delivery—not a public App Store release. Infrastructure/documentation-only cleanup does not require a new upload. Report local command results, source revision, version/build, artifact/receipt paths and the actual Apple processing state observed.
+- The repository-local `.agents/skills/clear-backlog/SKILL.md` follows this same local verification and native TestFlight policy. Neither backlog processing nor task completion authorizes GitHub workflow dispatch, re-enabling Actions, or automatic remote pushes.

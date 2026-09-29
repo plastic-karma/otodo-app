@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded CI commands, live native diagnostics, and per-command evidence."""
+"""Bounded local commands, live native diagnostics, and XCTest evidence."""
 
 import argparse
 import codecs
@@ -27,16 +27,12 @@ class CommandError(RuntimeError):
         super().__init__(f"{stage} exited with status {returncode}")
 
 
-def _escape(value, *, property=False):
-    value = str(value).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-    return value.replace(":", "%3A").replace(",", "%2C") if property else value
-
 
 def _source_path(file, cwd=None):
     if file is None:
         return None
     path = Path(file)
-    root = Path(os.environ.get("GITHUB_WORKSPACE", Path.cwd())).resolve()
+    root = Path.cwd().resolve()
     absolute = (Path(cwd or root) / path).resolve()
     try:
         return str(absolute.relative_to(root))
@@ -47,9 +43,9 @@ def _source_path(file, cwd=None):
 def annotate(level, message, *, file=None, line=None, title=None):
     if level not in {"warning", "error", "notice"}:
         raise ValueError("annotation level must be warning, error, or notice")
-    properties = {"file": _source_path(file), "line": line, "title": title}
-    fields = ",".join(f"{key}={_escape(value, property=True)}" for key, value in properties.items() if value is not None)
-    print(f"::{level}{' ' + fields if fields else ''}::{_escape(message)}", file=sys.stderr, flush=True)
+    location = f"{_source_path(file)}:{line}: " if file else ""
+    label = f"{title}: " if title else ""
+    print(f"{level}: {location}{label}{message}", file=sys.stderr, flush=True)
 
 
 _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -71,12 +67,6 @@ def _identifier(value):
     return value.replace(".", "/").removesuffix("()")
 
 
-_BUILD_MARKERS = {
-    "Command line invocation:": "xcode_invocation",
-    "Resolve Package Graph": "package_resolution_started",
-    "Resolved source packages:": "package_resolution_completed",
-}
-
 
 class _Evidence:
     def __init__(self, stage, started, cwd):
@@ -87,8 +77,6 @@ class _Evidence:
         self.test_cases = []
         self.pending = set()
         self.startup_seconds = None
-        self.first_output_seconds = None
-        self.build_milestones = {}
 
     def issue(self, message, file=None, line=None):
         file = _source_path(file, self.cwd)
@@ -99,13 +87,6 @@ class _Evidence:
 
     def consume(self, text):
         text = _ANSI.sub("", text).strip()
-        if text and self.first_output_seconds is None:
-            self.first_output_seconds = round(time.monotonic() - self.started, 3)
-        marker = _BUILD_MARKERS.get(text)
-        if text.startswith("Build description signature:"):
-            marker = "build_description"
-        if marker and marker not in self.build_milestones:
-            self.build_milestones[marker] = round(time.monotonic() - self.started, 3)
         if _SUITE_STARTED.match(text):
             if self.startup_seconds is None:
                 self.startup_seconds = time.monotonic() - self.started
@@ -217,7 +198,7 @@ def run_command(arguments, *, stage, timeout, log_path=None, capture=False, env=
     """Run without a shell; env follows subprocess's replacement-environment semantics.
 
     Workers share cancellation with a concurrently active main-thread command.
-    POSIX process groups are required (the CI runners are Linux and macOS).
+    POSIX process groups are required (Linux and macOS).
     An optional threading.Event cancels a whole caller-owned concurrent batch.
     startup_timeout requires a native XCTest suite/case start, not a build banner.
     """
@@ -231,9 +212,8 @@ def run_command(arguments, *, stage, timeout, log_path=None, capture=False, env=
     started_at = _utc_now()
     evidence = _Evidence(stage, started, cwd)
     context = os.environ if env is None else {**os.environ, **env}
-    results_directory = context.get("CI_RESULTS_DIR")
-    metrics = {"stage": stage, "started_at": started_at,
-               **{key: context[key] for key in ("GITHUB_SHA", "GITHUB_RUN_ATTEMPT", "CI_MODE", "CI_FILTER") if key in context}}
+    results_directory = context.get("OTODO_TEST_RESULTS_DIR")
+    metrics = {"stage": stage, "started_at": started_at}
     process = None
     selector = selectors.DefaultSelector()
     log = None
@@ -393,8 +373,6 @@ def run_command(arguments, *, stage, timeout, log_path=None, capture=False, env=
                         "output_drained": output_drained,
                         "startup_seconds": round(evidence.startup_seconds, 3) if evidence.startup_seconds is not None else None,
                         "startup_timed_out": startup_timed_out,
-                        "first_output_seconds": evidence.first_output_seconds,
-                        "build_milestones": evidence.build_milestones,
                         "test_cases": evidence.test_cases, "incomplete_test_cases": sorted(evidence.pending)})
         try:
             _write_metrics(results_directory, metrics)
@@ -403,60 +381,6 @@ def run_command(arguments, *, stage, timeout, log_path=None, capture=False, env=
             if returncode == 0:
                 raise CommandError(stage, 1) from error
 
-
-def _markdown(value):
-    return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("|", "&#124;").replace("\r", " ").replace("\n", " ")
-
-
-def summarize(title):
-    directory = os.environ.get("CI_RESULTS_DIR")
-    paths = sorted(Path(directory).glob("command-*.json")) if directory else []
-    records = []
-    errors = []
-    for path in paths:
-        try:
-            record = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(record, dict) or not {"stage", "returncode", "elapsed_seconds", "test_cases", "first_issue", "started_at", "completed_at", "timed_out"} <= record.keys():
-                raise ValueError("missing command evidence fields")
-            records.append(record)
-        except (OSError, ValueError) as error:
-            errors.append(f"Unreadable metrics {path.name}: {error}")
-    records.sort(key=lambda record: record["started_at"])
-    lines = [f"## {_markdown(title)}", ""]
-    for key in ("GITHUB_SHA", "GITHUB_RUN_ATTEMPT", "CI_MODE", "CI_FILTER"):
-        values = sorted({str(record[key]) for record in records if key in record} | ({os.environ[key]} if key in os.environ else set()))
-        if values:
-            lines.append(f"- {key}: {_markdown(', '.join(values))}")
-    lines += ["", "Observed finished XCTest cases only; this summary is not a full-coverage gate.", "",
-              "| Stage | Seconds | Exit | Passed | Failed | Skipped | Unfinished |", "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
-    totals = {status: 0 for status in ("passed", "failed", "skipped")}
-    unfinished = 0
-    issues = []
-    for record in records:
-        counts = {status: sum(case["status"] == status for case in record["test_cases"]) for status in totals}
-        for status in totals:
-            totals[status] += counts[status]
-        pending = len(record.get("incomplete_test_cases", []))
-        unfinished += pending
-        lines.append(f"| {_markdown(record['stage'])} | {record['elapsed_seconds']:.3f} | {record['returncode']} | {counts['passed']} | {counts['failed']} | {counts['skipped']} | {pending} |")
-        if record["first_issue"]:
-            issue = record["first_issue"]
-            location = f"{issue['file']}:{issue['line']}: " if issue.get("file") else ""
-            issues.append(f"First issue ({_markdown(record['stage'])}, +{issue['elapsed_seconds']:.3f}s): {_markdown(location + issue['message'])}")
-    lines += ["", f"Finished observations: {totals['passed']} passed, {totals['failed']} failed, {totals['skipped']} skipped; {unfinished} started cases did not finish."]
-    lines.extend(["", *issues])
-    if not records:
-        lines.append("**No command evidence was recorded; coverage is unknown/incomplete.**")
-    if unfinished or totals["failed"] or any(record["returncode"] != 0 for record in records) or errors:
-        lines.append("**Failed or incomplete execution: do not infer full coverage from passing cases.**")
-    lines.extend(f"- {_markdown(error)}" for error in errors)
-    text = "\n".join(lines) + "\n"
-    print(text, end="")
-    if os.environ.get("GITHUB_STEP_SUMMARY"):
-        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-            summary.write(text)
-    if errors:
-        raise CommandError("summary", 1)
 
 
 def main():
@@ -468,25 +392,20 @@ def main():
     run.add_argument("--startup-timeout", type=float)
     run.add_argument("--log", dest="log_path")
     run.add_argument("arguments", nargs=argparse.REMAINDER)
-    summary = subparsers.add_parser("summary")
-    summary.add_argument("--title", required=True)
     options = parser.parse_args()
     try:
-        if options.action == "summary":
-            summarize(options.title)
-        else:
-            arguments = options.arguments[1:] if options.arguments[:1] == ["--"] else options.arguments
-            if not arguments or not math.isfinite(options.timeout) or options.timeout <= 0:
-                parser.error("run requires a command and a finite positive timeout")
-            if options.startup_timeout is not None and (not math.isfinite(options.startup_timeout) or options.startup_timeout <= 0):
-                parser.error("--startup-timeout must be a finite positive number")
-            run_command(arguments, stage=options.stage, timeout=options.timeout, log_path=options.log_path,
-                        startup_timeout=options.startup_timeout)
+        arguments = options.arguments[1:] if options.arguments[:1] == ["--"] else options.arguments
+        if not arguments or not math.isfinite(options.timeout) or options.timeout <= 0:
+            parser.error("run requires a command and a finite positive timeout")
+        if options.startup_timeout is not None and (not math.isfinite(options.startup_timeout) or options.startup_timeout <= 0):
+            parser.error("--startup-timeout must be a finite positive number")
+        run_command(arguments, stage=options.stage, timeout=options.timeout, log_path=options.log_path,
+                    startup_timeout=options.startup_timeout)
         return 0
     except CommandError as error:
         return error.returncode
     except OSError as error:
-        annotate("error", f"CI runtime failed: {error.strerror}")
+        annotate("error", f"Command runtime failed: {error.strerror}")
         return 1
 
 

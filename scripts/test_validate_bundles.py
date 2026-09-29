@@ -39,7 +39,7 @@ def universal_simulator_binary(first_group, second_group):
 class BuiltBundleTests(unittest.TestCase):
     def make_app(self, root, platform="archive"):
         app = root / "OTodo.app"
-        project = bundles.load_project(Path(__file__).resolve().parents[2])
+        project = bundles.load_project(Path(__file__).resolve().parents[1])
         for target, identifier, relative, _, _ in bundles.COMPONENTS:
             bundle = app / relative
             bundle.mkdir(parents=True, exist_ok=True)

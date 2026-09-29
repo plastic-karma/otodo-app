@@ -36,10 +36,10 @@ targets:
       - name: Generate bundled changelog
         script: |
           set -eu
-          python3 "$SRCROOT/.github/scripts/generate_changelog.py" \
+          python3 "$SRCROOT/scripts/generate_changelog.py" \
             "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Changelog.json"
         inputFiles:
-          - $(SRCROOT)/.github/scripts/generate_changelog.py
+          - $(SRCROOT)/scripts/generate_changelog.py
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Changelog.json
         # HEAD may be symbolic, detached, or in an external worktree Git directory.

@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-REPOSITORY = Path(__file__).resolve().parents[2]
+REPOSITORY = Path(__file__).resolve().parents[1]
 
 # Product commits from before the Changelog: feature trailer was introduced.
 # Keep this historical set fixed; new product entries opt in with the trailer.
@@ -64,8 +64,7 @@ def main() -> None:
     if git("rev-parse", "--is-shallow-repository").strip() != "false":
         raise RuntimeError(
             "Complete Git history is required. Run git fetch --unshallow before "
-            "building, or use actions/checkout with fetch-depth: 0. "
-            "The build does not fetch history."
+            "building. The build does not fetch history."
         )
 
     history = git(

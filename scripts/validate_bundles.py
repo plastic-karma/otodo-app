@@ -11,7 +11,7 @@ import sys
 
 import yaml
 
-from ci_runtime import CommandError, annotate, run_command
+from command_runtime import CommandError, annotate, run_command
 
 APP_GROUP = "group.plastickarma.otodo"
 # target, bundle identifier, embedded path, entitlement source, extension point

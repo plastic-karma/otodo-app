@@ -308,14 +308,14 @@ Add **OTodo → Today & Overdue** to a compatible watch-face complication slot. 
 
 Workspace changes are sent through WatchConnectivity and saved atomically on Watch; no GitHub credentials or direct GitHub access are needed there. The saved snapshot includes future dated todos, so they move into Today and Overdue at local day boundaries even when the phone is unavailable. Completed and undated todos are excluded. **Saved on Watch** shows when the snapshot last changed, and **Refresh from iPhone** requests the latest available data. Delivery depends on the paired devices and watchOS scheduling; the Watch displays its last received snapshot while disconnected.
 
-CI builds both Watch targets and exercises live delivery and offline relaunch on paired simulators. Watch-face placement and complication tap routing, large-file transfers, and expedited complication updates require a physical paired device check.
+`scripts/test.sh --apple` builds both Watch targets and exercises live delivery and offline relaunch on a local Mac's paired simulators. Watch-face placement and complication tap routing, large-file transfers, and expedited complication updates require a physical paired device check.
 
 ## Requirements
 
-- Swift 6.1 for the Swift package and Linux development
-- macOS with Xcode and an installed iOS 17-or-newer simulator for the app
+- Swift **6.3.3** for portable tests and native app compilation, matching `xtool-release.yml`
+- macOS with Xcode and installed compatible iOS/watchOS simulators for Apple app tests
 - XcodeGen **2.46.0** to generate `OTodo.xcodeproj` from `project.yml`
-- Python 3.12 or newer for CI/release helpers, their pinned `.github/scripts/requirements.txt` dependencies, and Git with complete repository history for iOS app builds
+- Python 3.12 or newer for local helpers, their pinned `scripts/requirements.txt` dependencies, and Git with complete repository history for iOS app builds
 - iOS 17 or later to run OTodo
 - watchOS 10 or later and a paired iPhone for the optional Watch companion
 
@@ -399,7 +399,7 @@ Losing connectivity, a failed API request, or expired authorization does not dis
 
 ## One-time GitHub OAuth registration for synced workspaces
 
-> **Optional for local-only use. One-time external user action for GitHub sync:** a repository workflow cannot create or configure a GitHub OAuth App. An owner of the GitHub account or organization must do this in the GitHub web UI.
+> **Optional for local-only use. One-time external user action for GitHub sync:** an owner of the GitHub account or organization must register and configure the GitHub OAuth App in the GitHub web UI.
 
 1. Open GitHub **Settings → Developer settings → OAuth Apps → New OAuth App**.
 2. Enter these values:
@@ -409,21 +409,17 @@ Losing connectivity, a failed API request, or expired authorization does not dis
    - **Authorization callback URL:** the same repository URL. GitHub requires this registration field, but Device Flow does not redirect to it.
 3. Create the application, then open its settings and select **Enable Device Flow**.
 4. Copy the OAuth app's public **Client ID**. Do **not** generate or configure a client secret.
-5. In this repository, open **Settings → Secrets and variables → Actions → Variables → New repository variable** and create:
-
-   | Name | Value |
-   | --- | --- |
-   | `GH_OAUTH_CLIENT_ID` | the OAuth app's public Client ID |
+5. Set the public `GITHUB_CLIENT_ID` build setting locally, or the corresponding `settings.GITHUB_CLIENT_ID` value in `xtool-release.yml`. The environment variable overrides the native manifest value. For local simulator builds, the helpers also accept `GH_OAUTH_CLIENT_ID`.
 
 OTodo requests the GitHub `repo` scope so the user can explicitly approve access to public and private repositories. The client sends only the public client ID during Device Flow. It requires **no OAuth client secret, personal access token, or GitHub password**. If an organization enforces SAML SSO or OAuth App restrictions, its owner must separately approve/authorize the OAuth App for that organization.
 
-At build time, the public Actions variable is passed to the Xcode build setting `GITHUB_CLIENT_ID`; `project.yml` writes that value to the app's `GitHubClientID` Info.plist key. The value may stay empty for a local-only build. Pass it explicitly as shown below to enable GitHub sync in a local build.
+At build time, `project.yml` writes `GITHUB_CLIENT_ID` to the app's `GitHubClientID` Info.plist key. The value may stay empty for a local-only simulator build. The native release manifest retains the public identifier for GitHub sync; no Actions variable or secret is used.
 
 ## Workspace onboarding
 
 For a local-only workspace, tap **Use This Device**. No GitHub OAuth configuration, account, repository, or network connection is required.
 
-For a GitHub-backed workspace, first create the repository and commit a compatible `.todo/config.toml`, project records, and any existing task records. Neither the app nor CI creates this external repository/store registration. Then:
+For a GitHub-backed workspace, first create the repository and commit a compatible `.todo/config.toml`, project records, and any existing task records. The app does not create this external repository/store registration. Then:
 
 1. Tap **Continue with GitHub**, open the verification page, enter the one-time code, and approve the requested `repo` scope.
 2. Select a repository. Its default branch is filled automatically; enter another branch if needed.
@@ -431,64 +427,41 @@ For a GitHub-backed workspace, first create the repository and commit a compatib
 4. Tap **Connect Repository**. The initial snapshot must validate before it becomes the saved offline workspace.
 
 ## Develop and test
-### Codex Cloud from ChatGPT mobile
+### Local prerequisites and portable coverage
 
-Create a Codex Cloud environment for this repository in ChatGPT, select Python
-3.12 and Swift 6.1, and use these repository-backed commands:
+Select Swift **6.3.3** on your command's `PATH`, install Python locally, then prepare repository-local dependencies:
 
 ```sh
-# Setup script
 ./.codex/setup.sh
-
-# Maintenance script
-./.codex/maintenance.sh
+./scripts/test.sh
 ```
 
-The setup is idempotent and cache-safe. It installs checksum-pinned GitHub CLI
-2.101.0 and xtool 1.19.2 binaries for the cloud runner architecture, plus pinned
-SwiftLint or SwiftFormat binaries when the repository declares their config
-files. It creates an isolated Python environment for workflow helpers, resolves
-Swift packages, sets a usable Git identity, and validates portable bundle
-metadata. Optional `CODEX_GIT_AUTHOR_NAME` and `CODEX_GIT_AUTHOR_EMAIL`
-environment variables replace the generic commit identity.
+The setup creates `.build/local-python`, installs the pinned Python dependencies,
+and resolves Swift packages. It does not install or replace global tools, edit
+shell startup files, change Git identity, or configure credentials. The maintenance
+entrypoint reruns this same setup. Set `PYTHON` to an already prepared interpreter
+if you prefer your own environment.
 
-Use Codex's GitHub connection to create and push a branch or pull request.
-Opening or updating a pull request starts this repository's full GitHub Actions
-CI automatically. Enable agent internet access only for the required GitHub and
-dependency domains. Direct `gh workflow run` commands additionally require a
-`GH_TOKEN` available during the agent phase; Codex Cloud secrets are setup-only.
-If direct dispatch is necessary, use a dedicated fine-grained token restricted
-to this repository with only Contents and Actions access, never a broad personal
-token.
+The default test command checks all five components' source metadata and App Groups,
+runs the local helper regressions, and executes the full platform-neutral Swift
+package suite. It does not build, sign or upload a release.
 
-The environment installs xtool so Linux compatibility can be evaluated, but it
-does not pretend to replace the release system. This XcodeGen application graph,
-iOS Simulator tests, App Store signing, and TestFlight upload still run on the
-macOS GitHub Actions workflows. Configuring xtool for device deployment would
-also require an Apple login, an Xcode archive, and a physically connected iOS
-device; none of that signing material belongs in Codex setup.
-
-Codex setup runs with internet access and caches the resulting container. The
-maintenance script reruns the same idempotent reconciliation after Codex checks
-out a task's selected branch.
-
-### Swift package on Linux or macOS
-
-The Swift package contains the platform-neutral core and its tests:
+On the native Linux workstation, keep the host-tools compatibility environment
+but select the app manifest's Swift 6.3.3 compiler for setup and portable tests:
 
 ```sh
-swift build
-swift test
+source /home/benni/.local/share/swiftly/xtool-env.sh
+PATH=/home/benni/.local/share/swiftly/toolchains/6.3.3/usr/bin:$PATH ./.codex/setup.sh
+PATH=/home/benni/.local/share/swiftly/toolchains/6.3.3/usr/bin:$PATH ./scripts/test.sh
 ```
 
-Portable workflow checks run without Xcode:
+Verification on 2026-09-29 with Swift 6.3.3: all five components' source metadata,
+16 Python tests, 290 XCTest tests and 8 Swift Testing tests passed. An initial
+attempt using the host-tools Swift 6.4 compiler failed at unchanged
+`SyncEngine.swift:550` (`sending 'originalPaths' risks causing data races`, with
+later accesses at 559/566). Use the declared app compiler above; no application
+code, concurrency checks or test coverage was changed to bypass that diagnostic.
 
-```sh
-python3 -m venv /tmp/otodo-ci-python
-/tmp/otodo-ci-python/bin/python -m pip install -r .github/scripts/requirements.txt
-/tmp/otodo-ci-python/bin/python .github/scripts/validate_bundles.py source
-/tmp/otodo-ci-python/bin/python -m unittest discover -s .github/scripts -p 'test_*.py'
-```
 
 ### Generate and build the iOS app on macOS
 
@@ -507,34 +480,46 @@ export PATH="$XCODEGEN_DIR/xcodegen/bin:$PATH"
 xcodegen --version
 ```
 
-Generate the project, then build for a generic simulator:
+Run all local coverage, including hosted app tests, every UI suite, signed
+simulator bundle validation and real live/offline Watch delivery:
 
 ```sh
-export GH_OAUTH_CLIENT_ID='<public OAuth Client ID>'
-xcodegen generate --spec project.yml
-xcodebuild build \
-  -project OTodo.xcodeproj \
-  -scheme OTodo \
-  -destination 'generic/platform=iOS Simulator' \
-  CODE_SIGNING_ALLOWED=YES \
-  CODE_SIGN_IDENTITY=- \
-  GITHUB_CLIENT_ID="$GH_OAUTH_CLIENT_ID"
+./scripts/test.sh --apple
+# Optional: use a particular installed Xcode only for this command.
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./scripts/test.sh --apple
 ```
 
-Simulator builds use ad-hoc signing so App Group entitlements are available to the app and extensions. Disabling signing prevents shared workspace capture from running.
+The runner honors the selected Xcode. It generates the project, creates dedicated
+test simulators, verifies that all compiled hosted/UI tests actually pass, and
+retains logs, coverage JSON, screenshots and `.xcresult` bundles under
+`.build/local-tests/apple-*/`. It removes only the simulators it creates. Compatible
+iOS and watchOS runtimes must already be installed; the runner does not download
+platforms or change global Xcode selection. Simulator builds use ad-hoc signing
+because App Group access is part of the coverage.
 
-To run or test, open `OTodo.xcodeproj`, select scheme `OTodo` and any installed iOS 17-or-newer iPhone simulator, then Run/Test. Regenerate the project after changing `project.yml`; do not hand-edit generated project settings.
+Linux rejects `--apple` clearly before attempting tests; Apple simulator execution
+was unavailable during this cleanup. The portable test result and native release
+preparation are not evidence of iPhone/Watch runtime behavior.
+
+To run or debug manually, generate `OTodo.xcodeproj` with
+`xcodegen generate --spec project.yml`, then open it in Xcode and select the
+`OTodo` scheme. Regenerate after changing `project.yml`; do not hand-edit generated
+project settings.
 
 ### Visual design survey
 
-The UI suite includes light/dark captures of the workspace, sidebar, filter library, project creation, and todo/bulk capture, plus the largest accessibility text size. To run only this visual survey on a branch:
+The unchanged UI suite includes light/dark workspace, sidebar, filter library,
+project creation and todo/bulk capture screenshots, plus the largest accessibility
+text size. Run it with `--apple`, or select a focused test in Xcode for diagnosis.
+Open the retained `ios/tests.xcresult` in Xcode, or export attachments locally:
 
 ```sh
-gh workflow run ci.yml --ref your-branch \
-  -f design_survey_only=true -f export_ui_snapshots=true
+xcrun xcresulttool export attachments \
+  --path .build/local-tests/apple-<run>/ios/tests.xcresult \
+  --output-path /tmp/otodo-snapshots
 ```
 
-Download the run's `ui-snapshots-*` artifact for full-resolution images and its attachment manifest. This focused run is not the release gate. Normal CI runs core, hosted iOS, and Watch checks without UI tests; `export_ui_snapshots=true` only exports attachments from the selected tests and does not enable UI coverage.
+A focused test is not a substitute for the complete local suite.
 
 ### Product changelog entries
 
@@ -544,40 +529,30 @@ Mark each new product-feature commit with a `Changelog: feature` trailer:
 git commit -m "Add a product feature" -m "Changelog: feature"
 ```
 
-The app build generates `Changelog.json` from those commits and a fixed historical feature backfill, using Git's subjects and committer timestamps. Do not add maintenance commits to the backfill. This generation runs locally without fetching history; shallow clones must run `git fetch --unshallow` before building. Simulator CI and release builds fetch complete history automatically.
+The app's Xcode build runs `scripts/generate_changelog.py` to generate `Changelog.json` from those commits and a fixed historical feature backfill, using Git's subjects and committer timestamps. Do not add maintenance commits to the backfill. Generation is local and never fetches history; shallow clones must run `git fetch --unshallow` before building.
 
-## CI and releases
+## Local releases and TestFlight
 
-[`CI`](.github/workflows/ci.yml) runs automatically when a pull request is opened, updated with new commits, or reopened. After **CI / full verification** passes, same-repository PRs automatically call [`Release IPA`](.github/workflows/release.yml) with TestFlight publishing enabled. The release archives the exact PR merge revision tested by CI. Fork and Dependabot PRs run verification without automatic signing or publishing.
+There are no GitHub workflows or composite actions, and repository Actions is
+disabled. Commits, branches, pull requests and tags do not trigger testing, signing
+or upload. GitHub remains supported as an optional app workspace backend.
 
-The PR's CI run includes the TestFlight release and its certificate cleanup, so it remains in progress after verification passes. Its release gate checks all five completed verification jobs in that same run. Active PR runs finish rather than being cancelled by a newer commit, protecting signing and cleanup; pending runs may be superseded by newer requests. The global release queue still serializes signing across every branch.
-
-Manual CI remains available for branch verification and diagnosis; it does not automatically publish to TestFlight:
-
-```sh
-gh workflow run ci.yml --ref <branch>
-```
-
-The canonical **CI / full verification** check requires portable metadata checks, the complete Linux Swift suite, an iOS build with every hosted application test, and real live/offline Watch verification. Normal CI uses the `OTodoHostedTests` scheme to exclude `OTodoUITests` from compilation, test discovery, and execution; it does not publish executable products or start UI partition runners. iOS still checks effective signed App Groups and discovers hosted tests from Xcode. The final check rejects missing, skipped, duplicate, foreign-SHA, or stale failed-attempt hosted coverage. UI behavior is checked manually in TestFlight so automated UI suites do not delay iteration or publishing.
-
-Native compiler/XCTest errors become immediate file/test annotations. Commands have explicit deadlines, a separate native-test startup allowance, and bounded cancellation; per-test native limits do not replace whole-phase limits. Watch boot and build run concurrently, retain the absolute 300-second snapshot budgets, expose opt-in app-owned readiness/reply state, and preserve phone logs before offline shutdown. No fake snapshot replaces real delivery.
-
-Modes have separate run identities and concurrency groups. A superseded full run cannot be cancelled by a focused diagnostic:
+Use `scripts/build-release.sh` with `xtool-release.yml` for native local releases:
 
 ```sh
-# Normal release gate: core, hosted app, bundle, and Watch checks; no UI tests.
-gh workflow run ci.yml --ref <branch>
-# Explicitly run all UI suites; continue partitions after a smoke assertion fails.
-gh workflow run ci.yml --ref <branch> -f complete_diagnostics=true
-# Focused diagnosis cannot satisfy the full release check.
-gh workflow run ci.yml --ref <branch> \
-  -f test_filter=OTodoUITests/OTodoUITests/testAttachmentSelectionSavesOfflineAndClearsForAnotherTodo
+# Parse the complete app/extension/Watch graph without building or uploading.
+XTOOL=/home/benni/.local/share/xtool/native/bin/xtool \
+  ./scripts/build-release.sh --prepare-only --unsigned
+# Build an ad-hoc local smoke artifact, not a TestFlight-installable IPA.
+./scripts/build-release.sh --unsigned
+# Only when explicitly delivering to TestFlight, with external credentials ready:
+./scripts/build-release.sh --upload
 ```
 
-Complete-diagnostics mode is opt-in: it builds all tests once, runs hosted and critical UI smoke tests, then runs the remaining functional and integration UI partitions on isolated simulators. The planner discovers new tests even without recorded timings; `.github/ci-test-durations.json` only balances the partitions. Focused and complete-diagnostics runs never authorize a release. UI test sources remain available for local testing, targeted diagnosis, and design surveys, but are not part of the normal CI or TestFlight gate.
+Source the native environment shown above when using that workstation's installed
+CLI. Prepare-only succeeded on 2026-09-29 and produced `.xtool/workspace/app` and
+`.xtool/workspace/project.json`. It did not compile the app, sign, upload, or prove
+Apple processing; no release was delivered during this cleanup.
 
-Every attempt retains small `*-evidence-*`/`watch-smoke-*` timing and coverage artifacts for seven days. Failed iOS jobs retain attempt/partition-specific `iOS-test-results-*` bundles; requested/failure screenshots use `ui-snapshots-*`. Metrics distinguish command elapsed time, native test startup, build milestones, and the first actionable issue. Only complete-diagnostics runs transport test products between runners; these are bound to the exact run, SHA, Xcode/SDK/architecture, and simulator type. A rerun may reuse prior successful required jobs, but a newer failed observation cannot be replaced by older green evidence.
-
-Exact-input Linux `.build` cache reuse is enabled by default; use `use_build_cache=false` for cold comparisons. Keys include the pinned Swift 6.1.3 container digest, actual compiler identity, architecture, package inputs, sources and tests; there is no stale-prefix restore or signed-product/keychain cache. In the initial same-commit experiment, core job time fell from 86 to 58 seconds with identical 37-second container initialization: the core command fell from 31 to 12 seconds, warm restore cost one second, and the cold save cost nine seconds. These are measured samples, not a guaranteed hit rate or whole-CI speedup. All Actions are pinned to full commit SHAs; shared setup uses an isolated Python environment and checksum-verified XcodeGen 2.46.0. Apple package resolution runs as its own bounded preflight before simulator boot/build overlap, rather than hiding package fetching in a concurrent build.
-
-See [`docs/RELEASE.md`](docs/RELEASE.md) for the one-time Apple setup, signing secrets, artifact-only builds, and TestFlight releases.
+See [`docs/RELEASE.md`](docs/RELEASE.md) for external signing prerequisites,
+local verification, artifact locations, and explicit TestFlight delivery.

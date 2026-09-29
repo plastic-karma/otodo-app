@@ -31,3 +31,7 @@ Local.xcconfig
 
 # Local Python helper bytecode
 __pycache__/
+
+# Native xtool release workspaces and artifacts
+.xtool/
+*.ipa

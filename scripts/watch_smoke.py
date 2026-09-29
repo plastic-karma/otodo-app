@@ -11,8 +11,8 @@ import shutil
 import sys
 import time
 
-from ci_runtime import CommandError, annotate, run_command
-from ios_ci import prepare as prepare_ios
+from command_runtime import CommandError, annotate, run_command
+from ios_tests import prepare as prepare_ios
 
 
 PHONE_BUNDLE = "plastickarma.otodo"
@@ -96,9 +96,6 @@ def prepare(output):
     watch = create_device(state, watch_runtime, "Apple Watch", "OTodo companion smoke Watch")
     save_json(output / "devices.json", {"phone": phone, "watch": watch})
     run("xcrun", "simctl", "pair", watch, phone, stage="pair")
-    if os.environ.get("GITHUB_ENV"):
-        with open(os.environ["GITHUB_ENV"], "a") as environment:
-            environment.write(f"WATCH_PHONE_SIMULATOR_ID={phone}\nWATCH_SIMULATOR_ID={watch}\n")
     progress(output, "paired", phone=phone, watch=watch, boots="before-build")
 
 
@@ -124,7 +121,7 @@ def build(output, derived_data):
         "-showBuildTimingSummary",
         "-derivedDataPath", derived_data, "CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-",
         "-clonedSourcePackagesDirPath", source_packages, "-disableAutomaticPackageResolution",
-        f"GITHUB_CLIENT_ID={os.environ.get('GH_OAUTH_CLIENT_ID', '')}",
+        f"GITHUB_CLIENT_ID={os.environ.get('GITHUB_CLIENT_ID', os.environ.get('GH_OAUTH_CLIENT_ID', ''))}",
         stage="full-app-build", timeout=900, log_path=output / "build.log")
     progress(output, "build-finished")
 
