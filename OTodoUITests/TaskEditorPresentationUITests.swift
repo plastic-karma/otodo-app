@@ -79,8 +79,17 @@ final class TaskEditorPresentationUITests: XCTestCase {
             let next = try XCTUnwrap(calendar.date(
                 byAdding: .day, value: 1, to: try XCTUnwrap(formatter.date(from: due))
             ))
-            let id = String(row.identifier.dropFirst("task-row-".count))
-            app.buttons["task-toggle-completion-\(id)"].tap()
+            row.tap()
+            XCTAssertTrue(name.waitForExistence(timeout: 8))
+            notes.tap()
+            notes.typeText("\nFinish with these edits")
+            let finish = app.buttons["task-editor-finish"]
+            scrollTo(finish, in: app)
+            XCTAssertTrue(app.buttons["task-editor-schedule"].isHittable)
+            XCTAssertTrue(app.buttons["task-editor-archive"].isHittable)
+            attachScreenshot(in: app, name: "Edit todo actions — \(appearance)")
+            finish.tap()
+            XCTAssertTrue(name.waitForNonExistence(timeout: 8))
             let advanced = XCTNSPredicateExpectation(
                 predicate: NSPredicate(
                     format: "label CONTAINS %@ AND label CONTAINS %@",
@@ -89,6 +98,12 @@ final class TaskEditorPresentationUITests: XCTestCase {
             )
             XCTAssertEqual(XCTWaiter.wait(for: [advanced], timeout: 8), .completed,
                            "Completing the preserved daily rule must advance the same task by one day")
+            app.terminate()
+            app.launch()
+            selectActive(in: app)
+            openWeekend(in: app)
+            XCTAssertEqual(notes.value as? String,
+                           "## Make time\n- Walk by the water\n- Read a chapter\nFinish with these edits")
             app.terminate()
         }
     }
@@ -132,6 +147,47 @@ final class TaskEditorPresentationUITests: XCTestCase {
         interval.coordinate(withNormalizedOffset: CGVector(dx: 0.99, dy: 0.5)).tap()
         interval.typeText(XCUIKeyboardKey.delete.rawValue + "2")
         XCTAssertTrue(save.isEnabled, "Correcting the retained invalid interval must restore saving")
+    }
+
+    @MainActor
+    func testArchiveCancellationPreservesDraftAndConfirmationDeletesOffline() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace"]
+        app.launch()
+        selectActive(in: app)
+        app.buttons["task-add"].tap()
+        let name = app.textFields["task-editor-name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 8))
+        name.tap()
+        name.typeText("Weekend plan to archive\n")
+        save(in: app)
+        openWeekend(in: app)
+        name.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        name.typeText(" unsaved\n")
+        let archive = app.buttons["task-editor-archive"]
+        scrollTo(archive, in: app)
+        archive.tap()
+        let confirm = app.buttons["task-editor-archive-confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 8))
+        let cancel = app.buttons["task-editor-archive-cancel"]
+        cancel.tap()
+        XCTAssertTrue(confirm.waitForNonExistence(timeout: 8))
+        XCTAssertEqual(name.value as? String, "Weekend plan to archive unsaved")
+        archive.tap()
+        XCTAssertTrue(confirm.waitForExistence(timeout: 8))
+        confirm.tap()
+        XCTAssertTrue(name.waitForNonExistence(timeout: 8))
+        app.terminate()
+        app.launchArguments.removeAll { $0 == "-ui-testing-reset-workspace" }
+        app.launch()
+        XCTAssertTrue(app.buttons["task-filter-all"].waitForExistence(timeout: 8))
+        app.buttons["task-filter-all"].tap()
+        let deleted = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@",
+            "task-row-", "Weekend plan to archive"
+        )).firstMatch
+        XCTAssertFalse(deleted.exists, "Archive must use durable deletion, not merely hide an active todo")
     }
 
     @MainActor

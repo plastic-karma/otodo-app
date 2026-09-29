@@ -2321,6 +2321,60 @@ final class WorkspaceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(replayed, second)
     }
 
+    func testFinishSavesEditedFieldsAndCompletionInOneDurableRevision() async throws {
+        for recurring in [false, true] {
+            let directory = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let selection = try makeSelection()
+            let configuration = try makeConfiguration()
+            let store = FileWorkspaceStore(rootURL: directory)
+            try await store.save(makeWorkspace(selection: selection, configuration: configuration), expectedRevision: nil)
+            let service = TaskWorkspaceService(persistence: store, taskCodec: ObsidianTaskCodec())
+            let original = try await service.addTask(
+                selection: selection, name: "Before editing",
+                dueDate: CivilDate(rawValue: "2026-09-01")
+            )
+            let before = try await loadRequired(store, selection: selection)
+            var update = TaskUpdate(task: original)
+            update.name = "Finished from editor"
+            update.body = "Keep **edited notes**\n"
+            update.tags = ["edited"]
+            update.url = "https://example.com/edited"
+            update.dueDate = try CivilDate(rawValue: "2026-09-09")
+            update.dueTime = try CivilTime(rawValue: "14:35")
+            update.recurrence = recurring ? "FREQ=DAILY;INTERVAL=3" : nil
+            update.recurrenceFrom = recurring ? .schedule : nil
+            let day = try CivilDate(rawValue: "2026-09-09")
+            let finished = try await service.editTask(
+                selection: selection, id: original.id, expectedTask: original, update: update,
+                completingOn: day
+            )
+            XCTAssertEqual(finished.name, update.name)
+            XCTAssertEqual(finished.body, update.body)
+            XCTAssertEqual(finished.tags, update.tags)
+            XCTAssertEqual(finished.url, update.url)
+            XCTAssertEqual(finished.dueTime, update.dueTime)
+            XCTAssertEqual(finished.state, recurring ? "backlog" : "done")
+            XCTAssertEqual(finished.dueDate?.rawValue, recurring ? "2026-09-12" : "2026-09-09")
+            XCTAssertEqual(finished.lastCompletedDate, recurring ? day : nil)
+            let events = TaskCompletionHistory.read(finished).events
+            XCTAssertEqual(events.count, 1)
+            XCTAssertEqual(events.first?.dueDate, update.dueDate)
+            XCTAssertEqual(events.first?.tags, update.tags)
+            XCTAssertEqual(events.first?.completedOn, day)
+            let durable = try await loadRequired(FileWorkspaceStore(rootURL: directory), selection: selection)
+            XCTAssertEqual(durable.revision, before.revision + 1)
+            XCTAssertEqual(durable.tasks.map(\.task), [finished])
+            XCTAssertEqual(durable.pendingChanges.count, 1)
+            let pending = try XCTUnwrap(durable.pendingChanges.first)
+            let replayed = try ObsidianTaskCodec().parseTask(
+                id: original.id, relativePath: original.relativePath,
+                text: XCTUnwrap(pending.content), configuration: configuration
+            )
+            XCTAssertEqual(replayed, finished)
+        }
+    }
+
     func testRecurrenceEditingFinishingReopeningAndRemovalKeepDistinctSemantics() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

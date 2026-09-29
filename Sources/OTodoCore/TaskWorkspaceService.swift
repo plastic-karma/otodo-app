@@ -687,7 +687,8 @@ public actor TaskWorkspaceService {
         update: TaskUpdate,
         attachments: [AttachmentDraft] = [],
         removingAttachmentPaths: [String] = [],
-        subtaskNames: [String] = []
+        subtaskNames: [String] = [],
+        completingOn: CivilDate? = nil
     ) async throws -> TodoTask {
         let workspace = try await requireWorkspace(selection: selection)
         let taskIndex = try Self.editableTaskIndex(id: id, expectedTask: expectedTask, in: workspace)
@@ -698,6 +699,7 @@ public actor TaskWorkspaceService {
             in: workspace,
             attachments: attachments,
             removingAttachmentPaths: removingAttachmentPaths,
+            occurrenceCompletedOn: completingOn,
             subtaskNames: subtaskNames
         )
     }
@@ -712,10 +714,8 @@ public actor TaskWorkspaceService {
         let taskIndex = try Self.editableTaskIndex(
             id: expectedTask.id, expectedTask: expectedTask, in: workspace
         )
-        var completed = expectedTask
-        try Self.applyCompletion(to: &completed, configuration: workspace.configuration, completedOn: completedOn)
         return try await persistTaskUpdate(
-            TaskUpdate(task: completed), lastCompletedDate: completed.lastCompletedDate,
+            TaskUpdate(task: expectedTask), lastCompletedDate: expectedTask.lastCompletedDate,
             taskIndex: taskIndex, in: workspace,
             occurrenceCompletedOn: completedOn
         )
@@ -862,6 +862,12 @@ public actor TaskWorkspaceService {
             parentID: update.parentID,
             url: update.url
         )
+        let completionSnapshot = occurrenceCompletedOn == nil ? original.task : editedTask
+        if let occurrenceCompletedOn {
+            try Self.applyCompletion(
+                to: &editedTask, configuration: workspace.configuration, completedOn: occurrenceCompletedOn
+            )
+        }
         let timestamp = now()
         let terminalStates = Set(workspace.configuration.states.filter(\.isTerminal).map(\.id))
         var completionDay: CivilDate?
@@ -872,7 +878,7 @@ public actor TaskWorkspaceService {
             )
             completionDay = day
             try TaskCompletionHistory.append(
-                to: &editedTask, snapshot: original.task, completedAt: timestamp, completedOn: day,
+                to: &editedTask, snapshot: completionSnapshot, completedAt: timestamp, completedOn: day,
                 calendar: calendar,
                 usesSubtasks: original.task.parentID != nil || !subtaskNames.isEmpty
                     || workspace.tasks.contains { $0.task.parentID == original.task.id },

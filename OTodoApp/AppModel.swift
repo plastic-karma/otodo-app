@@ -914,6 +914,16 @@ final class AppModel {
             errorMessage = "The original todo is unavailable. Close the editor and try again."
             return
         }
+        let completedOn: CivilDate?
+        if draft.completesOccurrence {
+            guard let today = TaskSchedule.civilDate(from: .now) else {
+                errorMessage = "Today's calendar date is unavailable."
+                return
+            }
+            completedOn = today
+        } else {
+            completedOn = nil
+        }
         let operationSession = sessionID
 
         beginLocalMutation()
@@ -942,7 +952,8 @@ final class AppModel {
                 ),
                 attachments: draft.attachments,
                 removingAttachmentPaths: draft.removingAttachmentPaths,
-                subtaskNames: draft.subtaskNames
+                subtaskNames: draft.subtaskNames,
+                completingOn: completedOn
             )
             saved = true
             guard sessionID == operationSession else { return }

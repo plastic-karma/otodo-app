@@ -18,6 +18,7 @@ struct TaskEditorDraft: Equatable, Sendable {
     var subtaskNames: [String] = []
     var attachments: [AttachmentDraft] = []
     var removingAttachmentPaths: [String] = []
+    var completesOccurrence = false
 
     // Keeping the source value with the draft makes an edit a lossless value operation.
     // AppModel only needs the editable fields; the workspace service remains responsible
@@ -124,6 +125,7 @@ struct TaskEditorView: View {
     @State private var childReschedulePresentation: ReschedulePresentation?
     @State private var isAddingInProgressState = false
     @State private var workflowError: String?
+    @State private var isArchiveConfirmationPresented = false
 
     init(
         draft: TaskEditorDraft,
@@ -354,24 +356,28 @@ struct TaskEditorView: View {
                     .id("task-editor-top")
 
                     Section {
-                        DisclosureGroup(isExpanded: $isScheduleExpanded) {
-                            scheduleFields
-                        } label: {
-                            Label {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text("Schedule")
-                                    Text(scheduleSummary)
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
+                        if draft.preservedTask != nil {
+                            editorActions
+                        } else {
+                            DisclosureGroup(isExpanded: $isScheduleExpanded) {
+                                scheduleFields
+                            } label: {
+                                Label {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text("Schedule")
+                                        Text(scheduleSummary)
+                                            .font(.subheadline)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                } icon: {
+                                    Image(systemName: "calendar")
                                 }
-                            } icon: {
-                                Image(systemName: "calendar")
                             }
+                            .disclosureGroupStyle(TaskEditorDisclosureStyle(
+                                identifier: "task-editor-schedule", beforeToggle: dismissKeyboard
+                            ))
                         }
-                        .disclosureGroupStyle(TaskEditorDisclosureStyle(
-                            identifier: "task-editor-schedule", beforeToggle: dismissKeyboard
-                        ))
                     }
 
                     Section {
@@ -536,6 +542,18 @@ struct TaskEditorView: View {
             }
         }
         .confirmationDialog(
+            "Archive this todo?",
+            isPresented: $isArchiveConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Archive", role: .destructive, action: archive)
+                .accessibilityIdentifier("task-editor-archive-confirm")
+            Button("Cancel", role: .cancel) {}
+                .accessibilityIdentifier("task-editor-archive-cancel")
+        } message: {
+            Text("Archive deletes this todo using the same action as Delete. It does not keep an archived copy. Unsaved edits will be discarded.")
+        }
+        .confirmationDialog(
             "Add In Progress to this workspace?",
             isPresented: $isAddingInProgressState,
             titleVisibility: .visible
@@ -561,6 +579,106 @@ struct TaskEditorView: View {
         UIApplication.shared.sendAction(
             #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil
         )
+    }
+
+    private var canFinish: Bool {
+        workflowStates.first(where: { $0.id == draft.state })?.isTerminal == false
+            && workflowStates.contains(where: \.isTerminal)
+    }
+
+    private var editorActions: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            let layout = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(spacing: 8))
+                : AnyLayout(HStackLayout(spacing: 8))
+            layout {
+                Button {
+                    dismissKeyboard()
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isScheduleExpanded.toggle()
+                    }
+                } label: {
+                    editorActionLabel("Change schedule", systemImage: "calendar", color: OTodoTheme.accent)
+                }
+                .accessibilityIdentifier("task-editor-schedule")
+                .accessibilityValue(isScheduleExpanded ? "Expanded" : "Collapsed")
+
+                Button {
+                    save(completing: true)
+                } label: {
+                    editorActionLabel("Finish", systemImage: "checkmark.circle", color: OTodoTheme.accent)
+                }
+                .disabled(isSaveDisabled || !canFinish)
+                .accessibilityIdentifier("task-editor-finish")
+                .accessibilityHint("Saves edits and completes this todo or its current repeat occurrence")
+
+                Button(role: .destructive) {
+                    dismissKeyboard()
+                    isArchiveConfirmationPresented = true
+                } label: {
+                    editorActionLabel("Archive", systemImage: "archivebox", color: .red)
+                }
+                .disabled(attachmentModel == nil || isImportingAttachments)
+                .accessibilityIdentifier("task-editor-archive")
+                .accessibilityHint("Asks before deleting this todo")
+            }
+            .buttonStyle(.plain)
+
+            Text(scheduleSummary)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .padding(.top, 8)
+
+            // Keep recurrence input mounted so collapsing never clears an invalid edit.
+            VStack(alignment: .leading, spacing: 16) {
+                scheduleFields
+            }
+            .buttonStyle(.borderless)
+            .padding(.top, isScheduleExpanded ? 20 : 0)
+            .frame(height: isScheduleExpanded ? nil : 0, alignment: .top)
+            .clipped()
+            .opacity(isScheduleExpanded ? 1 : 0)
+            .disabled(!isScheduleExpanded)
+            .allowsHitTesting(isScheduleExpanded)
+            .accessibilityHidden(!isScheduleExpanded)
+        }
+    }
+
+    private func editorActionLabel(_ title: String, systemImage: String, color: Color) -> some View {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(HStackLayout(spacing: 8))
+            : AnyLayout(VStackLayout(spacing: 6))
+        return layout {
+            Image(systemName: systemImage)
+                .font(.title3)
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, minHeight: 72)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 8)
+        .foregroundStyle(color)
+        .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+        .contentShape(Rectangle())
+    }
+
+    private func archive() {
+        guard !isSaving, !isImportingAttachments,
+              let model = attachmentModel, !model.isBusy,
+              let task = draft.preservedTask else { return }
+        isSaving = true
+        saveError = nil
+        Task { @MainActor in
+            await model.deleteTask(task)
+            isSaving = false
+            if let error = model.errorMessage {
+                saveError = error
+            } else {
+                dismiss()
+            }
+        }
     }
 
     private var scheduleSummary: String {
@@ -1052,10 +1170,11 @@ struct TaskEditorView: View {
             || isImportingAttachments || isSaving || attachmentModel?.isBusy == true
     }
 
-    private func save(createAnother: Bool = false) {
-        guard !isSaveDisabled else { return }
+    private func save(createAnother: Bool = false, completing: Bool = false) {
+        guard !isSaveDisabled, !completing || canFinish else { return }
 
         var value = draft
+        value.completesOccurrence = completing
         value.name = detectedDueDatePhrase?.nameWithoutPhrase ?? draft.name
         if detectedDueDatePhrase == nil, let detectedNotesDueDatePhrase {
             value.body = detectedNotesDueDatePhrase.textWithoutPhrasePreservingLayout

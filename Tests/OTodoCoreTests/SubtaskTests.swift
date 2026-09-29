@@ -197,16 +197,29 @@ final class SubtaskTests: XCTestCase, @unchecked Sendable {
             pendingChanges: [], conflicts: [conflict], revision: original.revision + 1
         )
         try await store.save(conflicted, expectedRevision: original.revision)
-        do {
-            _ = try await service.completeTask(
-                selection: selection, expectedTask: parent, completedOn: CivilDate(rawValue: "2026-09-09")
-            )
-            XCTFail("A conflicted child must prevent partial parent completion")
-        } catch let OTodoError.conflict(message) {
-            XCTAssertTrue(message.contains(child.relativePath))
+        for completesEditedDraft in [false, true] {
+            do {
+                if completesEditedDraft {
+                    var update = TaskUpdate(task: parent)
+                    update.name = "Must not partially save"
+                    update.body = "Unsaved editor notes"
+                    _ = try await service.editTask(
+                        selection: selection, id: parent.id, expectedTask: parent, update: update,
+                        subtaskNames: ["Must not create"],
+                        completingOn: CivilDate(rawValue: "2026-09-09")
+                    )
+                } else {
+                    _ = try await service.completeTask(
+                        selection: selection, expectedTask: parent, completedOn: CivilDate(rawValue: "2026-09-09")
+                    )
+                }
+                XCTFail("A conflicted child must prevent partial parent completion")
+            } catch let OTodoError.conflict(message) {
+                XCTAssertTrue(message.contains(child.relativePath))
+            }
+            let saved = try await store.load(selection: selection)
+            XCTAssertEqual(saved, conflicted)
         }
-        let saved = try await store.load(selection: selection)
-        XCTAssertEqual(saved, conflicted)
     }
 
     func testRecurrenceStateExplicitEditAndBatchReschedulePreserveParent() async throws {
