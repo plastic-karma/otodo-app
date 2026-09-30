@@ -15,7 +15,9 @@ final class SyncEngineTests: XCTestCase, @unchecked Sendable {
         )
         var firstEdit = TaskUpdate(task: original)
         firstEdit.name = "Before push"
-        _ = try await service.editTask(selection: f.selection, id: original.id, update: firstEdit)
+        _ = try await service.editTask(
+            selection: f.selection, id: original.id, expectedTask: original, update: firstEdit
+        )
         await f.gitHub.onNextCommit {
             _ = try await service.addTask(selection: f.selection, name: "Captured during push")
             let current = try await service.loadTask(selection: f.selection, id: original.id)
