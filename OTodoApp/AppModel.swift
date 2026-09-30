@@ -51,6 +51,7 @@ final class AppModel {
     private(set) var conflicts: [SyncConflict] = []
     private(set) var isOnline: Bool
     private(set) var isBusy = false
+    private(set) var isSyncing = false
     private(set) var statusMessage: String?
     private(set) var errorMessage: String?
 
@@ -372,6 +373,7 @@ final class AppModel {
         let activeSync = syncTask
         let activeGitHub = authenticatedGitHub
         syncTask = nil
+        isSyncing = false
         syncFollowUpRequested = false
         syncFollowUpSurfacesErrors = false
         activeSync?.cancel()
@@ -726,7 +728,7 @@ final class AppModel {
     }
 
     func addInProgressState() async {
-        guard !isBusy, !isEndingSession else {
+        guard !isBusy, !isSyncing, !isEndingSession else {
             errorMessage = "Wait for the current operation to finish before adding a workflow state."
             return
         }
@@ -1180,6 +1182,7 @@ final class AppModel {
         let activeSync = syncTask
         let activeGitHub = authenticatedGitHub
         syncTask = nil
+        isSyncing = false
         syncFollowUpRequested = false
         syncFollowUpSurfacesErrors = false
         activeSync?.cancel()
@@ -1364,7 +1367,7 @@ final class AppModel {
         syncFollowUpRequested = false
         syncFollowUpSurfacesErrors = false
         let operationSession = sessionID
-        isBusy = true
+        isSyncing = true
         statusMessage = "Synchronizing with GitHub…"
         let task = Task<Void, Never> { [weak self] in
             guard let self else { return }
@@ -1377,6 +1380,7 @@ final class AppModel {
         await task.value
         guard sessionID == operationSession, !isEndingSession else { return }
         syncTask = nil
+        isSyncing = false
 
         if syncFollowUpRequested {
             let followUpSurfacesErrors = syncFollowUpSurfacesErrors
@@ -1423,9 +1427,6 @@ final class AppModel {
                 statusMessage = "Saved locally; synchronization will retry later. \(Self.message(for: error))"
             }
         }
-        if sessionID == operationSession {
-            isBusy = false
-        }
     }
 
     private func handleNetworkError(_ error: Error, session operationSession: UUID) async {
@@ -1445,6 +1446,7 @@ final class AppModel {
         let activeSync = syncTask
         let activeGitHub = authenticatedGitHub
         syncTask = nil
+        isSyncing = false
         syncFollowUpRequested = false
         syncFollowUpSurfacesErrors = false
         activeSync?.cancel()

@@ -30,6 +30,16 @@ public actor GitHubAPIClient: GitHubServing {
     private var accessToken: String
     private let resourceBudget: GitHubResourceBudget
 
+    private struct SnapshotBlobKey: Hashable {
+        let owner: String
+        let repository: String
+        let sha: String
+    }
+
+    // Retain only the last successful snapshot's immutable blobs. Its file-count and
+    // aggregate decoded-byte limits also bound the cache; old revisions do not accumulate.
+    private var snapshotBlobs: [SnapshotBlobKey: (text: String, byteCount: Int)] = [:]
+
     public init(
         accessToken: String,
         transport: any HTTPTransport = URLSessionHTTPTransport(),
@@ -69,11 +79,13 @@ public actor GitHubAPIClient: GitHubServing {
 
     /// Replaces the OAuth access token used by subsequent requests without rebuilding the client.
     public func updateAccessToken(_ accessToken: String) {
+        guard self.accessToken != accessToken else { return }
         self.accessToken = accessToken
+        snapshotBlobs.removeAll()
     }
 
     public func updateToken(_ token: OAuthTokenPair) {
-        accessToken = token.accessToken
+        updateAccessToken(token.accessToken)
     }
 
     public func listRepositories() async throws -> [RepositorySummary] {
@@ -206,9 +218,13 @@ public actor GitHubAPIClient: GitHubServing {
         }
 
         var retainedBytes = configBlob.byteCount
+        var nextSnapshotBlobs = [
+            SnapshotBlobKey(owner: selection.owner, repository: selection.name, sha: configEntry.sha): configBlob,
+        ]
         var files: [RemoteFile] = []
         files.reserveCapacity(selectedEntries.count)
         for entry in selectedEntries {
+            try Task.checkCancellation()
             let content: String
             if entry.path == ".todo/config.toml" {
                 content = configBlob.text
@@ -228,6 +244,11 @@ public actor GitHubAPIClient: GitHubServing {
                 )
                 retainedBytes += blob.byteCount
                 content = blob.text
+                nextSnapshotBlobs[SnapshotBlobKey(
+                    owner: selection.owner,
+                    repository: selection.name,
+                    sha: entry.sha
+                )] = blob
             }
             files.append(try RemoteFile(
                 path: joinedPath(selection.storePath, entry.path),
@@ -236,7 +257,7 @@ public actor GitHubAPIClient: GitHubServing {
             ))
         }
 
-        return try GitSnapshot(
+        let snapshot = try GitSnapshot(
             headCommitSHA: state.headCommitSHA,
             rootTreeSHA: state.rootTreeSHA,
             files: files,
@@ -244,6 +265,9 @@ public actor GitHubAPIClient: GitHubServing {
                 try AttachmentMetadata(path: joinedPath(selection.storePath, $0.path), blobSHA: $0.sha, byteSize: $0.size ?? 0, isSymlink: $0.mode == "120000", isDirectory: $0.type == "tree")
             }
         )
+        try Task.checkCancellation()
+        snapshotBlobs = nextSnapshotBlobs
+        return snapshot
     }
 
     public func fetchAttachment(selection: RepositorySelection, attachment: AttachmentMetadata) async throws -> Data {
@@ -559,6 +583,15 @@ public actor GitHubAPIClient: GitHubServing {
         maximumBytes: Int,
         limitName: String
     ) async throws -> (text: String, byteCount: Int) {
+        try Task.checkCancellation()
+        let key = SnapshotBlobKey(owner: owner, repository: repository, sha: sha)
+        if let cached = snapshotBlobs[key] {
+            guard cached.byteCount <= maximumBytes else {
+                throw resourceLimit("\(limitName) exceeded \(maximumBytes) decoded bytes while \(context)")
+            }
+            return cached
+        }
+
         let response = try await request(
             method: "GET",
             path: try repositoryPath(owner, repository, suffix: "git/blobs/\(percentEncodePathSegment(sha))")

@@ -178,7 +178,10 @@ struct SyncStatusView: View {
             return Text("Attachment updates need attention")
         }
         if model.isBusy {
-            return model.isLocalOnly ? Text("Saving") : Text("Syncing")
+            return Text("Saving")
+        }
+        if model.isSyncing {
+            return Text("Syncing")
         }
         if model.isLocalOnly {
             return Text("On this device")
@@ -196,7 +199,7 @@ struct SyncStatusView: View {
         if requiresAttention {
             return "exclamationmark.triangle"
         }
-        if model.isBusy {
+        if model.isBusy || model.isSyncing {
             return "arrow.triangle.2.circlepath"
         }
         if model.isLocalOnly {
@@ -215,7 +218,7 @@ struct SyncStatusView: View {
         if requiresAttention {
             return .orange
         }
-        if model.isBusy {
+        if model.isBusy || model.isSyncing {
             return OTodoTheme.accent
         }
         if model.isLocalOnly {
@@ -236,11 +239,11 @@ private struct SyncRefreshButton: View {
     let model: AppModel
 
     var body: some View {
-        if model.isBusy {
+        if model.isBusy || model.isSyncing {
             ProgressView()
                 .controlSize(.small)
                 .frame(width: 44, height: 44)
-                .accessibilityLabel(model.isLocalOnly ? "Local save in progress" : "Sync in progress")
+                .accessibilityLabel(model.isBusy ? "Local save in progress" : "Sync in progress")
         } else {
             Button {
                 Task { @MainActor in

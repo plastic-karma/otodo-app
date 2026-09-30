@@ -25,6 +25,8 @@ Update and sync information stays pinned in a compact status control beside **+*
 
 Tap the status at any text size to expand scrollable workspace details and hierarchy-repair actions. The current status and refresh action remain visible without permanently crowding the todo list; conflict, hierarchy, and attachment-update warnings remain available.
 
+GitHub synchronization runs without locking todo creation or editing, including an already-open editor. Saves remain local-first; a save interrupts the current sync and schedules a follow-up to publish the latest durable changes. Sync progress stays visible in the status control. Repeated snapshots reuse unchanged Git blobs in memory while still checking the current branch and enforcing record-size and total snapshot limits.
+
 Touch and hold OTodo's Home Screen icon and choose **New Todo** to open task creation directly.
 Tap **+** to add a todo. Touch and hold **+** to choose **New Todo**, **Bulk Add**, or **New Project**.
 The sidebar separates **Views**—Todos, Upcoming, Inbox, and Stats—from **Projects**. **Entire workspace** clears project scope; the selected view and scope use accent while secondary destinations remain neutral. Tap **+** beside Projects to create a project directly. At accessibility text sizes, the sidebar uses the full width and scrolls utility controls with its content.

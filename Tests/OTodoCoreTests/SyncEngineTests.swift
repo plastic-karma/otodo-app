@@ -3,6 +3,51 @@ import XCTest
 @testable import OTodoCore
 
 final class SyncEngineTests: XCTestCase, @unchecked Sendable {
+    func testCreateAndEditDuringPushRemainDurableUntilFollowUpSync() async throws {
+        let f = try Fixture()
+        _ = try await f.engine.initialPull(selection: f.selection)
+        let service = TaskWorkspaceService(
+            persistence: f.store, taskCodec: ObsidianTaskCodec(),
+            ulidGenerator: SyncCaptureID(), now: { Date(timeIntervalSince1970: 1_700_000_000) }
+        )
+        let original = try await service.loadTask(
+            selection: f.selection, id: TaskID(rawValue: "01ARZ3NDEKTSV4RRFFQ69G5FAV")
+        )
+        var firstEdit = TaskUpdate(task: original)
+        firstEdit.name = "Before push"
+        _ = try await service.editTask(selection: f.selection, id: original.id, update: firstEdit)
+        await f.gitHub.onNextCommit {
+            _ = try await service.addTask(selection: f.selection, name: "Captured during push")
+            let current = try await service.loadTask(selection: f.selection, id: original.id)
+            var update = TaskUpdate(task: current)
+            update.name = "Edited during push"
+            update.body = "Keep the latest notes\n"
+            _ = try await service.editTask(
+                selection: f.selection, id: original.id, expectedTask: current, update: update
+            )
+        }
+
+        _ = try await f.engine.sync(selection: f.selection)
+        let local = try await service.loadWorkspace(selection: f.selection)
+        XCTAssertEqual(local.tasks.first { $0.task.id == original.id }?.task.name, "Edited during push")
+        XCTAssertEqual(local.tasks.first { $0.task.id == original.id }?.task.body, "Keep the latest notes\n")
+        XCTAssertEqual(local.tasks.first { $0.task.id == SyncCaptureID.id }?.task.name, "Captured during push")
+        XCTAssertEqual(Set(local.pendingChanges.map(\.path)), [
+            f.aPath, f.path("Tasks/\(SyncCaptureID.id.rawValue).md"),
+        ])
+        XCTAssertTrue(local.conflicts.isEmpty)
+
+        _ = try await f.engine.sync(selection: f.selection)
+        let delivered = try await service.loadWorkspace(selection: f.selection)
+        XCTAssertTrue(delivered.pendingChanges.isEmpty)
+        XCTAssertTrue(delivered.conflicts.isEmpty)
+        let remote = await f.gitHub.branch()
+        XCTAssertEqual(remote.files.first { $0.path == f.aPath }?.content,
+                       delivered.tasks.first { $0.task.id == original.id }?.content)
+        XCTAssertEqual(remote.files.first { $0.path == f.path("Tasks/\(SyncCaptureID.id.rawValue).md") }?.content,
+                       delivered.tasks.first { $0.task.id == SyncCaptureID.id }?.content)
+    }
+
     func testInitialSparsePullPersistsValidatedStore() async throws {
         let f = try Fixture(twoTasks: true)
         let workspace = try await f.engine.initialPull(selection: f.selection)
@@ -639,6 +684,11 @@ extension SyncEngineTests {
             attachments: snapshot.attachments
         )
     }
+}
+
+private struct SyncCaptureID: ULIDGenerating {
+    static let id = try! TaskID(rawValue: "01ARZ3NDEKTSV4RRFFQ69G5FAZ")
+    func generate(at date: Date) throws -> TaskID { Self.id }
 }
 
 private struct Fixture {

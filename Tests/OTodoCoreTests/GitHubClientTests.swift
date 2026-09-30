@@ -493,6 +493,229 @@ final class GitHubClientTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(requests.contains { $0.url.absoluteString.contains("draft-blob") })
     }
 
+    func testRepeatedSnapshotsReuseBlobsButReadCurrentHeadAndFetchChangedSHA() async throws {
+        let configuration = compactStoreConfiguration()
+        let original = "---\nname: Original\nunknown: preserved\n---\nBody\n"
+        let edited = "---\nname: Edited\nunknown: preserved\n---\nChanged body\n"
+        let originalEntries = [
+            treeEntry(path: ".todo/config.toml", type: "blob", sha: "config-blob"),
+            treeEntry(path: "Tasks/task.md", type: "blob", sha: "original-task"),
+        ]
+        let changedEntries = [
+            treeEntry(path: ".todo/config.toml", type: "blob", sha: "config-blob"),
+            treeEntry(path: "Tasks/renamed.md", type: "blob", sha: "edited-task"),
+        ]
+        var responses = try snapshotPrelude(entries: originalEntries)
+        responses.append(contentsOf: [try blobResponse(configuration), try blobResponse(original)])
+        responses.append(contentsOf: try snapshotPrelude(entries: originalEntries))
+        responses.append(contentsOf: try snapshotPrelude(entries: changedEntries, headSHA: "head-2"))
+        responses.append(try blobResponse(edited))
+        // An obsolete revision must not remain cached after a successful replacement.
+        responses.append(contentsOf: try snapshotPrelude(entries: originalEntries, headSHA: "head-3"))
+        responses.append(try blobResponse(original))
+        let transport = ScriptedHTTPTransport(responses: responses)
+        let client = GitHubAPIClient(accessToken: "access-token", transport: transport, baseURL: apiBaseURL)
+
+        let first = try await client.fetchSnapshot(selection: rootSelection())
+        let repeated = try await client.fetchSnapshot(selection: rootSelection())
+        let changed = try await client.fetchSnapshot(selection: rootSelection())
+        let restored = try await client.fetchSnapshot(selection: rootSelection())
+
+        XCTAssertEqual(repeated, first)
+        XCTAssertEqual(changed.headCommitSHA, "head-2")
+        XCTAssertEqual(changed.files, [
+            try RemoteFile(path: ".todo/config.toml", blobSHA: "config-blob", content: configuration),
+            try RemoteFile(path: "Tasks/renamed.md", blobSHA: "edited-task", content: edited),
+        ])
+        XCTAssertEqual(restored.headCommitSHA, "head-3")
+        XCTAssertEqual(restored.files, first.files)
+        let requests = await transport.requests()
+        XCTAssertEqual(requests.filter { $0.url.path.contains("/git/blobs/") }.map(\.url.lastPathComponent),
+            ["config-blob", "original-task", "edited-task", "original-task"])
+        XCTAssertEqual(requests.filter { $0.url.path.contains("/git/ref/") }.count, 4)
+        XCTAssertEqual(requests.filter { $0.url.path.contains("/git/trees/") }.count, 4)
+    }
+
+    func testChangedConfigurationSHAUpdatesSelectedDirectoryWhileReusingRecordSHA() async throws {
+        let configuration = compactStoreConfiguration()
+        let changedConfiguration = configuration.replacingOccurrences(
+            of: "tasks_directory = \"Tasks\"",
+            with: "tasks_directory = \"Work\""
+        )
+        let record = "---\nname: Moved task\n---\nPreserved body\n"
+        var responses = try snapshotPrelude(entries: [
+            treeEntry(path: ".todo/config.toml", type: "blob", sha: "config-blob"),
+            treeEntry(path: "Tasks/task.md", type: "blob", sha: "task-blob"),
+        ])
+        responses.append(contentsOf: [try blobResponse(configuration), try blobResponse(record)])
+        responses.append(contentsOf: try snapshotPrelude(entries: [
+            treeEntry(path: ".todo/config.toml", type: "blob", sha: "changed-config"),
+            treeEntry(path: "Tasks/ignored.md", type: "blob", sha: "ignored-task"),
+            treeEntry(path: "Work/moved.md", type: "blob", sha: "task-blob"),
+        ], headSHA: "head-2"))
+        responses.append(try blobResponse(changedConfiguration))
+        let transport = ScriptedHTTPTransport(responses: responses)
+        let client = GitHubAPIClient(accessToken: "access-token", transport: transport, baseURL: apiBaseURL)
+        _ = try await client.fetchSnapshot(selection: rootSelection())
+
+        let changed = try await client.fetchSnapshot(selection: rootSelection())
+
+        XCTAssertEqual(changed.files, [
+            try RemoteFile(path: ".todo/config.toml", blobSHA: "changed-config", content: changedConfiguration),
+            try RemoteFile(path: "Work/moved.md", blobSHA: "task-blob", content: record),
+        ])
+        let requests = await transport.requests()
+        XCTAssertEqual(requests.filter { $0.url.path.contains("/git/blobs/") }.map(\.url.lastPathComponent),
+            ["config-blob", "task-blob", "changed-config"])
+    }
+
+    func testCachedBlobStillEnforcesRecordLimitWhenUsedAtAnotherPath() async throws {
+        let configuration = compactStoreConfiguration()
+        let configEntry = treeEntry(path: ".todo/config.toml", type: "blob", sha: "config-blob")
+        var responses = try snapshotPrelude(entries: [configEntry])
+        responses.append(try blobResponse(configuration))
+        responses.append(contentsOf: try snapshotPrelude(entries: [
+            configEntry,
+            treeEntry(path: "Tasks/oversized.md", type: "blob", sha: "config-blob"),
+        ]))
+        let transport = ScriptedHTTPTransport(responses: responses)
+        let client = GitHubAPIClient(
+            accessToken: "access-token",
+            transport: transport,
+            baseURL: apiBaseURL,
+            resourceBudget: resourceBudget(maximumRecordBytes: configuration.utf8.count - 1)
+        )
+        _ = try await client.fetchSnapshot(selection: rootSelection())
+
+        do {
+            _ = try await client.fetchSnapshot(selection: rootSelection())
+            XCTFail("A cached configuration blob used as a record must obey the record byte limit")
+        } catch {
+            assertResourceLimitError(error)
+            XCTAssertTrue(error.localizedDescription.contains("task/project record"))
+        }
+
+        let requests = await transport.requests()
+        XCTAssertEqual(requests.filter { $0.url.path.contains("/git/blobs/") }.count, 1)
+    }
+
+    func testCachedBlobStillEnforcesConfigurationLimitWhenRecordBecomesConfiguration() async throws {
+        let configuration = compactStoreConfiguration()
+        let largerConfiguration = configuration + "\n# Additional configuration comment\n"
+        var responses = try snapshotPrelude(entries: [
+            treeEntry(path: ".todo/config.toml", type: "blob", sha: "config-blob"),
+            treeEntry(path: "Tasks/config-copy.md", type: "blob", sha: "large-config"),
+        ])
+        responses.append(contentsOf: [try blobResponse(configuration), try blobResponse(largerConfiguration)])
+        responses.append(contentsOf: try snapshotPrelude(entries: [
+            treeEntry(path: ".todo/config.toml", type: "blob", sha: "large-config"),
+        ]))
+        let transport = ScriptedHTTPTransport(responses: responses)
+        let client = GitHubAPIClient(
+            accessToken: "access-token",
+            transport: transport,
+            baseURL: apiBaseURL,
+            resourceBudget: resourceBudget(maximumConfigurationBytes: configuration.utf8.count)
+        )
+        _ = try await client.fetchSnapshot(selection: rootSelection())
+
+        do {
+            _ = try await client.fetchSnapshot(selection: rootSelection())
+            XCTFail("A cached record used as configuration must obey the configuration byte limit")
+        } catch {
+            assertResourceLimitError(error)
+            XCTAssertTrue(error.localizedDescription.contains("configuration exceeded"))
+        }
+
+        let requests = await transport.requests()
+        XCTAssertEqual(requests.filter { $0.url.path.contains("/git/blobs/") }.count, 2)
+    }
+
+    func testCachedBlobsCountEveryFileAgainstAggregateDecodedByteLimit() async throws {
+        let configuration = compactStoreConfiguration()
+        let record = "é🙂"
+        let configEntry = treeEntry(path: ".todo/config.toml", type: "blob", sha: "config-blob")
+        let taskEntry = treeEntry(path: "Tasks/one.md", type: "blob", sha: "task-blob")
+        var responses = try snapshotPrelude(entries: [configEntry, taskEntry])
+        responses.append(contentsOf: [try blobResponse(configuration), try blobResponse(record)])
+        responses.append(contentsOf: try snapshotPrelude(entries: [
+            configEntry, taskEntry,
+            treeEntry(path: "Tasks/two.md", type: "blob", sha: "task-blob"),
+        ]))
+        let transport = ScriptedHTTPTransport(responses: responses)
+        let client = GitHubAPIClient(
+            accessToken: "access-token",
+            transport: transport,
+            baseURL: apiBaseURL,
+            resourceBudget: resourceBudget(
+                maximumAggregateBlobBytes: configuration.utf8.count + record.utf8.count
+            )
+        )
+        _ = try await client.fetchSnapshot(selection: rootSelection())
+
+        do {
+            _ = try await client.fetchSnapshot(selection: rootSelection())
+            XCTFail("Each cached file must count its UTF-8 bytes even when multiple files share a SHA")
+        } catch {
+            assertResourceLimitError(error)
+            XCTAssertTrue(error.localizedDescription.contains("aggregate decoded snapshot content"))
+        }
+
+        let requests = await transport.requests()
+        XCTAssertEqual(requests.filter { $0.url.path.contains("/git/blobs/") }.count, 2)
+    }
+
+    func testSnapshotBlobReuseIsScopedToRepository() async throws {
+        let configuration = compactStoreConfiguration()
+        let entries = [treeEntry(path: ".todo/config.toml", type: "blob", sha: "config-blob")]
+        var responses = try snapshotPrelude(entries: entries)
+        responses.append(try blobResponse(configuration))
+        responses.append(contentsOf: try snapshotPrelude(entries: entries))
+        responses.append(try blobResponse(configuration))
+        let transport = ScriptedHTTPTransport(responses: responses)
+        let client = GitHubAPIClient(accessToken: "access-token", transport: transport, baseURL: apiBaseURL)
+        _ = try await client.fetchSnapshot(selection: rootSelection())
+        let otherSelection = try RepositorySelection(owner: "other", name: "vault", branch: "main", storePath: "")
+
+        let snapshot = try await client.fetchSnapshot(selection: otherSelection)
+
+        XCTAssertEqual(snapshot.files, [
+            try RemoteFile(path: ".todo/config.toml", blobSHA: "config-blob", content: configuration),
+        ])
+        let requests = await transport.requests()
+        XCTAssertEqual(requests.filter { $0.url.path.contains("/git/blobs/") }.map(\.url.path), [
+            "/v3/repos/acme/vault/git/blobs/config-blob",
+            "/v3/repos/other/vault/git/blobs/config-blob",
+        ])
+    }
+
+    func testCancellationAfterTreeResponseStopsCachedSnapshot() async throws {
+        let configuration = compactStoreConfiguration()
+        let entries = [
+            treeEntry(path: ".todo/config.toml", type: "blob", sha: "config-blob"),
+            treeEntry(path: "Tasks/task.md", type: "blob", sha: "task-blob"),
+        ]
+        var responses = try snapshotPrelude(entries: entries)
+        responses.append(contentsOf: [try blobResponse(configuration), try blobResponse("Task")])
+        responses.append(contentsOf: try snapshotPrelude(entries: entries))
+        let transport = ScriptedHTTPTransport(responses: responses, cancelOnRequest: 8)
+        let client = GitHubAPIClient(accessToken: "access-token", transport: transport, baseURL: apiBaseURL)
+        _ = try await client.fetchSnapshot(selection: rootSelection())
+
+        let pending = Task {
+            try await client.fetchSnapshot(selection: rootSelection())
+        }
+        do {
+            _ = try await pending.value
+            XCTFail("Cancellation must stop a snapshot even when every blob is cached")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+
+        let requests = await transport.requests()
+        XCTAssertEqual(requests.filter { $0.url.path.contains("/git/blobs/") }.count, 2)
+    }
+
     func testTruncatedFallbackStopsAtRequestBudgetBeforeAnotherTreeRequest() async throws {
         var responses = try snapshotPrelude(entries: [], truncated: true)
         responses.append(try treeResponse(
@@ -1046,11 +1269,13 @@ private struct CapturedRequest: Sendable {
 
 private actor ScriptedHTTPTransport: HTTPTransport {
     private let responses: [HTTPResponse]
+    private let cancelOnRequest: Int?
     private var responseIndex = 0
     private var capturedRequests: [CapturedRequest] = []
 
-    init(responses: [HTTPResponse]) {
+    init(responses: [HTTPResponse], cancelOnRequest: Int? = nil) {
         self.responses = responses
+        self.cancelOnRequest = cancelOnRequest
     }
 
     func send(_ request: URLRequest) async throws -> HTTPResponse {
@@ -1066,6 +1291,9 @@ private actor ScriptedHTTPTransport: HTTPTransport {
         }
         let response = responses[responseIndex]
         responseIndex += 1
+        if responseIndex == cancelOnRequest {
+            withUnsafeCurrentTask { $0?.cancel() }
+        }
         return response
     }
 
@@ -1140,11 +1368,12 @@ private func rootSelection() throws -> RepositorySelection {
 
 private func snapshotPrelude(
     entries: [[String: Any]],
-    truncated: Bool = false
+    truncated: Bool = false,
+    headSHA: String = "head-1"
 ) throws -> [HTTPResponse] {
     [
-        try jsonResponse(["object": ["sha": "head-1"]]),
-        try jsonResponse(["sha": "head-1", "tree": ["sha": "root-tree"]]),
+        try jsonResponse(["object": ["sha": headSHA]]),
+        try jsonResponse(["sha": headSHA, "tree": ["sha": "root-tree"]]),
         try treeResponse(sha: "root-tree", entries: entries, truncated: truncated),
     ]
 }
