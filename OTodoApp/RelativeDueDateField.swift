@@ -3,6 +3,7 @@ import OTodoCore
 import SwiftUI
 
 struct RelativeDueDateField: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private static let helpText: LocalizedStringKey =
         "Set from now using minutes, hours, days, weeks, months, or years."
     private static let invalidText =
@@ -19,7 +20,10 @@ struct RelativeDueDateField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            let layout = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                : AnyLayout(HStackLayout(spacing: 8))
+            layout {
                 TextField("in 3 days", text: textBinding)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -28,11 +32,13 @@ struct RelativeDueDateField: View {
                     .focused($isFocused)
                     .accessibilityLabel("Relative due date")
                     .accessibilityIdentifier("\(accessibilityIdentifierPrefix)-date")
+                    .frame(minHeight: 44)
 
                 Button("Apply") {
                     apply()
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.large)
                 .disabled(parsedExpression == nil)
                 .accessibilityIdentifier("\(accessibilityIdentifierPrefix)-apply")
             }

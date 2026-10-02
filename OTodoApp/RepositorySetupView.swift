@@ -178,9 +178,11 @@ struct RepositorySetupView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     title
                         .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(configPath)
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 8)
@@ -191,6 +193,7 @@ struct RepositorySetupView: View {
                         .accessibilityHidden(true)
                 }
             }
+            .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -334,19 +337,21 @@ private struct RepositorySelectionSection: View {
                     Text(repository.name)
                         .font(.headline)
                         .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(repository.owner)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Label(
+                        repository.isPrivate ? "Private" : "Public",
+                        systemImage: repository.isPrivate ? "lock.fill" : "globe"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 8)
-
-                Label(
-                    repository.isPrivate ? "Private" : "Public",
-                    systemImage: repository.isPrivate ? "lock.fill" : "globe"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
@@ -354,6 +359,7 @@ private struct RepositorySelectionSection: View {
                         .accessibilityHidden(true)
                 }
             }
+            .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

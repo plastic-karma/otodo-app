@@ -156,6 +156,7 @@ private struct AttachmentPhotoFile: Transferable, Sendable {
 }
 
 private struct AttachmentRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let model: AppModel
     let selection: RepositorySelection
     let path: String
@@ -177,17 +178,29 @@ private struct AttachmentRow: View {
                     Image(systemName: "doc").frame(width: 44, height: 44).foregroundStyle(.secondary)
                 }
                 VStack(alignment: .leading) {
-                    Text(name).lineLimit(2)
+                    Text(name)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                     Text(status).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 if isLoading { ProgressView() }
             }
-            HStack {
-                Button("Open") { load(preview: true) }
-                    .accessibilityIdentifier("attachment-open.\(path)")
+            let actionLayout = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                : AnyLayout(HStackLayout(spacing: 8))
+            actionLayout {
+                Button {
+                    load(preview: true)
+                } label: {
+                    Text("Open")
+                        .frame(minHeight: 44)
+                }
+                .accessibilityIdentifier("attachment-open.\(path)")
                 if let file {
-                    ShareLink(item: file.url) { Label("Share", systemImage: "square.and.arrow.up") }
+                    ShareLink(item: file.url) {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                            .frame(minHeight: 44)
+                    }
                 }
                 Menu {
                     if imported == nil {
@@ -195,7 +208,11 @@ private struct AttachmentRow: View {
                                systemImage: "pin") { pin() }
                     }
                     Button("Remove Link", systemImage: "link.badge.plus", role: .destructive, action: remove)
-                } label: { Image(systemName: "ellipsis.circle").accessibilityLabel("Attachment actions for \(name)") }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .frame(width: 44, height: 44)
+                        .accessibilityLabel("Attachment actions for \(name)")
+                }
                 .accessibilityIdentifier("attachment-actions.\(path)")
             }
             .buttonStyle(.borderless)

@@ -13,9 +13,16 @@ enum OTodoTheme {
     // Filled controls keep white labels, unlike foreground accents on dark surfaces.
     static let filledAccent = Color(red: 0.29, green: 0.24, blue: 0.75)
     static let filledViolet = Color(red: 0.48, green: 0.31, blue: 0.88)
-    static let coral = Color(red: 0.93, green: 0.36, blue: 0.29)
+    static let coral = adaptive(
+        light: UIColor(red: 0.70, green: 0.20, blue: 0.15, alpha: 1),
+        dark: UIColor(red: 1.00, green: 0.60, blue: 0.50, alpha: 1)
+    )
     static let gold = Color(red: 0.94, green: 0.63, blue: 0.18)
-    static let mint = Color(red: 0.15, green: 0.61, blue: 0.48)
+    static let mint = adaptive(
+        light: UIColor(red: 0.08, green: 0.42, blue: 0.32, alpha: 1),
+        dark: UIColor(red: 0.38, green: 0.83, blue: 0.66, alpha: 1)
+    )
+    static let filledMint = Color(red: 0.08, green: 0.42, blue: 0.32)
 
     static let card = Color(uiColor: .secondarySystemGroupedBackground)
     static let raisedCard = Color(uiColor: .secondarySystemGroupedBackground)

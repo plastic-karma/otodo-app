@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SyncStatusView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let model: AppModel
     @State private var isReviewingConflicts = false
     @State private var isReviewingRelationships = false
@@ -15,19 +16,19 @@ struct SyncStatusView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 4) {
                 Button {
-                    withAnimation(.snappy(duration: 0.2)) {
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
                         isShowingDetails.toggle()
                     }
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: primarySymbol)
-                            .font(.system(size: 16))
+                            .font(.subheadline.weight(.semibold))
                         compactText
                             .font(.caption.weight(.semibold))
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
                         Image(systemName: isShowingDetails ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.caption2.weight(.semibold))
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -80,7 +81,7 @@ struct SyncStatusView: View {
         VStack(alignment: .leading, spacing: 8) {
             if let detailText {
                 detailText
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
@@ -102,8 +103,8 @@ struct SyncStatusView: View {
 
             if !model.attachmentRefreshErrors.isEmpty {
                 Text("\(model.attachmentRefreshErrors.count) offline attachment updates failed. Older cached files remain available.")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
+                    .font(.caption)
+                    .foregroundStyle(OTodoTheme.coral)
                     .accessibilityIdentifier("attachment-refresh-status")
             }
         }
@@ -251,7 +252,7 @@ private struct SyncRefreshButton: View {
                 }
             } label: {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.subheadline.weight(.medium))
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }

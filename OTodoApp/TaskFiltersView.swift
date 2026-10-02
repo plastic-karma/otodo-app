@@ -4,6 +4,7 @@ import SwiftUI
 
 struct TaskFiltersView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Bindable var library: TaskFilterLibrary
     let projectChoices: [String]
     let tagChoices: [String]
@@ -78,9 +79,9 @@ struct TaskFiltersView: View {
                     filterDescription(filter)
                         .font(filter.isBuiltIn ? .caption : .system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -201,8 +202,8 @@ private struct TaskFilterEditorView: View {
                                                 suggestion.value,
                                                 systemImage: suggestion.field == "project" ? "folder" : "number"
                                             )
-                                            .frame(maxWidth: .infinity, alignment: .leading)
                                             .padding(.vertical, 10)
+                                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                                             .contentShape(Rectangle())
                                         }
                                         .buttonStyle(.borderless)

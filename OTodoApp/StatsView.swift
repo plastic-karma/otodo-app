@@ -5,6 +5,7 @@ struct StatsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.calendar) private var calendar
     @Environment(\.locale) private var locale
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Bindable var model: AppModel
     @State private var weekOffset = 0
 
@@ -22,6 +23,7 @@ struct StatsView: View {
                     ContentUnavailableView("No workspace", systemImage: "chart.bar", description: Text("Open a workspace to see its statistics."))
                 }
             }
+            .background(OTodoTheme.formCanvas.ignoresSafeArea())
             .navigationTitle("Stats")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -44,15 +46,26 @@ struct StatsView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("stats-week-range")
-                    HStack {
-                        Button { weekOffset -= 1 } label: { Label("Previous", systemImage: "chevron.left") }
+                    let navigationLayout = dynamicTypeSize.isAccessibilitySize
+                        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                        : AnyLayout(HStackLayout(spacing: 12))
+                    navigationLayout {
+                        Button { weekOffset -= 1 } label: {
+                            Label("Previous", systemImage: "chevron.left")
+                                .frame(minWidth: 44, minHeight: 44)
+                        }
                             .accessibilityLabel("Previous week")
                             .accessibilityIdentifier("stats-previous-week")
-                        Spacer(minLength: 8)
-                        Button("This week") { weekOffset = 0 }
+                        Button { weekOffset = 0 } label: {
+                            Text("This week")
+                                .frame(minWidth: 44, minHeight: 44)
+                        }
                             .disabled(weekOffset == 0)
                             .accessibilityIdentifier("stats-current-week")
-                        Button { weekOffset += 1 } label: { Image(systemName: "chevron.right") }
+                        Button { weekOffset += 1 } label: {
+                            Image(systemName: "chevron.right")
+                                .frame(minWidth: 44, minHeight: 44)
+                        }
                             .accessibilityLabel("Next week")
                             .disabled(weekOffset >= 0)
                             .accessibilityIdentifier("stats-next-week")
@@ -123,7 +136,7 @@ struct StatsView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .background(Color(uiColor: .systemGroupedBackground))
+        .background(OTodoTheme.formCanvas.ignoresSafeArea())
         .accessibilityIdentifier("stats-list")
     }
 
@@ -134,22 +147,26 @@ struct StatsView: View {
 }
 
 private struct StatisticsMetric: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let title: LocalizedStringKey
     let value: LocalizedStringKey
     let symbol: String
     let id: String
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack {
-                Label(title, systemImage: symbol).foregroundStyle(OTodoTheme.accent)
-                Spacer()
-                Text(value).font(.title2.bold()).monospacedDigit()
-            }
-            VStack(alignment: .leading, spacing: 8) {
-                Label(title, systemImage: symbol).foregroundStyle(OTodoTheme.accent)
-                Text(value).font(.title2.bold()).monospacedDigit()
-            }
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 16))
+        layout {
+            Label(title, systemImage: symbol)
+                .foregroundStyle(OTodoTheme.accent)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(value)
+                .font(.title2.weight(.semibold))
+                .fontDesign(.rounded)
+                .monospacedDigit()
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .ignore)
@@ -161,6 +178,7 @@ private struct StatisticsMetric: View {
 }
 
 private struct StatisticsRanking: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let title: LocalizedStringKey
     let emptyTitle: LocalizedStringKey
     let entries: [TaskStatistics.Ranking]
@@ -172,10 +190,19 @@ private struct StatisticsRanking: View {
                 Text(emptyTitle).foregroundStyle(.secondary)
             } else {
                 ForEach(entries.prefix(5)) { entry in
-                    HStack(alignment: .firstTextBaseline) {
+                    let layout = dynamicTypeSize.isAccessibilitySize
+                        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                        : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 16))
+                    layout {
                         Text(entry.name)
-                        Spacer()
-                        Text(entry.count, format: .number).monospacedDigit().foregroundStyle(OTodoTheme.accent)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(entry.count, format: .number)
+                            .font(.body.weight(.semibold))
+                            .fontDesign(.rounded)
+                            .monospacedDigit()
+                            .foregroundStyle(OTodoTheme.accent)
+                            .fixedSize()
                     }
                     .accessibilityElement(children: .combine)
                 }
@@ -196,6 +223,7 @@ private struct StatisticsFeature: View {
             Text(title).font(.subheadline.bold())
             Text("\(completed) completed this week · \(current) tasks now")
                 .font(.subheadline).foregroundStyle(.secondary)
+                .monospacedDigit()
         }
         .accessibilityElement(children: .combine)
     }

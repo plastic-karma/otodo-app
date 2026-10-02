@@ -141,6 +141,8 @@ struct ReminderSettingsView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(OTodoTheme.formCanvas.ignoresSafeArea())
             .navigationTitle("Due Reminders")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(OTodoTheme.formCanvas, for: .navigationBar)

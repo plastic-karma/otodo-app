@@ -82,14 +82,14 @@ struct TaskRowActions: ViewModifier {
                         Button { Self.toggleCompletion(task, in: model) } label: {
                             Label(task.recurrence == nil ? "Done" : "Complete occurrence", systemImage: "checkmark")
                         }
-                        .tint(OTodoTheme.mint)
+                        .tint(OTodoTheme.filledMint)
                         .disabled(model.isBusy)
                         .accessibilityIdentifier("task-complete-\(task.id.rawValue)")
                     }
                     Button(action: onAddSubtask) {
                         Label("Add Subtask", systemImage: "arrow.turn.down.right")
                     }
-                    .tint(OTodoTheme.accent)
+                    .tint(OTodoTheme.filledAccent)
                     .disabled(model.isBusy || model.configuration?.schemaVersion != 2)
                     .accessibilityIdentifier("task-add-subtask-\(task.id.rawValue)")
                     Button(action: onReschedule) {

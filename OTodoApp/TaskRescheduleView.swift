@@ -49,7 +49,7 @@ struct TaskRescheduleView: View {
                         Image(systemName: isBulk ? "checkmark.circle.fill" : "checkmark.circle")
                     }
                     .font(.body.weight(.semibold))
-                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                     if isBulk {
                         Text("Only the schedule fields you change will be replaced. Other task details stay intact.")
                             .font(.caption)

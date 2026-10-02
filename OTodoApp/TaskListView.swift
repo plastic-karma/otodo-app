@@ -8,6 +8,7 @@ struct TaskListView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.locale) private var locale
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .body) private var sidebarIconWidth = 24
 
     @Bindable private var model: AppModel
@@ -78,7 +79,7 @@ struct TaskListView: View {
 
                     List {
                         Section {
-                            workspaceHeader(taskCount: displayedTasks.count)
+                            WorkspaceHeader(subtitle: workspaceSubtitle, taskCount: displayedTasks.count)
                                 .listRowInsets(
                                     EdgeInsets(top: 8, leading: 20, bottom: 6, trailing: 20)
                                 )
@@ -217,7 +218,10 @@ struct TaskListView: View {
                             if isSelecting {
                                 selectionActions
                             }
-                            HStack(alignment: .bottom, spacing: 12) {
+                            let layout = dynamicTypeSize.isAccessibilitySize
+                                ? AnyLayout(VStackLayout(alignment: .trailing, spacing: 12))
+                                : AnyLayout(HStackLayout(alignment: .bottom, spacing: 12))
+                            layout {
                                 SyncStatusView(model: model)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                 if !isSelecting {
@@ -230,6 +234,7 @@ struct TaskListView: View {
                         .padding(.bottom, 12)
                         .background(OTodoCanvas())
                     }
+                    .frame(maxWidth: 760)
                 }
                 .navigationTitle(workspaceTitle)
                 .navigationBarTitleDisplayMode(.inline)
@@ -355,10 +360,10 @@ struct TaskListView: View {
                 .accessibilityLabel("Close projects")
 
                 projectSidebar
-                    .transition(.move(edge: .leading))
+                    .transition(reduceMotion ? .opacity : .move(edge: .leading))
             }
         }
-        .animation(.snappy(duration: 0.24), value: isProjectSidebarPresented)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: isProjectSidebarPresented)
         .sheet(isPresented: $isProjectEditorPresented, onDismiss: presentPendingNotificationRequest) {
             if let configuration = model.configuration {
                 ProjectEditorView(
@@ -536,27 +541,6 @@ struct TaskListView: View {
         selectedProject = project
     }
 
-    private func workspaceHeader(taskCount: Int) -> some View {
-        let layout = dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
-            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 12))
-
-        return layout {
-            Text(workspaceSubtitle)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text("\(taskCount) \(taskCount == 1 ? "todo" : "todos")")
-                .font(.caption.weight(.medium).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .fixedSize()
-                .accessibilityLabel("\(taskCount) \(taskCount == 1 ? "todo" : "todos")")
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("workspace-header")
-    }
 
 
     private var addTodoButton: some View {
@@ -725,7 +709,7 @@ struct TaskListView: View {
         VStack(spacing: 0) {
             HStack {
                 Text("OTodo")
-                    .font(.title2.weight(.semibold))
+                    .font(.title2.weight(.bold))
                     .accessibilityAddTraits(.isHeader)
 
                 Spacer()
@@ -751,7 +735,7 @@ struct TaskListView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     Text("Views")
-                        .font(.caption.weight(.semibold))
+                        .font(.caption.smallCaps().weight(.semibold))
                         .foregroundStyle(.secondary)
                         .padding(.leading, 11)
                         .accessibilityAddTraits(.isHeader)
@@ -772,7 +756,7 @@ struct TaskListView: View {
 
                     HStack {
                         Text("Projects")
-                            .font(.caption.weight(.semibold))
+                            .font(.caption.smallCaps().weight(.semibold))
                             .foregroundStyle(.secondary)
                             .accessibilityAddTraits(.isHeader)
                         Spacer()
@@ -1504,13 +1488,20 @@ struct TaskListView: View {
     }
 
     private var selectionActions: some View {
-        HStack(spacing: 8) {
-            Button(selectedTaskIDs.count == scopedTasks.count ? "Deselect all" : "Select all") {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 8))
+        return layout {
+            Button {
                 if selectedTaskIDs.count == scopedTasks.count {
                     selectedTaskIDs.removeAll()
                 } else {
                     selectedTaskIDs = Set(scopedTasks.map(\.id))
                 }
+            } label: {
+                Text(selectedTaskIDs.count == scopedTasks.count ? "Deselect all" : "Select all")
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
             }
             .accessibilityIdentifier("upcoming-select-all")
 
@@ -1518,7 +1509,9 @@ struct TaskListView: View {
                 .font(.caption)
                 .monospacedDigit()
                 .accessibilityIdentifier("upcoming-selection-count")
-            Spacer(minLength: 0)
+            if !dynamicTypeSize.isAccessibilitySize {
+                Spacer(minLength: 0)
+            }
 
             Button("Reschedule", systemImage: "calendar.badge.clock") {
                 reschedulePresentation = ReschedulePresentation(
@@ -1526,6 +1519,8 @@ struct TaskListView: View {
                 )
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .tint(OTodoTheme.filledAccent)
             .disabled(selectedTaskIDs.isEmpty)
             .accessibilityLabel("Reschedule \(selectedTaskIDs.count) selected todos")
             .accessibilityIdentifier("upcoming-reschedule")
@@ -1548,7 +1543,7 @@ struct TaskListView: View {
     private func agendaHeader(_ section: TaskAgendaSection) -> some View {
         let isCollapsed = collapsedAgendaGroups.contains(section.group)
         return Button {
-            withAnimation {
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
                 if !collapsedAgendaGroups.insert(section.group).inserted {
                     collapsedAgendaGroups.remove(section.group)
                 }
@@ -1646,7 +1641,7 @@ struct TaskListView: View {
             )
         )
         .listRowSeparator(.visible)
-        .listRowSeparatorTint(.primary.opacity(0.08))
+        .listRowSeparatorTint(Color(uiColor: .separator))
         .listRowBackground(Color.clear)
     }
 
@@ -1717,7 +1712,39 @@ struct ReschedulePresentation: Identifiable {
     let tasks: [TodoTask]
 }
 
+private struct WorkspaceHeader: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let subtitle: LocalizedStringKey
+    let taskCount: Int
+
+    var body: some View {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 12))
+        layout {
+            Text(subtitle)
+                .font(.headline.weight(.regular))
+                .fontDesign(.default)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("\(taskCount) \(taskCount == 1 ? "todo" : "todos")")
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .foregroundStyle(OTodoTheme.accent)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(OTodoTheme.formCanvas, in: Capsule())
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("workspace-header")
+    }
+}
+
 private struct FavoriteTaskFilters: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let library: TaskFilterLibrary
     let selectedFilterID: String
     let onSelect: (String) -> Void
@@ -1755,7 +1782,7 @@ private struct FavoriteTaskFilters: View {
             .scrollIndicators(.hidden)
             .simultaneousGesture(filterSwipeGesture)
             .onChange(of: selectedFilterID) { _, id in
-                withAnimation(.snappy(duration: 0.24)) {
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.24)) {
                     proxy.scrollTo(id, anchor: .center)
                 }
             }

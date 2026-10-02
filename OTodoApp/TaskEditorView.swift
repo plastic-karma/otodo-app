@@ -368,10 +368,11 @@ struct TaskEditorView: View {
                                 Label {
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text("Schedule")
+                                            .font(.body.weight(.semibold))
                                         Text(scheduleSummary)
                                             .font(.subheadline)
                                             .foregroundStyle(.secondary)
-                                            .lineLimit(1)
+                                            .fixedSize(horizontal: false, vertical: true)
                                     }
                                 } icon: {
                                     Image(systemName: "calendar")
@@ -390,10 +391,11 @@ struct TaskEditorView: View {
                             Label {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text("Details")
+                                        .font(.body.weight(.semibold))
                                     Text(detailsSummary)
                                         .font(.subheadline)
                                         .foregroundStyle(.secondary)
-                                        .lineLimit(1)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
                             } icon: {
                                 Image(systemName: "slider.horizontal.3")
@@ -602,9 +604,7 @@ struct TaskEditorView: View {
             layout {
                 Button {
                     dismissKeyboard()
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        isScheduleExpanded.toggle()
-                    }
+                    isScheduleExpanded.toggle()
                 } label: {
                     editorActionLabel("Change schedule", systemImage: "calendar", color: OTodoTheme.accent)
                 }
@@ -863,6 +863,7 @@ struct TaskEditorView: View {
                             queuedSubtasks.removeAll { $0.id == subtask.id }
                         } label: {
                             Image(systemName: "minus.circle")
+                                .frame(width: 44, height: 44)
                         }
                         .buttonStyle(.borderless)
                         .accessibilityLabel("Remove \(subtask.name)")
@@ -1239,7 +1240,7 @@ private struct TaskEditorClassificationFields: View {
                             Label(tag, systemImage: "tag.fill")
                         }
                         .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        .controlSize(.large)
                         .accessibilityIdentifier("tag-suggestion-\(tag)")
                     }
                 }
@@ -1273,6 +1274,7 @@ private struct TaskEditorClassificationFields: View {
             Label(project, systemImage: isSelected ? "checkmark.circle.fill" : "circle")
         }
         .buttonStyle(.bordered)
+        .controlSize(.large)
         .tint(isSelected ? OTodoTheme.accent : .secondary)
         .accessibilityLabel("\(project) project")
         .accessibilityValue(isSelected ? "Selected" : "Not selected")
@@ -1402,6 +1404,7 @@ private struct TaskEditorLinkFields: View {
                     url = nil
                 } label: {
                     Image(systemName: "xmark.circle.fill")
+                        .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.borderless)
                 .accessibilityLabel("Clear link")
@@ -1454,6 +1457,7 @@ private struct TaskEditorSubtaskInput: View {
             Button(action: add) {
                 Label("Add subtask", systemImage: "plus")
                     .labelStyle(.iconOnly)
+                    .frame(width: 44, height: 44)
             }
             .buttonStyle(.borderless)
             .accessibilityIdentifier("task-editor-subtask-add")
@@ -1484,9 +1488,7 @@ private struct TaskEditorDisclosureStyle: DisclosureGroupStyle {
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 beforeToggle()
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    configuration.isExpanded.toggle()
-                }
+                configuration.isExpanded.toggle()
             } label: {
                 HStack {
                     configuration.label
@@ -1496,6 +1498,7 @@ private struct TaskEditorDisclosureStyle: DisclosureGroupStyle {
                         .foregroundStyle(.secondary)
                         .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
                 }
+                .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

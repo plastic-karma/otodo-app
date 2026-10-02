@@ -119,6 +119,7 @@ struct ConflictResolutionView: View {
                     )
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.large)
                 .disabled(isResolving)
                 .accessibilityHint("Asks for confirmation before keeping this device’s version")
                 .accessibilityIdentifier("conflict-keep-my-version.\(conflict.path)")
@@ -140,6 +141,7 @@ struct ConflictResolutionView: View {
                     )
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.large)
                 .disabled(isResolving)
                 .accessibilityHint("Asks for confirmation before discarding this device’s version")
                 .accessibilityIdentifier("conflict-use-github-version.\(conflict.path)")

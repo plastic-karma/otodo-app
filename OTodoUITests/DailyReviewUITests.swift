@@ -102,13 +102,58 @@ final class DailyReviewUITests: XCTestCase {
         XCTAssertEqual(app.switches["daily-review-wrapUp-enabled"].value as? String, "1")
     }
 
+    func testReviewDecisionsRemainReachableAtAccessibilityTextSize() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-ui-testing", "-ui-testing-reset-workspace", "-ui-testing-dark",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
+        ]
+        app.launch()
+        defer { app.terminate() }
+
+        openDailyReviewSettings(in: app)
+        let toggle = app.switches["daily-review-kickstart-enabled"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 8))
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let start = app.buttons["daily-review-start-kickstart"]
+        scrollToAndTap(start, in: app)
+        scrollToAndTap(app.buttons["daily-review-begin"], in: app)
+
+        for taskID in ["01ARZ3NDEKTSV4RRFFQ69G5FAW", "01ARZ3NDEKTSV4RRFFQ69G5FAV"] {
+            let affirm = app.buttons["daily-review-lfg-\(taskID)"]
+            scrollToAndTap(affirm, in: app)
+        }
+        let finish = app.buttons["daily-review-finish"]
+        scrollToAndTap(finish, in: app)
+        XCTAssertTrue(
+            app.descendants(matching: .any)["daily-review-kickstart"]
+                .waitForNonExistence(timeout: 8),
+            "The closing action must remain reachable, not clipped below a fixed-height card"
+        )
+        openDailyReviewSettings(in: app)
+        XCTAssertEqual(app.switches["daily-review-kickstart-enabled"].value as? String, "1")
+    }
+
+    private func scrollToAndTap(_ button: XCUIElement, in app: XCUIApplication) {
+        XCTAssertTrue(button.waitForExistence(timeout: 8))
+        for _ in 0..<8 {
+            if button.isHittable {
+                button.tap()
+                return
+            }
+            app.swipeUp()
+        }
+        XCTFail("Review action must be reachable by scrolling: \(button.identifier)")
+    }
+
     private func openDailyReviewSettings(in app: XCUIApplication) {
         let sidebar = app.buttons["project-sidebar-toggle"]
         XCTAssertTrue(sidebar.waitForExistence(timeout: 10))
         sidebar.tap()
         let settings = app.buttons["daily-review-settings-open"]
         XCTAssertTrue(settings.waitForExistence(timeout: 8))
-        settings.tap()
+        scrollToAndTap(settings, in: app)
         XCTAssertTrue(
             app.descendants(matching: .any)["daily-review-settings"]
                 .waitForExistence(timeout: 8)

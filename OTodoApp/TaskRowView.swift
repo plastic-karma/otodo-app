@@ -75,8 +75,8 @@ struct TaskRowView: View {
             Circle()
                 .fill(
                     isSelected == true
-                        ? OTodoTheme.accent
-                        : workflowState?.isTerminal == true ? OTodoTheme.mint : stateColor.opacity(0.10)
+                        ? OTodoTheme.filledAccent
+                        : workflowState?.isTerminal == true ? OTodoTheme.filledMint : stateColor.opacity(0.10)
                 )
             Circle()
                 .strokeBorder(stateColor, lineWidth: 1.5)
@@ -126,6 +126,7 @@ struct TaskRowView: View {
 
 private struct TaskRowLabel: View {
     @Environment(\.locale) private var locale
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let name: String
     let dueDate: CivilDate?
     let dueTime: CivilTime?
@@ -140,6 +141,7 @@ private struct TaskRowLabel: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(name)
                 .font(.body.weight(workflowState?.isTerminal == true ? .regular : .medium))
+                .fontDesign(.default)
                 .foregroundStyle(workflowState?.isTerminal == true ? Color.secondary : Color.primary)
                 .strikethrough(workflowState?.isTerminal == true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -147,37 +149,32 @@ private struct TaskRowLabel: View {
             let due = duePresentation
             let context = contextPresentation
             if due != nil || context != nil || isRecurring || workflowState?.isInProgress == true {
-                HStack(spacing: 8) {
-                    if let due {
-                        Text(due.label)
-                            .foregroundStyle(due.color)
-                            .layoutPriority(1)
-                    }
-                    if let workflowState, workflowState.isInProgress {
-                        if due != nil {
-                            Text("·")
+                VStack(alignment: .leading, spacing: 4) {
+                    let layout = dynamicTypeSize.isAccessibilitySize
+                        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                        : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 8))
+                    layout {
+                        if let due {
+                            Text(due.label)
+                                .foregroundStyle(due.color)
+                                .monospacedDigit()
+                        }
+                        if let workflowState, workflowState.isInProgress {
+                            Text(workflowState.name)
+                                .foregroundStyle(OTodoTheme.accent)
+                        }
+                        if isRecurring {
+                            Image(systemName: "repeat")
                                 .accessibilityHidden(true)
                         }
-                        Text(workflowState.name)
-                            .foregroundStyle(OTodoTheme.accent)
-                    }
-                    if isRecurring {
-                        Image(systemName: "repeat")
-                            .accessibilityHidden(true)
                     }
                     if let context {
-                        if due != nil || workflowState?.isInProgress == true {
-                            Text("·")
-                                .accessibilityHidden(true)
-                        }
                         Label(context.label, systemImage: context.icon)
-                            .truncationMode(.tail)
                     }
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
             }
         }
     }

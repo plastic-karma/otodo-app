@@ -33,6 +33,8 @@ The sidebar separates **Views**—Todos, Upcoming, Inbox, and Stats—from **Pro
 
 Open **Daily rhythm** in the sidebar to opt into **Kickstart**, **Wrap-up**, or both and choose when each check-in appears on Today. Each review opens with a day summary, then presents every active due or overdue todo as a large swipeable card. Choose **Done** to finish it, **Reschedule** to give it a new date, or **LFG** to affirm it and move on; a closing card summarizes those decisions. Reviews can also be started manually from Daily rhythm. Preferences and once-per-day completion are stored on the device, while task decisions use the normal durable offline save and sync path.
 
+Review cards scroll vertically when their content exceeds the screen and keep a 680pt reading width on iPad. At accessibility text sizes, due information and decision buttons stack rather than compete for horizontal space. Kickstart retains its warm identity with darker, legible fills; Wrap-up retains violet. Summary navigation honors Reduce Motion, and routine task decisions use immediate page changes.
+
 Open a project's **… → Edit Project…** menu to change its display name and Markdown notes. The filename-backed slug stays fixed so existing todo links remain valid; edits save offline and sync through the normal outbox.
 
 Open a project's **… → Archive Project…** menu to review its todo count and disposition before saving. **Leave in project** is the default and preserves every task's memberships and state; archived projects do not hide their open todos from ordinary views. **Move to project** replaces only the archived project's link with an active existing or new project, preserving other memberships. **Move to Inbox** removes all project links. Moves include already-finished todos and never remove tags or notes.
@@ -55,9 +57,11 @@ Editors use grouped native surfaces and put State and Parent together under **De
 
 Add OTodo's **Today** widget to the Home Screen to see active todos due today or overdue without opening the app. The widget refreshes when OTodo's tasks change and at the next local day boundary.
 
-The shared palette follows the system appearance: light mode uses indigo accents, while dark mode uses legible lavender foregrounds, neutral raised surfaces, and subdued dark fills behind white labels.
+The shared palette follows the system appearance: light mode uses indigo accents, while dark mode uses legible lavender foregrounds and neutral raised surfaces. Foreground success/warning colors adapt separately from the dark indigo, violet, and green fills used behind white labels.
 
-The app, Share capture, widgets, and Watch use native **SF Rounded** with semantic text styles and Dynamic Type. The task-name field follows the same design without rebuilding its font on every keystroke; no downloaded font files are required.
+The app, Share capture, widgets, and Watch use system SF fonts with semantic text styles and Dynamic Type. Rounded navigation, review titles, and statistics contrast with standard SF task-row text and workspace context. Task metadata separates schedule/state from project or ancestry context and grows vertically instead of forcing everything onto one line. The task-name field retains its rounded design without rebuilding its font on every keystroke; no downloaded font files are required.
+
+The main workspace uses a centered column capped at 760pt on iPad. At accessibility text sizes, capture/sync and bulk-selection controls stack; collapsed editor summaries wrap, and attachment and relative-date actions adapt vertically. Small custom editor, authorization, and review controls have enlarged touch targets. Sidebar, agenda, filter scrolling, and sync disclosure motion honor Reduce Motion; repeatedly used editor disclosures do not add custom animation.
 
 Task names and notes recognize full weekday names and common abbreviations (`Sun`, `Mon`, `Tue`/`Tues`, `Wed`, `Thu`/`Thur`/`Thurs`, `Fri`, `Sat`), plus `today`/`tod`, `tomorrow`, `in N days`, `in N weeks`, `in N months`, `next week`, and `next month`. Matching is case-insensitive and uses whole words; abbreviations can have a trailing period. `today` and `tod` mean the current day in the device's local calendar. A weekday means its next occurrence, including next week when entered on that weekday.
 

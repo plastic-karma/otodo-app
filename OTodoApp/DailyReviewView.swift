@@ -73,7 +73,16 @@ enum DailyReviewKind: String, CaseIterable, Identifiable {
 
     var tint: Color {
         switch self {
-        case .kickstart: OTodoTheme.gold
+        case .kickstart: OTodoTheme.coral
+        case .wrapUp: OTodoTheme.accent
+        }
+    }
+}
+
+extension DailyReviewKind {
+    var filledTint: Color {
+        switch self {
+        case .kickstart: Color(red: 0.48, green: 0.24, blue: 0.08)
         case .wrapUp: OTodoTheme.filledViolet
         }
     }
@@ -146,7 +155,7 @@ struct DailyReviewPromptCard: View {
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(.white)
                     .frame(width: 48, height: 48)
-                    .background(kind.tint, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                    .background(kind.filledTint, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(kind.promptTitle)
@@ -243,7 +252,7 @@ struct DailyReviewSettingsView: View {
             .font(.title2.weight(.semibold))
             .foregroundStyle(.white)
             .frame(width: 48, height: 48)
-            .background(kind.tint, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+            .background(kind.filledTint, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
     }
 
     private func reviewSetting(
@@ -257,7 +266,7 @@ struct DailyReviewSettingsView: View {
                 Label(kind.title, systemImage: kind.icon)
                     .font(.headline)
             }
-            .tint(kind.tint)
+            .tint(kind.filledTint)
             .accessibilityIdentifier("daily-review-\(kind.rawValue)-enabled")
 
             if isEnabled.wrappedValue {
@@ -290,6 +299,8 @@ struct DailyReviewSettingsView: View {
 struct DailyReviewView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.locale) private var locale
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private struct ReschedulePresentation: Identifiable {
         let task: TodoTask
         var id: TaskID { task.id }
@@ -396,65 +407,63 @@ struct DailyReviewView: View {
     }
 
     private func summaryCard(isClosing: Bool) -> some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 16)
+        DailyReviewPage {
             VStack(alignment: .leading, spacing: 20) {
                 Image(systemName: isClosing ? "checkmark.seal.fill" : kind.icon)
-                    .font(.system(size: 34, weight: .semibold))
+                    .font(.largeTitle.weight(.semibold))
                     .foregroundStyle(.white)
                     .frame(width: 68, height: 68)
                     .background(.white.opacity(0.18), in: RoundedRectangle(cornerRadius: 21, style: .continuous))
 
                 Text(isClosing ? kind.closingTitle : kind.introTitle)
                     .font(.largeTitle.bold())
+                    .fontDesign(.rounded)
                     .foregroundStyle(.white)
 
                 Text(isClosing ? closingSummary : openingSummary)
                     .font(.title3)
-                    .foregroundStyle(.white.opacity(0.88))
+                    .foregroundStyle(.white)
                     .fixedSize(horizontal: false, vertical: true)
-
-                Spacer(minLength: 12)
 
                 if isClosing {
                     Button(kind.finishTitle) { onFinish() }
-                        .buttonStyle(DailyReviewPrimaryButtonStyle())
+                        .buttonStyle(DailyReviewPrimaryButtonStyle(isOnSummary: true))
                         .accessibilityIdentifier("daily-review-finish")
                 } else {
                     Button(sessionTasks.isEmpty ? "See the summary" : "Let’s go") {
                         advance()
                     }
-                    .buttonStyle(DailyReviewPrimaryButtonStyle())
+                    .buttonStyle(DailyReviewPrimaryButtonStyle(isOnSummary: true))
                     .accessibilityIdentifier("daily-review-begin")
                 }
             }
             .padding(28)
-            .frame(maxWidth: .infinity, maxHeight: 600, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(summaryGradient, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
-            .shadow(color: kind.tint.opacity(0.22), radius: 22, y: 12)
+            .shadow(color: .black.opacity(0.08), radius: 8, y: 4)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(isClosing ? "daily-review-summary-closing" : "daily-review-summary-opening")
-            Spacer(minLength: 16)
         }
-        .padding(.horizontal, 20)
     }
 
     private func taskCard(_ task: TodoTask, position: Int) -> some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 16)
+        DailyReviewPage {
             VStack(alignment: .leading, spacing: 18) {
-                HStack {
+                let headerLayout = dynamicTypeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                    : AnyLayout(HStackLayout(spacing: 12))
+                headerLayout {
                     Label(dueDescription(task), systemImage: dueIcon(task))
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(kind.tint)
-                    Spacer()
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     Text("\(position) of \(sessionTasks.count)")
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
 
                 Text(task.name)
-                    .font(.largeTitle.bold())
+                    .font(.title.bold())
                     .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -472,8 +481,6 @@ struct DailyReviewView: View {
                         .lineLimit(4)
                 }
 
-                Spacer(minLength: 8)
-
                 if let actionError {
                     Label(actionError, systemImage: "exclamationmark.triangle.fill")
                         .font(.footnote)
@@ -485,17 +492,30 @@ struct DailyReviewView: View {
                     ProgressView("Saving your decision…")
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
-                    HStack(spacing: 10) {
-                        Button("Done", systemImage: "checkmark.circle.fill") {
+                    let actionLayout = dynamicTypeSize >= .xxxLarge
+                        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
+                        : AnyLayout(HStackLayout(spacing: 10))
+                    actionLayout {
+                        Button {
                             complete(task)
+                        } label: {
+                            Label("Done", systemImage: "checkmark.circle.fill")
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .multilineTextAlignment(.center)
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(OTodoTheme.mint)
+                        .tint(OTodoTheme.filledMint)
                         .accessibilityIdentifier("daily-review-done-\(task.id.rawValue)")
 
-                        Button("Reschedule", systemImage: "calendar.badge.clock") {
+                        Button {
                             actionError = nil
                             reschedulePresentation = ReschedulePresentation(task: task)
+                        } label: {
+                            Label("Reschedule", systemImage: "calendar.badge.clock")
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .multilineTextAlignment(.center)
                         }
                         .buttonStyle(.bordered)
                         .accessibilityIdentifier("daily-review-reschedule-\(task.id.rawValue)")
@@ -511,25 +531,22 @@ struct DailyReviewView: View {
                 }
             }
             .padding(26)
-            .frame(maxWidth: .infinity, maxHeight: 600, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(OTodoTheme.card, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 30, style: .continuous)
-                    .stroke(kind.tint.opacity(0.18), lineWidth: 1)
-            }
-            .shadow(color: .black.opacity(0.08), radius: 18, y: 10)
+            .shadow(color: .black.opacity(0.08), radius: 8, y: 4)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("daily-review-task-\(task.id.rawValue)")
-            Spacer(minLength: 16)
         }
-        .padding(.horizontal, 20)
     }
 
     private var summaryGradient: LinearGradient {
         switch kind {
         case .kickstart:
             LinearGradient(
-                colors: [OTodoTheme.coral, OTodoTheme.gold],
+                colors: [
+                    Color(red: 0.48, green: 0.18, blue: 0.10),
+                    Color(red: 0.44, green: 0.29, blue: 0.09),
+                ],
                 startPoint: .topLeading, endPoint: .bottomTrailing
             )
         case .wrapUp:
@@ -618,19 +635,49 @@ struct DailyReviewView: View {
         } else {
             target = min(page + 1, sessionTasks.count + 1)
         }
-        withAnimation(.snappy(duration: 0.28)) {
+        withAnimation(reduceMotion || task != nil ? nil : .easeOut(duration: 0.2)) {
             page = min(target, sessionTasks.count + 1)
         }
     }
 }
 
+private struct DailyReviewPage<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        ScrollView {
+            content
+                .frame(maxWidth: 680)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                .padding(.bottom, 52)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+    }
+}
+
 private struct DailyReviewPrimaryButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var isOnSummary = false
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)
-            .foregroundStyle(OTodoTheme.filledAccent)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .foregroundStyle(isOnSummary ? OTodoTheme.filledAccent : Color.white)
             .frame(maxWidth: .infinity, minHeight: 48)
-            .background(.white.opacity(configuration.isPressed ? 0.78 : 0.94))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(isOnSummary ? Color.white : OTodoTheme.filledAccent)
+            .opacity(configuration.isPressed ? 0.8 : 1)
             .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+            .transaction { transaction in
+                if reduceMotion {
+                    transaction.animation = nil
+                    transaction.disablesAnimations = true
+                }
+            }
     }
 }

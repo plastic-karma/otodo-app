@@ -3,6 +3,7 @@ import SwiftUI
 import UIKit
 
 struct AuthenticationView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private let model: AppModel
 
     init(model: AppModel) {
@@ -39,7 +40,10 @@ struct AuthenticationView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 16) {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 16))
+        return layout {
             Image(systemName: "checkmark")
                 .font(.title.bold())
                 .foregroundStyle(.white)
@@ -51,10 +55,12 @@ struct AuthenticationView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text("Meet OTodo")
                     .font(.system(.title, design: .rounded, weight: .bold))
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Text("A calm place for the work that matters.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -102,10 +108,13 @@ private struct AuthenticationStartCard: View {
                 .accessibilityIdentifier("authentication.requestingCode")
 
                 if model.isAuthorizingGitHub {
-                    Button("Cancel", role: .cancel) {
+                    Button(role: .cancel) {
                         Task {
                             await model.cancelAuthorization()
                         }
+                    } label: {
+                        Text("Cancel")
+                            .frame(minHeight: 44)
                     }
                     .accessibilityIdentifier("authentication.cancel")
                 }
@@ -183,6 +192,7 @@ private struct GitHubAuthorizationCard: View {
 
                     Text(deviceCode.userCode)
                         .font(.system(.largeTitle, design: .monospaced, weight: .bold))
+                        .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                         .foregroundStyle(isExpired ? .secondary : .primary)
                         .accessibilityLabel("GitHub authorization code")
@@ -193,6 +203,7 @@ private struct GitHubAuthorizationCard: View {
                         UIPasteboard.general.string = deviceCode.userCode
                     } label: {
                         Label("Copy code", systemImage: "doc.on.doc")
+                            .frame(minHeight: 44)
                     }
                     .disabled(isExpired)
                     .accessibilityHint("Copies the authorization code to the clipboard")
@@ -233,12 +244,14 @@ private struct GitHubAuthorizationCard: View {
                     .accessibilityIdentifier("authentication.restart")
                 }
 
-                Button("Cancel authorization", role: .cancel) {
+                Button(role: .cancel) {
                     Task {
                         await model.cancelAuthorization()
                     }
+                } label: {
+                    Text("Cancel authorization")
+                        .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("authentication.cancel")
             }
             .padding(20)
