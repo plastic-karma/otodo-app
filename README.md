@@ -591,3 +591,153 @@ Apple processing; no release was delivered during this cleanup.
 
 See [`docs/RELEASE.md`](docs/RELEASE.md) for external signing prerequisites,
 local verification, artifact locations, and explicit TestFlight delivery.
+
+### Local iPhone deployment and Swift debugging (Linux)
+
+Use the same native tools as `../lead-track`, but build and install **OTodo**.
+This is a development-signed local update, not a TestFlight upload. Preserve all
+five bundle IDs, the signing team, App Group, capabilities, and Watch slices.
+Never uninstall the existing app to make debugging work.
+
+Prerequisites: a USB-paired, trusted, unlocked iPhone with Developer Mode enabled;
+`pymobiledevice3==11.26.0`; source-built xtool with `--development`,
+`--configuration debug`, and `xtool-debug`; compatible Swift LLDB. Follow the
+[native USB debugging guide](https://github.com/plastic-karma/xtool/blob/main/Documentation/xtool.docc/NativeReleases.md#local-usb-device-debugging)
+for usbmuxd, pairing, personalized DDI mounting, and LLDB compatibility libraries.
+
+Keep distribution signing unchanged. The separate external configuration is
+`~/.config/xtool/signing/plastickarma.otodo.development.yml`: the same
+`certificate`, `privateKey`, and `profiles` mapping as distribution signing, but
+with an Apple Development identity and development profiles for
+`plastickarma.otodo`, `.widget`, `.share`, `.watchkitapp`, and
+`.watchkitapp.widget`. Profiles must cover the registered iPhone/Watch and allow
+`get-task-allow`. Use private directories/files (`0700`/`0600`), never repository
+credentials. Check that `XTOOL_SIGNING_CONFIG` does not override this file.
+
+Back up before updating. `apps pull` of `Library` and `Documents` works for the
+ordinary app container; pulling `/` can fail on protected container metadata.
+These exports **do not back up the App Group workspace** or Keychain. Preserve
+an independent workspace/device backup; a same-team update is not a substitute.
+
+```sh
+umask 077
+# Set UDID locally from this command; do not commit it.
+pymobiledevice3 usbmux list
+pymobiledevice3 mounter auto-mount --udid "$UDID"
+pymobiledevice3 apps pull --udid "$UDID" plastickarma.otodo Library \
+  .xtool/device-before-library
+pymobiledevice3 apps pull --udid "$UDID" plastickarma.otodo Documents \
+  .xtool/device-before-documents
+./scripts/build-release.sh --development --configuration release \
+  --output .xtool/device-releases
+# Set IPA to this build's generated IPA, not an earlier release.
+pymobiledevice3 apps install --udid "$UDID" --developer "$IPA"
+pymobiledevice3 developer dvt launch --userspace --udid "$UDID" \
+  --no-kill-existing plastickarma.otodo
+pymobiledevice3 developer dvt process-id-for-bundle-id \
+  --userspace --udid "$UDID" plastickarma.otodo
+pymobiledevice3 apps list --udid "$UDID" --type User
+```
+
+Use `--developer` for installation; lead-track's ordinary install path hung.
+Do not overlap native builds. Development signing enables LLDB attachment even
+with optimized Release code; locals and stepping can be limited. Use the pinned
+Swift 6.3.3 Release configuration for OTodo. The attempted 6.3.3 Debug build
+failed at linking with missing per-source object files under whole-module
+compilation. A command-scoped Swift 6.4 Debug attempt instead failed on
+`SyncEngine.swift` region isolation. Do not change source semantics or suppress
+diagnostics just to bypass these build-tool/compiler incompatibilities.
+
+Set `EXECUTABLE` to this installed build's `Payload/OTodo.app/OTodo`, `APP_PID`
+to the live PID, and `REMOTE_EXECUTABLE` to installed metadata `Path` plus
+`/OTodo`. Refresh these after every update/relaunch. Generate matching symbols
+before another build replaces object files:
+
+```sh
+mkdir -p -m 700 .xtool/device-debug
+dsymutil -o .xtool/device-debug/OTodo.app.dSYM "$EXECUTABLE"
+llvm-dwarfdump --uuid "$EXECUTABLE"
+llvm-dwarfdump --uuid \
+  .xtool/device-debug/OTodo.app.dSYM/Contents/Resources/DWARF/OTodo
+# Keep running in a separate terminal:
+pymobiledevice3 developer debugserver start-server --userspace \
+  --udid "$UDID" --local-port 62078 --host 127.0.0.1
+```
+
+The executable and dSYM UUIDs must match. Set `SWIFT_LLDB` to a working Swift
+LLDB launcher, `CACHE` to the exact device OS symbol cache, and `IPHONEOS_SDK`
+to the imported compiler SDK. Device symbols and compiler SDK are different:
+fetch symbols with `developer fetch-symbols download` and extract the dyld cache
+using Linux `ipsw dyld extract --all`, not macOS-only `split`.
+
+```sh
+native="${XTOOL_NATIVE_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/xtool/native}"
+"$native/bin/xtool-debug" "$EXECUTABLE" --pid "$APP_PID" \
+  --lldb "$SWIFT_LLDB" \
+  --symbols .xtool/device-debug/OTodo.app.dSYM/Contents/Resources/DWARF/OTodo \
+  --remote-executable "$REMOTE_EXECUTABLE" \
+  --sysroot "$CACHE/Symbols" --sdk "$IPHONEOS_SDK"
+```
+
+Use the helper rather than the server's direct `process connect` hint: its
+explicit PID attach avoids an iOS 26 debugproxy handshake hang. `--symbols`
+takes the raw DWARF file, not the dSYM directory. The SDK option supplies Darwin
+SwiftShims/CoreFoundation; Linux host modules are not suitable for app expressions.
+Inspect with `thread backtrace all`, set source breakpoints, and `continue`.
+End with `process detach`, then `quit`; stop the debugserver afterward. Keep
+screenshots, logs, and backups under ignored `.xtool/`, private and unuploaded.
+
+On this workstation, source `~/.local/share/swiftly/xtool-env.sh` for compatibility
+libraries. Portable checks also need the pinned compiler explicitly:
+
+```sh
+source "$HOME/.local/share/swiftly/xtool-env.sh"
+PATH="$HOME/.local/share/swiftly/toolchains/6.3.3/usr/bin:$PATH" scripts/test.sh
+```
+
+The environment's default Swift 6.4 is not the repository's selected compiler;
+it reports a region-isolation compilation error in `SyncEngine.swift`.
+Linux checks do not execute hosted Apple UI tests or Watch simulators.
+
+#### Observed local build and deployment state (2026-10-09)
+
+- Source revision: `037a26e8506bab6ee3d5407a1b25959f3b791102`; no application
+  source changes were needed for the development-signed Release build.
+- Version/build: **1.0 / 1791584288**. IPA:
+  `.xtool/device-releases/1791584288/OTodo.ipa`; local verification passed for
+  all five bundles/seven architecture slices. `release.json` and
+  `verification.json` are beside the IPA. No Apple upload occurred.
+- Matching symbols:
+  `.xtool/device-releases/1791584288/OTodo.app.dSYM/Contents/Resources/DWARF/OTodo`;
+  executable/dSYM UUID: `4C4C44B8-5555-3144-A12A-44B4B3676F43`.
+- `scripts/test.sh` passed with Swift 6.3.3. Python's simulator-related messages
+  are portable test fixtures, not evidence of real Apple simulator execution.
+- The paired iPhone15,4 ran iOS 26.6.1; its personalized DDI was already mounted
+  and the loopback debugserver started successfully.
+- **Installed, launched, and attached successfully.** The first developer and
+  streaming install attempts returned `IXErrorDomain Code=46` because an App
+  Store-owned coordinator already existed for OTodo. After the user completed
+  the pending update, retrying the same developer-signed IPA succeeded.
+  This conflict is per bundle ID, not a general sideload restriction; the
+  error alone cannot distinguish an active download from a stale coordinator.
+- Installed metadata confirmed build `1791584288`, Apple Development signing,
+  `get-task-allow=true`, and the same App Group container as before the update.
+  Swift LLDB attached using the matching dSYM and device OS symbols; a source
+  breakpoint at `AppModel.swift:280` hit in `AppModel.sceneDidBecomeActive()`
+  after pressing Home and reopening OTodo. Backtraces resolved app source.
+  `frame variable self` produced some invalid/uninitialized optimized values:
+  do not treat Release-frame variable output as reliable app state.
+- Removed the breakpoint, detached cleanly, and quit LLDB; the same app process
+  remained running. The captured screen showed OTodo's Today view with Synced
+  status. Screenshot: `.xtool/otodo-device-deployed.png`. Debugserver stopped.
+  This proves iPhone launch/source-debugging, not full product or Watch coverage.
+- Workstation paths used: Swift LLDB `~/.local/share/swiftly/lldb-6.4.0`;
+  device symbols `~/.cache/xtool/device-symbols/iPhone15,4-26.6.1/Symbols`;
+  compiler SDK
+  `~/.config/swiftpm/swift-sdks/darwin.artifactbundle/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.5.sdk`.
+  For the verified lifecycle trigger, `developer core-device hid button
+  --userspace home` selects the connected phone without a `--udid` option;
+  then use `developer dvt launch --userspace --udid "$UDID"
+  --no-kill-existing plastickarma.otodo`.
+- Ordinary app-container exports were saved under `.xtool/device-before-library`
+  and `.xtool/device-before-documents`; they are not an App Group backup.
