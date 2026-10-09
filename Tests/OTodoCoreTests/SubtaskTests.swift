@@ -675,6 +675,309 @@ final class SubtaskTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(canonical.configuration.schemaVersion, 1)
     }
 
+    func testBulkCompletionAdvancesOverlappingRecurringChildOnceInEitherSelectionOrder() async throws {
+        let parent = try task(id(1))
+        var child = try task(id(2), parent: parent.id)
+        child.dueDate = try CivilDate(rawValue: "2026-09-09")
+        child.dueTime = try CivilTime(rawValue: "16:30")
+        child.recurrence = "FREQ=WEEKLY"
+        child.recurrenceFrom = .schedule
+        let terminal = try task(id(3), parent: child.id, state: "done")
+        let grandchild = try task(id(4), parent: terminal.id)
+        let unrelated = try task(id(5))
+        let day = try CivilDate(rawValue: "2026-09-09")
+        for selectionOrder in [[parent, child, terminal], [child, terminal, parent]] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let (_, service, selection) = try await seed([grandchild, child, terminal, unrelated, parent], at: directory)
+            let result = try await service.completeTasks(
+                selection: selection, expectedTasks: selectionOrder, completedOn: day
+            )
+            let loaded = try await FileWorkspaceStore(rootURL: directory).load(selection: selection)
+            let saved = try XCTUnwrap(loaded)
+            XCTAssertEqual(result.map(\.id), selectionOrder.map(\.id))
+            let advanced = try XCTUnwrap(saved.tasks.first { $0.task.id == child.id }?.task)
+            XCTAssertEqual(advanced.dueDate?.rawValue, "2026-09-16")
+            XCTAssertEqual(advanced.dueTime, child.dueTime)
+            XCTAssertEqual(advanced.lastCompletedDate, day)
+            XCTAssertEqual(advanced.state, "open")
+            for original in [parent, child, grandchild] {
+                let completed = try XCTUnwrap(saved.tasks.first { $0.task.id == original.id }?.task)
+                XCTAssertEqual(TaskCompletionHistory.read(completed).events.map(\.completedOn), [day])
+                XCTAssertEqual(completed.parentID, original.parentID)
+            }
+            XCTAssertEqual(saved.tasks.first { $0.task.id == parent.id }?.task.state, "done")
+            XCTAssertEqual(saved.tasks.first { $0.task.id == grandchild.id }?.task.state, "done")
+            XCTAssertEqual(saved.tasks.first { $0.task.id == terminal.id }?.task, terminal)
+            XCTAssertEqual(saved.tasks.first { $0.task.id == unrelated.id }?.task, unrelated)
+            XCTAssertEqual(Set(saved.pendingChanges.map(\.path)), Set([parent, child, grandchild].map(\.relativePath)))
+            XCTAssertEqual(saved.revision, 1)
+            XCTAssertEqual(result, selectionOrder.map { original in
+                saved.tasks.first { $0.task.id == original.id }!.task
+            })
+        }
+    }
+
+    func testBulkCompletionOfTerminalSelectionsIsAnUnchangedNoOp() async throws {
+        let terminal = try task(id(1), state: "done")
+        let child = try task(id(2), parent: terminal.id)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (_, service, selection) = try await seed([terminal, child], at: directory)
+        let before = try await service.loadWorkspace(selection: selection)
+        let result = try await service.completeTasks(
+            selection: selection, expectedTasks: [terminal], completedOn: CivilDate(rawValue: "2026-09-09")
+        )
+        let after = try await service.loadWorkspace(selection: selection)
+        XCTAssertEqual(result, [terminal])
+        XCTAssertEqual(after, before)
+    }
+
+    func testBulkMutationsRejectEveryStaleMissingDuplicateAndEmptySelectionAtomically() async throws {
+        let first = try task(id(1))
+        let second = try task(id(2))
+        let terminal = try task(id(3), state: "done")
+        var stale = second
+        stale.name = "Stale selected snapshot"
+        var staleTerminal = terminal
+        staleTerminal.name = "Stale terminal snapshot"
+        let missing = try task(id(99))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (_, service, selection) = try await seed([first, second, terminal], at: directory)
+        let before = try await service.loadWorkspace(selection: selection)
+        for deletes in [false, true] {
+            for selected in [[first, stale], [first, staleTerminal], [first, missing], [first, first], []] {
+                do {
+                    if deletes {
+                        try await service.deleteTasks(selection: selection, expectedTasks: selected)
+                    } else {
+                        _ = try await service.completeTasks(
+                            selection: selection, expectedTasks: selected, completedOn: CivilDate(rawValue: "2026-09-09")
+                        )
+                    }
+                    XCTFail("Every member must be validated before the batch saves")
+                } catch let error as OTodoError {
+                    switch error {
+                    case .conflict, .notFound, .validation: break
+                    default: XCTFail("Unexpected error: \(error)")
+                    }
+                }
+                let after = try await service.loadWorkspace(selection: selection)
+                XCTAssertEqual(after, before)
+            }
+        }
+    }
+
+    func testBulkMutationsRejectConflictedMembersAndCompletionDescendantsAtomically() async throws {
+        let parent = try task(id(1))
+        let child = try task(id(2), parent: parent.id)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (store, service, selection) = try await seed([parent, child], at: directory)
+        let original = try await service.loadWorkspace(selection: selection)
+        let document = try XCTUnwrap(original.tasks.first { $0.task.id == child.id })
+        let conflict = try SyncConflict(
+            path: child.relativePath, baseBlobSHA: document.blobSHA, remoteBlobSHA: "remote",
+            localContent: document.content, remoteContent: document.content
+        )
+        let conflicted = try WorkspaceState(
+            selection: selection, configuration: original.configuration, tasks: original.tasks,
+            baseHeadCommitSHA: original.baseHeadCommitSHA, baseRootTreeSHA: original.baseRootTreeSHA,
+            pendingChanges: [], conflicts: [conflict], revision: original.revision + 1
+        )
+        try await store.save(conflicted, expectedRevision: original.revision)
+        for selected in [[parent], [parent, child]] {
+            do {
+                _ = try await service.completeTasks(
+                    selection: selection, expectedTasks: selected, completedOn: CivilDate(rawValue: "2026-09-09")
+                )
+                XCTFail("A selected or descendant conflict must prevent all completion")
+            } catch let OTodoError.conflict(message) {
+                XCTAssertTrue(message.contains(child.relativePath))
+            }
+            let after = try await service.loadWorkspace(selection: selection)
+            XCTAssertEqual(after, conflicted)
+        }
+        do {
+            try await service.deleteTasks(selection: selection, expectedTasks: [parent, child])
+            XCTFail("A conflicted member must prevent all deletion")
+        } catch let OTodoError.conflict(message) {
+            XCTAssertTrue(message.contains(child.relativePath))
+        }
+        let afterDelete = try await service.loadWorkspace(selection: selection)
+        XCTAssertEqual(afterDelete, conflicted)
+    }
+
+    func testBulkMutationsLeaveDurableWorkspaceUnchangedWhenSaveFails() async throws {
+        let parent = try task(id(1))
+        let child = try task(id(2), parent: parent.id)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (store, service, selection) = try await seed([parent, child], at: directory)
+        let before = try await service.loadWorkspace(selection: selection)
+        let failing = TaskWorkspaceService(
+            persistence: RejectingBulkSaveStore(store: store), taskCodec: ObsidianTaskCodec()
+        )
+        for deletes in [false, true] {
+            do {
+                if deletes {
+                    try await failing.deleteTasks(selection: selection, expectedTasks: [parent, child])
+                } else {
+                    _ = try await failing.completeTasks(
+                        selection: selection, expectedTasks: [parent, child], completedOn: CivilDate(rawValue: "2026-09-09")
+                    )
+                }
+                XCTFail("Expected durable save failure")
+            } catch let error as OTodoError {
+                guard case .corruptLocalState = error else { return XCTFail("Unexpected error: \(error)") }
+            }
+            let after = try await FileWorkspaceStore(rootURL: directory).load(selection: selection)
+            XCTAssertEqual(after, before)
+        }
+    }
+
+    func testBulkDeletionRequiresEveryDescendantAndDeletesHierarchyInOneRevision() async throws {
+        let parent = try task(id(1))
+        let child = try task(id(2), parent: parent.id, state: "done")
+        let grandchild = try task(id(3), parent: child.id)
+        let unrelated = try task(id(4))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (_, service, selection) = try await seed([parent, child, grandchild, unrelated], at: directory)
+        let before = try await service.loadWorkspace(selection: selection)
+        for selected in [[parent], [parent, child], [parent, grandchild]] {
+            do {
+                try await service.deleteTasks(selection: selection, expectedTasks: selected)
+                XCTFail("Unselected children cannot be orphaned")
+            } catch let OTodoError.validation(field, message) {
+                XCTAssertEqual(field, "parent")
+                XCTAssertTrue(message.contains("task_in_use"))
+            }
+            let after = try await service.loadWorkspace(selection: selection)
+            XCTAssertEqual(after, before)
+        }
+        try await service.deleteTasks(selection: selection, expectedTasks: [child, parent, grandchild])
+        let loaded = try await FileWorkspaceStore(rootURL: directory).load(selection: selection)
+        let saved = try XCTUnwrap(loaded)
+        XCTAssertEqual(saved.tasks.map(\.task), [unrelated])
+        XCTAssertEqual(Set(saved.pendingChanges.map(\.path)), Set([parent, child, grandchild].map(\.relativePath)))
+        XCTAssertTrue(saved.pendingChanges.allSatisfy { $0.content == nil && $0.baseBlobSHA != nil })
+        XCTAssertTrue(saved.relationshipBlocks.isEmpty)
+        XCTAssertEqual(saved.revision, before.revision + 1)
+    }
+
+    func testBulkDeletionDropsNeverSyncedCreationsAndPreservesRemoteOutboxIdentity() async throws {
+        let remote = try task(id(1))
+        let unrelated = try task(id(2))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (_, service, selection) = try await seed([remote, unrelated], at: directory)
+        let created = try await service.addTask(selection: selection, name: "Never synced")
+        var update = TaskUpdate(task: remote)
+        update.name = "Pending remote edit"
+        let edited = try await service.editTask(
+            selection: selection, id: remote.id, expectedTask: remote, update: update
+        )
+        let before = try await service.loadWorkspace(selection: selection)
+        let pending = try XCTUnwrap(before.pendingChanges.first { $0.path == remote.relativePath })
+        try await service.deleteTasks(selection: selection, expectedTasks: [created, edited])
+        let loaded = try await FileWorkspaceStore(rootURL: directory).load(selection: selection)
+        let saved = try XCTUnwrap(loaded)
+        XCTAssertEqual(saved.tasks.map(\.task), [unrelated])
+        XCTAssertEqual(saved.pendingChanges.count, 1)
+        let tombstone = try XCTUnwrap(saved.pendingChanges.first)
+        XCTAssertEqual(tombstone.path, remote.relativePath)
+        XCTAssertEqual(tombstone.id, pending.id)
+        XCTAssertEqual(tombstone.createdAt, pending.createdAt)
+        XCTAssertEqual(tombstone.baseBlobSHA, pending.baseBlobSHA)
+        XCTAssertEqual(tombstone.groupID, pending.groupID)
+        XCTAssertNil(tombstone.content)
+        XCTAssertEqual(saved.revision, before.revision + 1)
+    }
+
+    private struct RejectingBulkSaveStore: WorkspacePersisting {
+        let store: FileWorkspaceStore
+
+        func load(selection: RepositorySelection) async throws -> WorkspaceState? {
+            try await store.load(selection: selection)
+        }
+
+        func save(_ workspace: WorkspaceState, expectedRevision: UInt64?) async throws {
+            throw OTodoError.corruptLocalState(message: "Injected durable save failure")
+        }
+    }
+
+    func testBulkCompletionRejectsInvalidDescendantRecurrenceWithoutSavingEarlierMembers() async throws {
+        let parent = try task(id(1))
+        var child = try task(id(2), parent: parent.id)
+        child.dueDate = try CivilDate(rawValue: "2026-09-16")
+        child.recurrence = "FREQ=WEEKLY"
+        child.recurrenceFrom = .schedule
+        child.lastCompletedDate = try CivilDate(rawValue: "2026-09-10")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (_, service, selection) = try await seed([parent, child], at: directory)
+        let before = try await service.loadWorkspace(selection: selection)
+        do {
+            _ = try await service.completeTasks(
+                selection: selection, expectedTasks: [parent, child], completedOn: CivilDate(rawValue: "2026-09-09")
+            )
+            XCTFail("The entire completion must reject a backwards recurrence completion")
+        } catch let OTodoError.validation(field, _) {
+            XCTAssertEqual(field, "last_completed_date")
+        }
+        let after = try await service.loadWorkspace(selection: selection)
+        XCTAssertEqual(after, before)
+    }
+
+    func testBulkMutationsPreserveConcurrentWorkspaceRevisionInsteadOfOverwritingIt() async throws {
+        let parent = try task(id(1))
+        let child = try task(id(2), parent: parent.id)
+        for deletes in [false, true] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let (store, service, selection) = try await seed([parent, child], at: directory)
+            let original = try await service.loadWorkspace(selection: selection)
+            let winner = try WorkspaceState(
+                selection: selection, configuration: original.configuration, tasks: original.tasks,
+                baseHeadCommitSHA: "concurrent-head", baseRootTreeSHA: "concurrent-tree",
+                pendingChanges: [], conflicts: [], revision: original.revision + 1
+            )
+            let racing = TaskWorkspaceService(
+                persistence: RacingBulkSaveStore(store: store, winner: winner), taskCodec: ObsidianTaskCodec()
+            )
+            do {
+                if deletes {
+                    try await racing.deleteTasks(selection: selection, expectedTasks: [parent, child])
+                } else {
+                    _ = try await racing.completeTasks(
+                        selection: selection, expectedTasks: [parent, child], completedOn: CivilDate(rawValue: "2026-09-09")
+                    )
+                }
+                XCTFail("The optimistic batch save must reject a concurrent revision")
+            } catch let error as OTodoError {
+                guard case .conflict = error else { return XCTFail("Unexpected error: \(error)") }
+            }
+            let durable = try await FileWorkspaceStore(rootURL: directory).load(selection: selection)
+            XCTAssertEqual(durable, winner)
+        }
+    }
+
+    private struct RacingBulkSaveStore: WorkspacePersisting {
+        let store: FileWorkspaceStore
+        let winner: WorkspaceState
+
+        func load(selection: RepositorySelection) async throws -> WorkspaceState? {
+            try await store.load(selection: selection)
+        }
+
+        func save(_ workspace: WorkspaceState, expectedRevision: UInt64?) async throws {
+            try await store.save(winner, expectedRevision: expectedRevision)
+            try await store.save(workspace, expectedRevision: expectedRevision)
+        }
+    }
+
     private func id(_ number: Int) throws -> TaskID {
         try TaskID(rawValue: String(format: "%026d", number))
     }

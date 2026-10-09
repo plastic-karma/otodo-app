@@ -11,9 +11,10 @@ appStoreConnect:
     - 2a16b67b-f282-48d0-bf9f-42696c0bf03b
   locale: en-US
   testNotes: >-
-    Design polish: verify readable task metadata and collapsed editor summaries,
-    scrollable Kickstart/Wrap-up actions at the largest Dynamic Type size, dark
-    mode contrast, Reduce Motion, iPad reading width, and enlarged touch targets.
+    Bulk actions: tap Select in Todos, search or Upcoming to complete, delete or
+    reschedule multiple todos. Verify confirmation, offline persistence, scoped
+    Select all, recurring parent/child completion once, and child-safe deletion.
+    Check the selection controls with large Dynamic Type and narrow screens.
     Includes the iPhone app, widget, Share extension, Watch app and Watch widget.
     Verify Watch installation and sync, widgets, sharing, GitHub login and
     Add Todo Shortcuts.

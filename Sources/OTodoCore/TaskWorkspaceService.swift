@@ -721,6 +721,50 @@ public actor TaskWorkspaceService {
         )
     }
 
+    /// Completes active selected tasks and their descendants once in one durable mutation.
+    /// Returns selected tasks in input order, including unchanged terminal selections.
+    public func completeTasks(
+        selection: RepositorySelection,
+        expectedTasks: [TodoTask],
+        completedOn: CivilDate
+    ) async throws -> [TodoTask] {
+        let workspace = try await requireWorkspace(selection: selection)
+        let selectedIndices = try Self.editableTaskIndices(expectedTasks: expectedTasks, in: workspace)
+        let terminalStates = Set(workspace.configuration.states.filter(\.isTerminal).map(\.id))
+        let activeIndices = selectedIndices.filter { !terminalStates.contains(workspace.tasks[$0].task.state) }
+        guard !activeIndices.isEmpty else { return expectedTasks }
+
+        var completionIDs = Set(activeIndices.map { workspace.tasks[$0].task.id })
+        if workspace.configuration.schemaVersion == 2 {
+            let hierarchy = TaskHierarchy(tasks: workspace.tasks.map(\.task))
+            var stack = Array(completionIDs)
+            while let parentID = stack.popLast() {
+                for child in hierarchy.children(of: parentID) where completionIDs.insert(child.id).inserted {
+                    stack.append(child.id)
+                }
+            }
+            if let issue = hierarchy.issues.first(where: { completionIDs.contains($0.taskID) }) {
+                throw OTodoError.validation(field: "parent", message: "\(issue.code): \(issue.message)")
+            }
+        }
+        for index in activeIndices {
+            let task = workspace.tasks[index].task
+            try Self.validate(state: task.state, projects: task.projectSlugs, in: workspace)
+        }
+        var tasks = workspace.tasks
+        var pendingChanges = workspace.pendingChanges
+        try completeTasks(
+            ids: completionIDs, terminalState: nil, completedOn: completedOn, at: now(),
+            in: workspace, tasks: &tasks, pendingChanges: &pendingChanges
+        )
+        let updatedWorkspace = try Self.replacing(
+            workspace, tasks: tasks, pendingChanges: pendingChanges, conflicts: workspace.conflicts
+        )
+        try Task.checkCancellation()
+        try await persistence.save(updatedWorkspace, expectedRevision: workspace.revision)
+        return selectedIndices.map { tasks[$0].task }
+    }
+
     private static func applyCompletion(
         to task: inout TodoTask, configuration: StoreConfiguration, completedOn: CivilDate
     ) throws {
@@ -765,9 +809,23 @@ public actor TaskWorkspaceService {
         if let issue = hierarchy.issues.first(where: { $0.taskID == parent.id || descendants.contains($0.taskID) }) {
             throw OTodoError.validation(field: "parent", message: "\(issue.code): \(issue.message)")
         }
+        try completeTasks(
+            ids: descendants, terminalState: occurrences ? nil : parent.state,
+            completedOn: completedOn, at: timestamp,
+            in: workspace, tasks: &tasks, pendingChanges: &pendingChanges
+        )
+    }
+
+    private func completeTasks(
+        ids: Set<TaskID>, terminalState: String?, completedOn: CivilDate, at timestamp: Date,
+        in workspace: WorkspaceState, tasks: inout [TaskDocument],
+        pendingChanges: inout [PendingChange]
+    ) throws {
         let terminalStates = Set(workspace.configuration.states.filter(\.isTerminal).map(\.id))
         let conflictedPaths = Set(workspace.conflicts.map(\.path))
-        for index in tasks.indices where descendants.contains(tasks[index].task.id) {
+        let parentIDs = Set(tasks.compactMap(\.task.parentID))
+        for index in tasks.indices where ids.contains(tasks[index].task.id) {
+            try Task.checkCancellation()
             let original = tasks[index]
             guard !terminalStates.contains(original.task.state) else { continue }
             let path = Self.repositoryPath(selection: workspace.selection, storeRelativePath: original.task.relativePath)
@@ -775,14 +833,14 @@ public actor TaskWorkspaceService {
                 throw OTodoError.conflict(message: "Resolve the conflict at \(path) before completing its parent")
             }
             var completed = original.task
-            if occurrences {
-                try Self.applyCompletion(to: &completed, configuration: workspace.configuration, completedOn: completedOn)
+            if let terminalState {
+                completed.state = terminalState
             } else {
-                completed.state = parent.state
+                try Self.applyCompletion(to: &completed, configuration: workspace.configuration, completedOn: completedOn)
             }
             try TaskCompletionHistory.append(
                 to: &completed, snapshot: original.task, completedAt: timestamp, completedOn: completedOn,
-                calendar: calendar, usesSubtasks: true,
+                calendar: calendar, usesSubtasks: original.task.parentID != nil || parentIDs.contains(original.task.id),
                 storePrefix: workspace.configuration.obsidianLinkPrefix, id: makeUUID()
             )
             let document = try canonicalDocument(
@@ -814,6 +872,35 @@ public actor TaskWorkspaceService {
             throw OTodoError.conflict(message: "Resolve the conflict at \(path) before editing")
         }
         return index
+    }
+
+    private static func editableTaskIndices(
+        expectedTasks: [TodoTask], in workspace: WorkspaceState
+    ) throws -> [Int] {
+        guard !expectedTasks.isEmpty else {
+            throw OTodoError.validation(field: "expectedTasks", message: "Select at least one task")
+        }
+        guard Set(expectedTasks.map(\.id)).count == expectedTasks.count else {
+            throw OTodoError.validation(field: "expectedTasks", message: "Select each task only once")
+        }
+        let indices = Dictionary(uniqueKeysWithValues: workspace.tasks.enumerated().map {
+            ($0.element.task.id, $0.offset)
+        })
+        let conflictedPaths = Set(workspace.conflicts.map(\.path))
+        return try expectedTasks.map { expected in
+            try Task.checkCancellation()
+            guard let index = indices[expected.id] else {
+                throw OTodoError.notFound(resource: "task \(expected.id.rawValue)")
+            }
+            guard workspace.tasks[index].task == expected else {
+                throw OTodoError.conflict(message: "Task \(expected.id.rawValue) changed since selection began")
+            }
+            let path = repositoryPath(selection: workspace.selection, storeRelativePath: expected.relativePath)
+            guard !conflictedPaths.contains(path) else {
+                throw OTodoError.conflict(message: "Resolve the conflict at \(path) before editing")
+            }
+            return index
+        }
     }
 
     private func persistTaskUpdate(
@@ -1083,17 +1170,25 @@ public actor TaskWorkspaceService {
         id: TaskID,
         expectedTask: TodoTask
     ) async throws {
-        let workspace = try await requireWorkspace(selection: selection)
-        guard let taskIndex = workspace.tasks.firstIndex(where: { $0.task.id == id }) else {
-            throw OTodoError.notFound(resource: "task \(id.rawValue)")
+        guard id == expectedTask.id else {
+            throw OTodoError.conflict(message: "Task \(id.rawValue) changed since deletion began")
         }
-        guard workspace.tasks[taskIndex].task == expectedTask else {
-            throw OTodoError.conflict(
-                message: "Task \(id.rawValue) changed since deletion began"
-            )
-        }
+        try await deleteTasks(selection: selection, expectedTasks: [expectedTask])
+    }
 
-        let children = workspace.tasks.filter { $0.task.parentID == id }.map(\.task.id).sorted()
+    /// Deletes exactly the selection, refusing to orphan any unselected child.
+    public func deleteTasks(
+        selection: RepositorySelection,
+        expectedTasks: [TodoTask]
+    ) async throws {
+        let workspace = try await requireWorkspace(selection: selection)
+        let selectedIndices = try Self.editableTaskIndices(expectedTasks: expectedTasks, in: workspace)
+        let selectedIDs = Set(expectedTasks.map(\.id))
+        let children = workspace.tasks.compactMap { document -> TaskID? in
+            guard let parentID = document.task.parentID,
+                  selectedIDs.contains(parentID), !selectedIDs.contains(document.task.id) else { return nil }
+            return document.task.id
+        }.sorted()
         guard children.isEmpty else {
             throw OTodoError.validation(
                 field: "parent",
@@ -1101,31 +1196,25 @@ public actor TaskWorkspaceService {
                     children.map(\.rawValue).joined(separator: ", ")
             )
         }
-        let original = workspace.tasks[taskIndex]
-        let repositoryPath = Self.repositoryPath(
-            selection: workspace.selection,
-            storeRelativePath: original.task.relativePath
-        )
-        guard !workspace.conflicts.contains(where: { $0.path == repositoryPath }) else {
-            throw OTodoError.conflict(message: "Resolve the conflict at \(repositoryPath) before deleting")
-        }
-
-        var tasks = workspace.tasks
-        tasks.remove(at: taskIndex)
-
-        let existingPending = workspace.pendingChanges.first(where: { $0.path == repositoryPath })
-        let remoteBaseBlobSHA = existingPending?.baseBlobSHA ?? original.blobSHA
-        let pendingChanges: [PendingChange]
-        if remoteBaseBlobSHA == nil {
-            pendingChanges = workspace.pendingChanges.filter { $0.path != repositoryPath }
-        } else {
-            pendingChanges = try upsertingPendingChange(
-                path: repositoryPath,
-                content: nil,
-                baseBlobSHA: remoteBaseBlobSHA,
-                in: workspace.pendingChanges,
-                at: now()
+        let tasks = workspace.tasks.filter { !selectedIDs.contains($0.task.id) }
+        var pendingChanges = workspace.pendingChanges
+        let pendingByPath = Dictionary(uniqueKeysWithValues: workspace.pendingChanges.map { ($0.path, $0) })
+        let timestamp = now()
+        for index in selectedIndices {
+            try Task.checkCancellation()
+            let original = workspace.tasks[index]
+            let path = Self.repositoryPath(
+                selection: workspace.selection, storeRelativePath: original.task.relativePath
             )
+            let remoteBaseBlobSHA = pendingByPath[path]?.baseBlobSHA ?? original.blobSHA
+            if remoteBaseBlobSHA == nil {
+                pendingChanges.removeAll { $0.path == path }
+            } else {
+                pendingChanges = try upsertingPendingChange(
+                    path: path, content: nil, baseBlobSHA: remoteBaseBlobSHA,
+                    in: pendingChanges, at: timestamp
+                )
+            }
         }
         let updatedWorkspace = try Self.replacing(
             workspace,
@@ -1133,6 +1222,7 @@ public actor TaskWorkspaceService {
             pendingChanges: pendingChanges,
             conflicts: workspace.conflicts
         )
+        try Task.checkCancellation()
         try await persistence.save(updatedWorkspace, expectedRevision: workspace.revision)
     }
 

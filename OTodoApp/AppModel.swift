@@ -1025,6 +1025,84 @@ final class AppModel {
         }
     }
 
+    func completeTasks(_ tasks: [TodoTask]) async {
+        guard !isBusy else {
+            errorMessage = "Wait for the current save before completing the selection."
+            return
+        }
+        guard rootState == .workspace, let selection = workspaceSelection else {
+            errorMessage = "No todo workspace is selected."
+            return
+        }
+        guard let completedOn = TaskSchedule.civilDate(from: .now) else {
+            errorMessage = "Today's calendar date is unavailable."
+            return
+        }
+        let operationSession = sessionID
+        beginLocalMutation()
+        defer { finishLocalMutation() }
+        errorMessage = nil
+        statusMessage = "Saving completions on this device…"
+        isBusy = true
+        do {
+            _ = try await taskService.completeTasks(
+                selection: selection, expectedTasks: tasks, completedOn: completedOn
+            )
+            guard sessionID == operationSession else { return }
+            syncFollowUpRequested = true
+            let workspace = try await taskService.loadWorkspace(selection: selection)
+            guard sessionID == operationSession else { return }
+            apply(workspace)
+            errorMessage = nil
+            publishLocalSaveStatus(
+                onlineMessage: "Saved on this device; waiting to sync.",
+                offlineMessage: "Saved on this device while offline."
+            )
+            isBusy = false
+        } catch {
+            guard sessionID == operationSession else { return }
+            isBusy = false
+            errorMessage = Self.message(for: error)
+            statusMessage = nil
+        }
+    }
+
+    func deleteTasks(_ tasks: [TodoTask]) async {
+        guard !isBusy else {
+            errorMessage = "Wait for the current save before deleting the selection."
+            return
+        }
+        guard rootState == .workspace, let selection = workspaceSelection else {
+            errorMessage = "No todo workspace is selected."
+            return
+        }
+        let operationSession = sessionID
+        beginLocalMutation()
+        defer { finishLocalMutation() }
+        errorMessage = nil
+        statusMessage = "Deleting todos on this device…"
+        isBusy = true
+        do {
+            try await taskService.deleteTasks(selection: selection, expectedTasks: tasks)
+            guard sessionID == operationSession else { return }
+            syncFollowUpRequested = true
+            let workspace = try await taskService.loadWorkspace(selection: selection)
+            guard sessionID == operationSession else { return }
+            apply(workspace)
+            errorMessage = nil
+            publishLocalSaveStatus(
+                onlineMessage: "Deleted on this device; waiting to sync.",
+                offlineMessage: "Deleted on this device while offline."
+            )
+            isBusy = false
+        } catch {
+            guard sessionID == operationSession else { return }
+            isBusy = false
+            errorMessage = Self.message(for: error)
+            statusMessage = nil
+        }
+    }
+
     func rescheduleTasks(
         _ tasks: [TodoTask],
         dueDate: TaskDueDateChange,

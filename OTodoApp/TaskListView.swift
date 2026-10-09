@@ -53,6 +53,9 @@ struct TaskListView: View {
     @State private var dates = TaskDateContext()
     @State private var isSelecting = false
     @State private var selectedTaskIDs: Set<TaskID> = []
+    @State private var bulkMutationPresentation: BulkMutationPresentation?
+    @State private var isBulkMutationPresented = false
+    @State private var isBulkMutationRunning = false
     @State private var searchText = ""
 
     private struct ProjectArchivePresentation: Identifiable {
@@ -61,6 +64,20 @@ struct TaskListView: View {
 
     private struct ProjectEditPresentation: Identifiable {
         let id: String
+    }
+
+    private struct BulkMutationPresentation {
+        enum Action {
+            case complete
+            case delete
+        }
+
+        let action: Action
+        let tasks: [TodoTask]
+
+        var title: LocalizedStringKey {
+            action == .complete ? "Complete selected todos?" : "Delete selected todos?"
+        }
     }
 
     init(model: AppModel, notifications: TaskNotificationManager) {
@@ -252,15 +269,14 @@ struct TaskListView: View {
                         .accessibilityHint("Shows Upcoming, Inbox, projects, Daily rhythm, Stats, and changelog")
                         .accessibilityIdentifier("project-sidebar-toggle")
                     }
-                    if isUpcoming && !isSearching {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button(isSelecting ? "Cancel" : "Select") {
-                                selectedTaskIDs.removeAll()
-                                isSelecting.toggle()
-                            }
-                            .disabled(model.isBusy || (!isSelecting && (isFiltering || scopedTasks.isEmpty)))
-                            .accessibilityIdentifier("upcoming-select")
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(isSelecting ? "Cancel" : "Select") {
+                            guard !selectionIsBusy else { return }
+                            selectedTaskIDs.removeAll()
+                            isSelecting.toggle()
                         }
+                        .disabled(selectionIsBusy || (!isSelecting && scopedTasks.isEmpty))
+                        .accessibilityIdentifier("upcoming-select")
                     }
                     if !isUpcoming || isSearching {
                         ToolbarItem(placement: .topBarTrailing) {
@@ -328,6 +344,11 @@ struct TaskListView: View {
                 }
                 .sheet(item: $reschedulePresentation, onDismiss: presentPendingNotificationRequest) { presentation in
                     TaskRescheduleView(tasks: presentation.tasks) { date, time in
+                        guard !model.isBusy && !isBulkMutationRunning else {
+                            return "Wait for the current operation to finish, then try again."
+                        }
+                        isBulkMutationRunning = true
+                        defer { isBulkMutationRunning = false }
                         await model.rescheduleTasks(
                             presentation.tasks,
                             dueDate: date,
@@ -339,6 +360,31 @@ struct TaskListView: View {
                         return model.errorMessage
                     }
                     .presentationDetents([.large])
+                }
+                .confirmationDialog(
+                    bulkMutationPresentation?.title ?? "Update selected todos?",
+                    isPresented: $isBulkMutationPresented,
+                    titleVisibility: .visible,
+                    presenting: bulkMutationPresentation
+                ) { presentation in
+                    switch presentation.action {
+                    case .complete:
+                        Button("Complete") { performBulkMutation(presentation) }
+                            .disabled(selectionIsBusy)
+                    case .delete:
+                        Button("Delete \(presentation.tasks.count) todos", role: .destructive) {
+                            performBulkMutation(presentation)
+                        }
+                        .disabled(selectionIsBusy)
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: { presentation in
+                    switch presentation.action {
+                    case .complete:
+                        Text("Complete active todos in this selection of \(presentation.tasks.count)? Active subtasks are also completed, even if not selected. Recurring occurrences advance once to their next date. Already finished todos are skipped.")
+                    case .delete:
+                        Text("Permanently delete \(presentation.tasks.count) selected todos? This cannot be undone. Deletion is refused if any child todo is not selected; select all children with their parent to delete them together.")
+                    }
                 }
             }
             .allowsHitTesting(!isProjectSidebarPresented)
@@ -456,6 +502,9 @@ struct TaskListView: View {
         .onChange(of: showsCalendar) { _, _ in clearSelection() }
         .onChange(of: selectedCalendarDate) { _, _ in clearSelection() }
         .onChange(of: searchText) { _, _ in clearSelection() }
+        .onChange(of: selectedFilterID) { _, _ in clearSelection() }
+        .onChange(of: selectedFilter.query) { _, _ in clearSelection() }
+        .onChange(of: selectedProject) { _, _ in clearSelection() }
         .task(id: input) {
             await updateVisibleTasks(input: input)
         }
@@ -1379,7 +1428,9 @@ struct TaskListView: View {
             displayedTaskIDs = Set(result.tasks.map(\.id))
             agendaSections = result.sections
             calendarTasks = result.calendarTasks
-            selectedTaskIDs.formIntersection(scopedTasks.map(\.id))
+            if !isBulkMutationRunning && !isBulkMutationPresented && reschedulePresentation == nil {
+                selectedTaskIDs.formIntersection(scopedTasks.map(\.id))
+            }
             isFiltering = false
         } catch is CancellationError {
             // A newer input owns the next result and loading state.
@@ -1487,54 +1538,75 @@ struct TaskListView: View {
         .buttonStyle(.plain)
     }
 
+    private var selectionIsBusy: Bool {
+        model.isBusy || isFiltering || isBulkMutationRunning
+    }
+
     private var selectionActions: some View {
-        let layout = dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
-            : AnyLayout(HStackLayout(spacing: 8))
-        return layout {
-            Button {
+        TaskSelectionControls(
+            selectedCount: selectedTaskIDs.count,
+            allSelected: !scopedTasks.isEmpty && selectedTaskIDs.count == scopedTasks.count,
+            hasActiveSelection: scopedTasks.contains {
+                selectedTaskIDs.contains($0.id) && state(for: $0.state)?.isTerminal != true
+            },
+            isDisabled: selectionIsBusy,
+            onSelectAll: {
+                guard !selectionIsBusy else { return }
                 if selectedTaskIDs.count == scopedTasks.count {
                     selectedTaskIDs.removeAll()
                 } else {
                     selectedTaskIDs = Set(scopedTasks.map(\.id))
                 }
-            } label: {
-                Text(selectedTaskIDs.count == scopedTasks.count ? "Deselect all" : "Select all")
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
-            }
-            .accessibilityIdentifier("upcoming-select-all")
-
-            Text("\(selectedTaskIDs.count) selected")
-                .font(.caption)
-                .monospacedDigit()
-                .accessibilityIdentifier("upcoming-selection-count")
-            if !dynamicTypeSize.isAccessibilitySize {
-                Spacer(minLength: 0)
-            }
-
-            Button("Reschedule", systemImage: "calendar.badge.clock") {
+            },
+            onComplete: { presentBulkMutation(.complete) },
+            onDelete: { presentBulkMutation(.delete) },
+            onReschedule: {
+                guard !selectionIsBusy else { return }
                 reschedulePresentation = ReschedulePresentation(
                     tasks: scopedTasks.filter { selectedTaskIDs.contains($0.id) }
                 )
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .tint(OTodoTheme.filledAccent)
-            .disabled(selectedTaskIDs.isEmpty)
-            .accessibilityLabel("Reschedule \(selectedTaskIDs.count) selected todos")
-            .accessibilityIdentifier("upcoming-reschedule")
+        )
+    }
+
+    private func presentBulkMutation(_ action: BulkMutationPresentation.Action) {
+        guard !selectionIsBusy else { return }
+        let tasks = scopedTasks.filter { selectedTaskIDs.contains($0.id) }
+        guard !tasks.isEmpty else { return }
+        if action == .complete {
+            guard tasks.contains(where: { state(for: $0.state)?.isTerminal != true }) else { return }
         }
-        .font(.callout)
-        .disabled(model.isBusy || isFiltering)
+        bulkMutationPresentation = BulkMutationPresentation(action: action, tasks: tasks)
+        isBulkMutationPresented = true
+    }
+
+    private func performBulkMutation(_ presentation: BulkMutationPresentation) {
+        guard !selectionIsBusy else { return }
+        isBulkMutationRunning = true
+        Task { @MainActor in
+            defer { isBulkMutationRunning = false }
+            guard !model.isBusy else { return }
+            switch presentation.action {
+            case .complete:
+                await model.completeTasks(presentation.tasks)
+            case .delete:
+                await model.deleteTasks(presentation.tasks)
+            }
+            if model.errorMessage == nil {
+                clearSelection()
+            }
+        }
     }
 
     private func clearSelection() {
         selectedTaskIDs.removeAll()
         isSelecting = false
+        isBulkMutationPresented = false
+        bulkMutationPresentation = nil
     }
 
     private func toggleSelection(_ task: TodoTask) {
+        guard !selectionIsBusy else { return }
         if !selectedTaskIDs.insert(task.id).inserted {
             selectedTaskIDs.remove(task.id)
         }
@@ -1606,7 +1678,7 @@ struct TaskListView: View {
             task: task,
             workflowState: workflowState,
             today: today,
-            isCompletionDisabled: model.isBusy
+            isCompletionDisabled: model.isBusy || isBulkMutationRunning
                 || (isSelecting ? isFiltering : TaskRowActions.completionTarget(for: task, in: model) == nil),
             onOpen: {
                 if isSelecting {
@@ -1915,6 +1987,109 @@ private struct TaskListReminderControl: View {
             return "Off"
         case .denied:
             return "Permission required"
+        }
+    }
+}
+
+private struct TaskSelectionControls: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    let selectedCount: Int
+    let allSelected: Bool
+    let hasActiveSelection: Bool
+    let isDisabled: Bool
+    let onSelectAll: () -> Void
+    let onComplete: () -> Void
+    let onDelete: () -> Void
+    let onReschedule: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            let layout = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                : AnyLayout(HStackLayout(spacing: 12))
+            layout {
+                Button(action: onSelectAll) {
+                    Text(allSelected ? "Deselect all" : "Select all")
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityIdentifier("upcoming-select-all")
+
+                Text("\(selectedCount) selected")
+                    .font(.caption)
+                    .monospacedDigit()
+                    .accessibilityIdentifier("upcoming-selection-count")
+            }
+
+            ViewThatFits(in: .horizontal) {
+                if !dynamicTypeSize.isAccessibilitySize {
+                    HStack(spacing: 8) {
+                        TaskSelectionMutationButtons(
+                            selectedCount: selectedCount,
+                            hasActiveSelection: hasActiveSelection,
+                            onComplete: onComplete,
+                            onDelete: onDelete,
+                            onReschedule: onReschedule
+                        )
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    TaskSelectionMutationButtons(
+                        selectedCount: selectedCount,
+                        hasActiveSelection: hasActiveSelection,
+                        onComplete: onComplete,
+                        onDelete: onDelete,
+                        onReschedule: onReschedule
+                    )
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .font(.callout)
+        .disabled(isDisabled)
+    }
+}
+
+private struct TaskSelectionMutationButtons: View {
+    let selectedCount: Int
+    let hasActiveSelection: Bool
+    let onComplete: () -> Void
+    let onDelete: () -> Void
+    let onReschedule: () -> Void
+
+    var body: some View {
+        Group {
+            Button(action: onComplete) {
+                Label("Complete", systemImage: "checkmark.circle")
+                    .frame(minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .disabled(!hasActiveSelection)
+            .accessibilityLabel("Complete active todos in \(selectedCount) selected todos")
+            .accessibilityHint("Includes active subtasks and advances recurring occurrences. Asks for confirmation.")
+            .accessibilityIdentifier("bulk-complete")
+
+            Button(role: .destructive, action: onDelete) {
+                Label("Delete", systemImage: "trash")
+                    .frame(minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .disabled(selectedCount == 0)
+            .accessibilityLabel("Delete \(selectedCount) selected todos")
+            .accessibilityHint("Asks for confirmation before permanently deleting.")
+            .accessibilityIdentifier("bulk-delete")
+
+            Button(action: onReschedule) {
+                Label("Reschedule", systemImage: "calendar.badge.clock")
+                    .frame(minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(OTodoTheme.filledAccent)
+            .disabled(selectedCount == 0)
+            .accessibilityLabel("Reschedule \(selectedCount) selected todos")
+            .accessibilityIdentifier("upcoming-reschedule")
         }
     }
 }
