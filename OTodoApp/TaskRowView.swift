@@ -61,7 +61,7 @@ struct TaskRowView: View {
             .accessibilityHint(
                 isSelected == nil
                     ? "Opens the todo editor; swipe right or touch and hold for task actions"
-                    : "Selects this todo for bulk rescheduling"
+                    : "Selects this todo for batch completion, deletion, or rescheduling"
             )
             .accessibilityIdentifier(rowIdentifier ?? "task-row-\(task.id.rawValue)")
             .accessibilityAddTraits(isSelected == true ? .isSelected : [])
@@ -174,7 +174,7 @@ private struct TaskRowLabel: View {
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(OTodoTheme.secondaryText)
             }
         }
     }

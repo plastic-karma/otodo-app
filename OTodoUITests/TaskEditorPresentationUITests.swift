@@ -17,6 +17,11 @@ final class TaskEditorPresentationUITests: XCTestCase {
             XCTAssertTrue(name.waitForExistence(timeout: 8))
             XCTAssertTrue(notes.isHittable, "Notes must be immediately usable without opening details")
             XCTAssertFalse(app.textFields["task-editor-tags"].isHittable)
+            XCTAssertTrue(app.buttons["task-editor-projects"].isHittable,
+                          "Project assignment must be reachable from compact capture")
+            XCTAssertEqual(app.buttons["task-editor-schedule"].value as? String, "Collapsed")
+            XCTAssertFalse(app.textFields["task-editor-url"].isHittable)
+            XCTAssertFalse(app.textFields["task-editor-subtask-name"].isHittable)
             attachScreenshot(in: app, name: "Focused editor — empty new — \(appearance)")
 
             name.tap()
@@ -86,6 +91,8 @@ final class TaskEditorPresentationUITests: XCTestCase {
             let finish = app.buttons["task-editor-finish"]
             scrollTo(finish, in: app)
             XCTAssertTrue(app.buttons["task-editor-schedule"].isHittable)
+            XCTAssertTrue(app.buttons["task-editor-schedule"].label.contains("Change schedule"),
+                          "Saved todos must promote Change schedule rather than duplicate the new-capture chip")
             XCTAssertTrue(app.buttons["task-editor-archive"].isHittable)
             attachScreenshot(in: app, name: "Edit todo actions — \(appearance)")
             finish.tap()

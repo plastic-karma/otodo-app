@@ -61,7 +61,7 @@ final class TaskEditorNotesUITests: XCTestCase {
         XCTAssertTrue(name.waitForExistence(timeout: 8))
         name.tap()
         name.typeText("First repeated capture")
-        app.buttons["task-editor-save-another"].tap()
+        app.saveAndAddAnotherTodo()
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "task-editor-saved-confirmation")
             .firstMatch.waitForExistence(timeout: 8))
         name.typeText("Second repeated capture")

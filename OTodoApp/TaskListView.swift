@@ -28,6 +28,8 @@ struct TaskListView: View {
     @State private var projectArchivePresentation: ProjectArchivePresentation?
     @State private var projectEditPresentation: ProjectEditPresentation?
     @State private var showsArchivedProjects = false
+    @State private var isSettingsPresented = false
+    @State private var pendingSettingsDestination: SettingsDestination?
     @State private var isChangelogPresented = false
     @State private var isStatsPresented = false
     @State private var isReminderSettingsPresented = false
@@ -57,6 +59,12 @@ struct TaskListView: View {
     @State private var isBulkMutationPresented = false
     @State private var isBulkMutationRunning = false
     @State private var searchText = ""
+    @State private var isSearchPresented = false
+    @FocusState private var isSearchFocused: Bool
+
+    private enum SettingsDestination {
+        case reminders, dailyRhythm, changelog, account
+    }
 
     private struct ProjectArchivePresentation: Identifiable {
         let id: String
@@ -96,9 +104,18 @@ struct TaskListView: View {
 
                     List {
                         Section {
-                            WorkspaceHeader(subtitle: workspaceSubtitle, taskCount: displayedTasks.count)
+                            VStack(alignment: .leading, spacing: 2) {
+                                WorkspaceHeader(subtitle: workspaceSubtitle, taskCount: displayedTasks.count)
+                                if !filterLibrary.starredFilters.isEmpty {
+                                    FavoriteTaskFilters(
+                                        library: filterLibrary,
+                                        selectedFilterID: selectedFilterID,
+                                        onSelect: selectFilter
+                                    )
+                                }
+                            }
                                 .listRowInsets(
-                                    EdgeInsets(top: 8, leading: 20, bottom: 6, trailing: 20)
+                                    EdgeInsets(top: 4, leading: OTodoTheme.Spacing.inset, bottom: 4, trailing: OTodoTheme.Spacing.inset)
                                 )
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(Color.clear)
@@ -135,20 +152,6 @@ struct TaskListView: View {
                             }
                         }
 
-                        if !filterLibrary.starredFilters.isEmpty {
-                            Section {
-                                FavoriteTaskFilters(
-                                    library: filterLibrary,
-                                    selectedFilterID: selectedFilterID,
-                                    onSelect: selectFilter
-                                )
-                                    .listRowInsets(
-                                        EdgeInsets(top: 0, leading: 20, bottom: 8, trailing: 20)
-                                    )
-                                    .listRowSeparator(.hidden)
-                                    .listRowBackground(Color.clear)
-                            }
-                        }
 
                         if let message = filterError ?? filterLibrary.errorMessage {
                             Section {
@@ -200,7 +203,7 @@ struct TaskListView: View {
                                         if section.tasks.isEmpty {
                                             Text("No todos")
                                                 .font(.subheadline)
-                                                .foregroundStyle(.secondary)
+                                                .foregroundStyle(OTodoTheme.secondaryText)
                                                 .listRowBackground(Color.clear)
                                         } else {
                                             ForEach(section.tasks, id: \.id) { task in
@@ -223,12 +226,17 @@ struct TaskListView: View {
                         }
                     }
                     .listStyle(.plain)
-                    .listSectionSpacing(10)
+                    .listSectionSpacing(OTodoTheme.Spacing.small)
                     .scrollContentBackground(.hidden)
                     .contentMargins(.top, 2, for: .scrollContent)
                     .accessibilityIdentifier("task-list")
                     .refreshable {
                         await model.refresh()
+                    }
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        if isSearchPresented {
+                            searchControls
+                        }
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         VStack(spacing: 10) {
@@ -266,8 +274,16 @@ struct TaskListView: View {
                                 .font(.body.weight(.semibold))
                         }
                         .accessibilityLabel("Projects")
-                        .accessibilityHint("Shows Upcoming, Inbox, projects, Daily rhythm, Stats, and changelog")
+                        .accessibilityHint("Shows views, projects, daily reviews, and settings")
                         .accessibilityIdentifier("project-sidebar-toggle")
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Search", systemImage: "magnifyingglass") {
+                            isSearchPresented = true
+                            isSearchFocused = true
+                        }
+                        .labelStyle(.iconOnly)
+                        .accessibilityIdentifier("task-search-open")
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button(isSelecting ? "Cancel" : "Select") {
@@ -291,11 +307,6 @@ struct TaskListView: View {
                         .accessibilityIdentifier("filters-open")
                     }
                 }
-                .searchable(
-                    text: $searchText,
-                    placement: .navigationBarDrawer(displayMode: .always),
-                    prompt: "Search all todos"
-                )
                 .sheet(item: $editorPresentation, onDismiss: presentPendingNotificationRequest) { presentation in
                     if let configuration = model.configuration {
                         TaskEditorView(
@@ -450,6 +461,9 @@ struct TaskListView: View {
                 }
             }
         }
+        .sheet(isPresented: $isSettingsPresented, onDismiss: settingsDismissed) {
+            settingsView
+        }
         .sheet(isPresented: $isChangelogPresented, onDismiss: presentPendingNotificationRequest) {
             ChangelogView()
         }
@@ -491,6 +505,7 @@ struct TaskListView: View {
         }
         .task(id: model.workspaceSelection.map(FileWorkspaceStore.selectionKey(for:))) {
             searchText = ""
+            isSearchPresented = false
             selectedFilterID = "today"
             isUpcoming = false
             showsCalendar = false
@@ -573,6 +588,7 @@ struct TaskListView: View {
     }
 
 
+
     private func selectFilter(_ id: String) {
         clearSelection()
         selectedFilterID = id
@@ -589,6 +605,7 @@ struct TaskListView: View {
         }
         selectedProject = project
     }
+
 
 
 
@@ -675,6 +692,8 @@ struct TaskListView: View {
         clearSelection()
         isProjectEditorPresented = false
         isFilterLibraryPresented = false
+        pendingSettingsDestination = nil
+        isSettingsPresented = false
         isChangelogPresented = false
         isStatsPresented = false
         isBulkEditorPresented = false
@@ -696,6 +715,8 @@ struct TaskListView: View {
               reschedulePresentation == nil,
               !isProjectEditorPresented,
               !isFilterLibraryPresented,
+              !isSettingsPresented,
+              pendingSettingsDestination == nil,
               !isChangelogPresented,
               !isStatsPresented,
               !isReminderSettingsPresented,
@@ -712,6 +733,54 @@ struct TaskListView: View {
         editorPresentation = .edit(task)
     }
 
+
+    private var searchControls: some View {
+        HStack(spacing: OTodoTheme.Spacing.small) {
+            HStack(spacing: OTodoTheme.Spacing.small) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(OTodoTheme.secondaryText)
+                    .accessibilityHidden(true)
+                TextField("Search all todos", text: $searchText)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.search)
+                    .focused($isSearchFocused)
+                    .onSubmit { isSearchFocused = false }
+                    .accessibilityLabel("Search all todos")
+                    .accessibilityIdentifier("task-search-field")
+                    .frame(minHeight: 44)
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                        isSearchFocused = true
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(OTodoTheme.secondaryText)
+                            .frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("Clear search")
+                    .accessibilityIdentifier("task-search-clear")
+                }
+            }
+            .padding(.horizontal, OTodoTheme.Spacing.medium)
+            .background(
+                Color(uiColor: .tertiarySystemFill),
+                in: RoundedRectangle(cornerRadius: OTodoTheme.Radius.control)
+            )
+            Button("Cancel") {
+                isSearchFocused = false
+                searchText = ""
+                isSearchPresented = false
+            }
+            .fixedSize()
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("task-search-cancel")
+        }
+        .padding(.horizontal, OTodoTheme.Spacing.inset)
+        .padding(.vertical, OTodoTheme.Spacing.small)
+        .background(OTodoCanvas())
+        .onAppear { isSearchFocused = true }
+    }
 
     private var workspaceTitle: String {
         if isSearching {
@@ -771,7 +840,7 @@ struct TaskListView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(OTodoTheme.secondaryText)
                 .accessibilityLabel("Close")
                 .accessibilityIdentifier("project-sidebar-close")
             }
@@ -844,7 +913,7 @@ struct TaskListView: View {
                                 Image(systemName: showsArchivedProjects ? "chevron.down" : "chevron.right")
                             }
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(OTodoTheme.secondaryText)
                             .padding(.horizontal, 11)
                             .frame(minHeight: 44)
                             .contentShape(Rectangle())
@@ -873,7 +942,7 @@ struct TaskListView: View {
         .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : 316)
         .frame(maxHeight: .infinity)
         .background(OTodoTheme.card)
-        .shadow(color: .black.opacity(0.12), radius: 16, x: 6)
+        .shadow(color: .black.opacity(0.08), radius: 8, x: 2)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("project-sidebar")
         .accessibilityAction(.escape) {
@@ -969,7 +1038,7 @@ struct TaskListView: View {
                 }
             } label: {
                 Image(systemName: "ellipsis")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(OTodoTheme.secondaryText)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
@@ -982,61 +1051,109 @@ struct TaskListView: View {
     private var sidebarUtilities: some View {
         VStack(spacing: 0) {
             Divider()
-
-            TaskListReminderControl(notifications: notifications) {
-                dismissProjectSidebar()
-                isReminderSettingsPresented = true
-            }
-
-            Divider()
-                .padding(.horizontal, 16)
-            dailyReviewControl
-
-            Divider()
-                .padding(.horizontal, 16)
-
-            Button {
-                dismissProjectSidebar()
-                isChangelogPresented = true
-            } label: {
-                Label("Changelog", systemImage: "clock.arrow.circlepath")
-                    .font(.subheadline)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.primary)
-            .accessibilityIdentifier("changelog-open")
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
-
-            Divider()
-                .padding(.horizontal, 16)
-
-            Button {
-                dismissProjectSidebar()
-                Task { @MainActor in
-                    await model.signOut()
+            Menu {
+                ForEach(DailyReviewKind.allCases) { kind in
+                    Button(kind.startTitle, systemImage: kind.icon) {
+                        dismissProjectSidebar()
+                        dailyReviewPresentation = kind
+                    }
+                    .accessibilityIdentifier("sidebar-review-\(kind.rawValue)")
                 }
+                Divider()
+                Button("Daily rhythm settings", systemImage: "slider.horizontal.3") {
+                    dismissProjectSidebar()
+                    isDailyReviewSettingsPresented = true
+                }
+                .accessibilityIdentifier("daily-review-settings-open")
             } label: {
-                Label(model.isLocalOnly ? "Choose storage" : "Sign out", systemImage: "rectangle.portrait.and.arrow.right")
-                    .font(.subheadline)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Label("Daily review", systemImage: "sunrise")
+                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.primary)
-            .disabled(model.isBusy)
-            .accessibilityIdentifier("sign-out")
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
+            .accessibilityIdentifier("sidebar-daily-review")
+            .disabled(model.configuration == nil)
+
+            Button {
+                dismissProjectSidebar()
+                isSettingsPresented = true
+            } label: {
+                Label("Settings", systemImage: "gearshape")
+                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityIdentifier("settings-open")
+        }
+        .font(.subheadline)
+        .buttonStyle(.plain)
+        .foregroundStyle(.primary)
+        .padding(.horizontal, OTodoTheme.Spacing.section)
+        .padding(.vertical, OTodoTheme.Spacing.small)
+    }
+
+    private var settingsView: some View {
+        NavigationStack {
+            Form {
+                Section("Preferences") {
+                    TaskListReminderControl(notifications: notifications) {
+                        openSettingsDestination(.reminders)
+                    }
+                    dailyReviewControl
+                }
+                Section("About") {
+                    Button {
+                        openSettingsDestination(.changelog)
+                    } label: {
+                        Label("Changelog", systemImage: "clock.arrow.circlepath")
+                            .frame(minHeight: 44)
+                    }
+                    .accessibilityIdentifier("changelog-open")
+                }
+                Section("Account") {
+                    Button {
+                        openSettingsDestination(.account)
+                    } label: {
+                        Label(model.isLocalOnly ? "Choose storage" : "Sign out",
+                              systemImage: "rectangle.portrait.and.arrow.right")
+                            .frame(minHeight: 44)
+                    }
+                    .disabled(model.isBusy)
+                    .accessibilityIdentifier("sign-out")
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(OTodoTheme.formCanvas)
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .accessibilityIdentifier("workspace-settings")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { isSettingsPresented = false }
+                }
+            }
+        }
+    }
+
+    private func openSettingsDestination(_ destination: SettingsDestination) {
+        pendingSettingsDestination = destination
+        isSettingsPresented = false
+    }
+
+    private func settingsDismissed() {
+        let destination = pendingSettingsDestination
+        pendingSettingsDestination = nil
+        switch destination {
+        case .reminders: isReminderSettingsPresented = true
+        case .dailyRhythm: isDailyReviewSettingsPresented = true
+        case .changelog: isChangelogPresented = true
+        case .account:
+            Task { @MainActor in await model.signOut() }
+        case nil: presentPendingNotificationRequest()
         }
     }
 
     private var dailyReviewControl: some View {
         Button {
-            dismissProjectSidebar()
-            isDailyReviewSettingsPresented = true
+            openSettingsDestination(.dailyRhythm)
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "sunrise")
@@ -1052,17 +1169,17 @@ struct TaskListView: View {
                         .foregroundStyle(.primary)
                     Text(dailyReviewDetail)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(OTodoTheme.secondaryText)
                 }
 
                 Spacer(minLength: 8)
 
                 Image(systemName: "chevron.right")
                     .font(.caption.bold())
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(OTodoTheme.secondaryText)
             }
-            .padding(.horizontal, 25)
-            .padding(.vertical, 12)
+            .padding(.vertical, 4)
+            .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1080,6 +1197,7 @@ struct TaskListView: View {
         case (false, false): "Off"
         }
     }
+
 
 
 
@@ -1102,7 +1220,7 @@ struct TaskListView: View {
                 Text("\(count)")
                     .font(.caption)
                     .monospacedDigit()
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(OTodoTheme.secondaryText)
                     .accessibilityIdentifier("inbox-open-count")
                 if !dynamicTypeSize.isAccessibilitySize {
                     Spacer()
@@ -1153,12 +1271,12 @@ struct TaskListView: View {
                     Text("\(count)")
                         .font(.caption)
                         .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(OTodoTheme.secondaryText)
                         .accessibilityIdentifier(project.map { "project-open-count-\($0)" } ?? "project-open-count")
                     if dynamicTypeSize.isAccessibilitySize {
                         Text("open")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(OTodoTheme.secondaryText)
                     }
                     if project == nil, !dynamicTypeSize.isAccessibilitySize {
                         Spacer()
@@ -1245,7 +1363,7 @@ struct TaskListView: View {
                 .tint(OTodoTheme.accent)
             Text("Gathering your todos…")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(OTodoTheme.secondaryText)
         }
         .padding(24)
         .frame(maxWidth: .infinity)
@@ -1270,7 +1388,7 @@ struct TaskListView: View {
 
                 Text("Try a different name, note, project, tag, link, or full ID.")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(OTodoTheme.secondaryText)
                     .multilineTextAlignment(.center)
             }
             .padding(28)
@@ -1290,7 +1408,7 @@ struct TaskListView: View {
 
                 Text(emptyDescription)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(OTodoTheme.secondaryText)
                     .multilineTextAlignment(.center)
 
                 if model.configuration != nil {
@@ -1365,7 +1483,7 @@ struct TaskListView: View {
             } else if scopedTasks.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(selectedCalendarDate == nil ? "No undated todos in this scope." : "No active todos on this date.")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(OTodoTheme.secondaryText)
                     Button("Add a Todo", systemImage: "plus") { presentNewTodo() }
                         .disabled(model.isBusy || model.configuration == nil)
                 }
@@ -1628,19 +1746,19 @@ struct TaskListView: View {
                         .foregroundStyle(section.group == .overdue ? Color.red : Color.primary)
                     Text("\(section.tasks.count)")
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(OTodoTheme.secondaryText)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
                         .background(Color.secondary.opacity(0.08), in: Capsule())
                     Spacer(minLength: 0)
                     Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(OTodoTheme.secondaryText)
                         .accessibilityHidden(true)
                 }
                 Text(agendaBoundary(for: section.group))
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(OTodoTheme.secondaryText)
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .contentShape(Rectangle())
@@ -1795,18 +1913,14 @@ private struct WorkspaceHeader: View {
             : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 12))
         layout {
             Text(subtitle)
-                .font(.headline.weight(.regular))
-                .fontDesign(.default)
-                .foregroundStyle(.secondary)
+                .font(.subheadline)
+                .foregroundStyle(OTodoTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text("\(taskCount) \(taskCount == 1 ? "todo" : "todos")")
-                .font(.caption.weight(.semibold).monospacedDigit())
-                .foregroundStyle(OTodoTheme.accent)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(OTodoTheme.formCanvas, in: Capsule())
+            Text(taskCount == 1 ? "\(taskCount) todo" : "\(taskCount) todos")
+                .font(.caption.weight(.medium).monospacedDigit())
+                .foregroundStyle(OTodoTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1830,21 +1944,9 @@ private struct FavoriteTaskFilters: View {
                             onSelect(filter.id)
                         } label: {
                             Text(filter.name)
-                                .font(.subheadline.weight(
-                                    selectedFilterID == filter.id ? .semibold : .regular
-                                ))
-                                .foregroundStyle(
-                                    selectedFilterID == filter.id ? OTodoTheme.accent : Color.primary
-                                )
-                                .padding(.horizontal, 14)
-                                .frame(minHeight: 44)
-                                .background(
-                                    selectedFilterID == filter.id
-                                        ? OTodoTheme.accent.opacity(0.10) : Color(uiColor: .tertiarySystemFill),
-                                    in: Capsule()
-                                )
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(OTodoChipStyle(isSelected: selectedFilterID == filter.id))
                         .id(filter.id)
                         .accessibilityIdentifier("task-filter-\(filter.id)")
                         .accessibilityAddTraits(selectedFilterID == filter.id ? .isSelected : [])
@@ -1907,7 +2009,7 @@ private struct TaskListReminderControl: View {
                         .foregroundStyle(
                             notifications.errorMessage == nil ? Color.secondary : Color.red
                         )
-                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 8)
@@ -1921,11 +2023,11 @@ private struct TaskListReminderControl: View {
                 } else {
                     Image(systemName: "chevron.right")
                         .font(.caption.bold())
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(OTodoTheme.secondaryText)
                 }
             }
-            .padding(.horizontal, 25)
-            .padding(.vertical, 12)
+            .padding(.vertical, 4)
+            .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

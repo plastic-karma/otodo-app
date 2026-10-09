@@ -26,12 +26,11 @@ struct SyncStatusView: View {
                         compactText
                             .font(.caption.weight(.semibold))
                             .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 0)
                         Image(systemName: isShowingDetails ? "chevron.up" : "chevron.down")
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(OTodoTheme.secondaryText)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .frame(minHeight: 44, alignment: .leading)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -47,7 +46,9 @@ struct SyncStatusView: View {
                 )
                 .accessibilityIdentifier("sync-details-toggle")
 
-                SyncRefreshButton(model: model)
+                if isShowingDetails || isEmphasized {
+                    SyncRefreshButton(model: model)
+                }
             }
 
             if isShowingDetails {
@@ -64,9 +65,12 @@ struct SyncStatusView: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
-        .background(OTodoTheme.formCanvas, in: RoundedRectangle(cornerRadius: 16))
+        .padding(.horizontal, isShowingDetails || isEmphasized ? OTodoTheme.Spacing.medium : 0)
+        .padding(.vertical, isShowingDetails || isEmphasized ? 4 : 0)
+        .background(
+            isShowingDetails || isEmphasized ? OTodoTheme.formCanvas : Color.clear,
+            in: RoundedRectangle(cornerRadius: OTodoTheme.Radius.control)
+        )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("sync-status")
         .sheet(isPresented: $isReviewingConflicts) {
@@ -81,8 +85,8 @@ struct SyncStatusView: View {
         VStack(alignment: .leading, spacing: 8) {
             if let detailText {
                 detailText
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.footnote)
+                    .foregroundStyle(OTodoTheme.secondaryText)
             }
 
             relationshipReviewButton
@@ -103,7 +107,7 @@ struct SyncStatusView: View {
 
             if !model.attachmentRefreshErrors.isEmpty {
                 Text("\(model.attachmentRefreshErrors.count) offline attachment updates failed. Older cached files remain available.")
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundStyle(OTodoTheme.coral)
                     .accessibilityIdentifier("attachment-refresh-status")
             }
@@ -116,6 +120,11 @@ struct SyncStatusView: View {
     private var compactText: Text {
         if requiresAttention { return Text("Needs attention") }
         if model.isLocalOnly { return primaryText }
+        if model.pendingChangeCount > 0 {
+            return model.isOnline
+                ? Text("\(model.pendingChangeCount) pending")
+                : Text("\(model.pendingChangeCount) saved · Offline")
+        }
         if !model.isOnline { return Text("Offline") }
         return primaryText
     }
@@ -142,9 +151,15 @@ struct SyncStatusView: View {
 
     private var requiresAttention: Bool {
         !model.conflicts.isEmpty || hasRelationshipIssues || !model.attachmentRefreshErrors.isEmpty
+            || model.errorMessage?.isEmpty == false
+    }
+
+    private var isEmphasized: Bool {
+        requiresAttention || model.pendingChangeCount > 0 || model.isBusy || model.isSyncing
     }
 
     private var detailText: Text? {
+        if let error = model.errorMessage, !error.isEmpty { return Text(error) }
         if !model.relationshipBlocks.isEmpty {
             return Text("\(model.relationshipBlocks.count) relationship changes withheld; saved locally")
         }
@@ -169,6 +184,7 @@ struct SyncStatusView: View {
     }
 
     private var primaryText: Text {
+        if model.errorMessage?.isEmpty == false { return Text("Sync needs attention") }
         if hasRelationshipIssues {
             return Text("Relationships need attention")
         }
@@ -193,7 +209,7 @@ struct SyncStatusView: View {
         if model.pendingChangeCount > 0 {
             return Text("Waiting to sync")
         }
-        return Text("Up to date")
+        return Text("Synced")
     }
 
     private var primarySymbol: String {
@@ -212,18 +228,18 @@ struct SyncStatusView: View {
         if model.pendingChangeCount > 0 {
             return "clock.arrow.circlepath"
         }
-        return "checkmark.circle"
+        return "checkmark.icloud"
     }
 
     private var primaryColor: Color {
         if requiresAttention {
-            return .orange
+            return OTodoTheme.warmForeground
         }
         if model.isBusy || model.isSyncing {
             return OTodoTheme.accent
         }
         if model.isLocalOnly {
-            return OTodoTheme.mint
+            return OTodoTheme.secondaryText
         }
         if !model.isOnline {
             return .primary
@@ -231,7 +247,7 @@ struct SyncStatusView: View {
         if model.pendingChangeCount > 0 {
             return OTodoTheme.accent
         }
-        return OTodoTheme.mint
+        return OTodoTheme.secondaryText
     }
 
 }
