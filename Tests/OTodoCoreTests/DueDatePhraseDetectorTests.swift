@@ -50,6 +50,43 @@ final class DueDatePhraseDetectorTests: XCTestCase {
         }
     }
 
+    func testTomUsesNextLocalCalendarDayAndPreservesClockAndHighlight() throws {
+        var localCalendar = calendar
+        localCalendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        let nearMidnight = ISO8601DateFormatter().date(from: "2027-01-01T07:30:00Z")!
+        let input = "Call mum ToM. at 9am"
+        let detection = try XCTUnwrap(DueDatePhraseDetector.detect(
+            in: input, from: nearMidnight, calendar: localCalendar
+        ))
+        XCTAssertEqual(detection.dueDate.rawValue, "2027-01-01")
+        XCTAssertEqual(detection.dueTime?.rawValue, "09:00")
+        XCTAssertTrue(detection.hasExplicitDate)
+        XCTAssertEqual(detection.nameWithoutPhrase, "Call mum")
+        XCTAssertEqual(detection.utf16Ranges.map { (input as NSString).substring(with: $0) }, ["ToM", "at 9am"])
+    }
+
+    func testTomInNotesPreservesLayoutAndLastDatePrecedence() throws {
+        let input = "Agenda:\n- Call today tom\n- Keep notes"
+        let detection = try XCTUnwrap(DueDatePhraseDetector.detect(
+            in: input, from: referenceDate, calendar: calendar
+        ))
+        XCTAssertEqual(detection.dueDate.rawValue, "2026-09-05")
+        XCTAssertEqual(detection.textWithoutPhrasePreservingLayout, "Agenda:\n- Call today\n- Keep notes")
+        let overridden = try XCTUnwrap(DueDatePhraseDetector.detect(
+            in: "Call tom today", from: referenceDate, calendar: calendar
+        ))
+        XCTAssertEqual(overridden.dueDate.rawValue, "2026-09-04")
+        XCTAssertEqual(overridden.nameWithoutPhrase, "Call tom")
+    }
+
+    func testTomDoesNotMatchEmbeddedWordsOrAddresses() throws {
+        for input in ["Tommy calls", "atomic", "tom2", "étomé", "https://example.com/tom", "tom@example.com", "@tom", "/tom"] {
+            XCTAssertNil(try DueDatePhraseDetector.detect(
+                in: input, from: referenceDate, calendar: calendar
+            ), input)
+        }
+    }
+
     func testDetectsEveryWeekdayAsItsNextOccurrence() throws {
         let cases = [
             (["Sunday", "Sun"], "2026-09-06"),

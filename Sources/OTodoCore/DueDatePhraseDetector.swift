@@ -32,7 +32,7 @@ public enum DueDatePhraseDetector {
             guard !addressRanges.contains(where: { $0.overlaps(words[index].range) }) else { continue }
             if word == "today" || word == "tod" {
                 dateCandidate = DateCandidate(range: words[index].range, meaning: .days(0))
-            } else if word == "tomorrow" {
+            } else if word == "tomorrow" || word == "tom" {
                 dateCandidate = DateCandidate(range: words[index].range, meaning: .days(1))
             } else if let month = monthNumber(for: word),
                       words.indices.contains(index + 1) {
