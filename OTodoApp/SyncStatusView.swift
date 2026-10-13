@@ -14,7 +14,10 @@ struct SyncStatusView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 4) {
+            let layout = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                : AnyLayout(HStackLayout(spacing: 4))
+            layout {
                 Button {
                     withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
                         isShowingDetails.toggle()
@@ -23,7 +26,7 @@ struct SyncStatusView: View {
                     HStack(spacing: 8) {
                         Image(systemName: primarySymbol)
                             .font(.subheadline.weight(.semibold))
-                        compactText
+                        primaryText
                             .font(.caption.weight(.semibold))
                             .fixedSize(horizontal: false, vertical: true)
                         Image(systemName: isShowingDetails ? "chevron.up" : "chevron.down")
@@ -36,7 +39,7 @@ struct SyncStatusView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(primaryColor)
                 .accessibilityLabel(primaryText)
-                .accessibilityValue(detailText ?? Text(""))
+                .accessibilityValue(isShowingDetails ? Text("Expanded") : Text("Collapsed"))
                 .accessibilityHint(
                     isShowingDetails
                         ? "Hides workspace details"
@@ -89,6 +92,17 @@ struct SyncStatusView: View {
                     .foregroundStyle(OTodoTheme.secondaryText)
             }
 
+            if let error = model.syncErrorMessage, !error.isEmpty {
+                Text("Technical details")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(OTodoTheme.secondaryText)
+                Text(error)
+                    .font(.footnote)
+                    .foregroundStyle(OTodoTheme.secondaryText)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("sync-error-details")
+            }
+
             relationshipReviewButton
 
             if !model.conflicts.isEmpty {
@@ -117,18 +131,6 @@ struct SyncStatusView: View {
     }
 
 
-    private var compactText: Text {
-        if requiresAttention { return Text("Needs attention") }
-        if model.isLocalOnly { return primaryText }
-        if model.pendingChangeCount > 0 {
-            return model.isOnline
-                ? Text("\(model.pendingChangeCount) pending")
-                : Text("\(model.pendingChangeCount) saved · Offline")
-        }
-        if !model.isOnline { return Text("Offline") }
-        return primaryText
-    }
-
     private var relationshipReviewButton: some View {
         Button {
             isReviewingRelationships = true
@@ -151,7 +153,7 @@ struct SyncStatusView: View {
 
     private var requiresAttention: Bool {
         !model.conflicts.isEmpty || hasRelationshipIssues || !model.attachmentRefreshErrors.isEmpty
-            || model.errorMessage?.isEmpty == false
+            || model.syncErrorMessage?.isEmpty == false
     }
 
     private var isEmphasized: Bool {
@@ -159,9 +161,8 @@ struct SyncStatusView: View {
     }
 
     private var detailText: Text? {
-        if let error = model.errorMessage, !error.isEmpty { return Text(error) }
         if !model.relationshipBlocks.isEmpty {
-            return Text("\(model.relationshipBlocks.count) relationship changes withheld; saved locally")
+            return Text("\(model.relationshipBlocks.count) relationship changes withheld from sync")
         }
         if !model.hierarchy.issues.isEmpty {
             return Text("\(model.hierarchy.issues.count) workspace relationship issues")
@@ -184,32 +185,36 @@ struct SyncStatusView: View {
     }
 
     private var primaryText: Text {
-        if model.errorMessage?.isEmpty == false { return Text("Sync needs attention") }
-        if hasRelationshipIssues {
-            return Text("Relationships need attention")
-        }
-        if !model.conflicts.isEmpty {
-            return Text("Sync needs attention")
-        }
-        if !model.attachmentRefreshErrors.isEmpty {
-            return Text("Attachment updates need attention")
-        }
         if model.isBusy {
             return Text("Saving")
         }
         if model.isSyncing {
             return Text("Syncing")
         }
+        if model.syncErrorMessage?.isEmpty == false {
+            return Text("Couldn’t sync with GitHub")
+        }
+        if hasRelationshipIssues {
+            return Text("Relationships need attention")
+        }
+        if !model.conflicts.isEmpty {
+            return Text("Conflicts need attention")
+        }
+        if !model.attachmentRefreshErrors.isEmpty {
+            return Text("Attachment updates need attention")
+        }
         if model.isLocalOnly {
             return Text("On this device")
         }
         if !model.isOnline {
-            return Text("Saved on this device")
+            return model.pendingChangeCount > 0
+                ? Text("\(model.pendingChangeCount) pending · Offline")
+                : Text("Offline")
         }
         if model.pendingChangeCount > 0 {
-            return Text("Waiting to sync")
+            return Text("\(model.pendingChangeCount) pending")
         }
-        return Text("Synced")
+        return model.hasSyncedWorkspace ? Text("Synced") : Text("Ready to sync")
     }
 
     private var primarySymbol: String {
@@ -228,7 +233,7 @@ struct SyncStatusView: View {
         if model.pendingChangeCount > 0 {
             return "clock.arrow.circlepath"
         }
-        return "checkmark.icloud"
+        return model.hasSyncedWorkspace ? "checkmark.icloud" : "icloud"
     }
 
     private var primaryColor: Color {
@@ -277,7 +282,9 @@ private struct SyncRefreshButton: View {
             .accessibilityLabel(
                 model.isLocalOnly
                     ? "Refresh local workspace"
-                    : model.isOnline ? "Sync now" : "Sync unavailable while offline"
+                    : !model.isOnline
+                        ? "Sync unavailable while offline"
+                        : model.syncErrorMessage?.isEmpty == false ? "Retry sync" : "Sync now"
             )
             .accessibilityIdentifier("sync-refresh")
         }

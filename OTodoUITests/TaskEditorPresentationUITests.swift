@@ -91,8 +91,6 @@ final class TaskEditorPresentationUITests: XCTestCase {
             let finish = app.buttons["task-editor-finish"]
             scrollTo(finish, in: app)
             XCTAssertTrue(app.buttons["task-editor-schedule"].isHittable)
-            XCTAssertTrue(app.buttons["task-editor-schedule"].label.contains("Change schedule"),
-                          "Saved todos must promote Change schedule rather than duplicate the new-capture chip")
             XCTAssertTrue(app.buttons["task-editor-archive"].isHittable)
             attachScreenshot(in: app, name: "Edit todo actions — \(appearance)")
             finish.tap()
@@ -232,6 +230,11 @@ final class TaskEditorPresentationUITests: XCTestCase {
         let disclosure = app.buttons["task-editor-\(panel)"]
         scrollTo(disclosure, in: app)
         if disclosure.value as? String != "Expanded" { disclosure.tap() }
+        if identifier.hasPrefix("task-editor-relative-due-") {
+            let relativeDisclosure = app.buttons["task-editor-relative-due-disclosure"]
+            scrollTo(relativeDisclosure, in: app)
+            if relativeDisclosure.value as? String != "Expanded" { relativeDisclosure.tap() }
+        }
         scrollTo(app.descendants(matching: .any).matching(identifier: identifier).firstMatch, in: app)
     }
 

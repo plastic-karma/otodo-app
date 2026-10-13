@@ -10,22 +10,8 @@ enum DailyReviewKind: String, CaseIterable, Identifiable {
 
     var title: LocalizedStringKey {
         switch self {
-        case .kickstart: "Kickstart"
-        case .wrapUp: "Wrap-up"
-        }
-    }
-
-    var promptTitle: LocalizedStringKey {
-        switch self {
-        case .kickstart: "Start with intention"
-        case .wrapUp: "Close the day clearly"
-        }
-    }
-
-    var introTitle: LocalizedStringKey {
-        switch self {
-        case .kickstart: "Today, clearly."
-        case .wrapUp: "Close the loop."
+        case .kickstart: "Morning review"
+        case .wrapUp: "Evening review"
         }
     }
 
@@ -36,24 +22,17 @@ enum DailyReviewKind: String, CaseIterable, Identifiable {
         }
     }
 
-    var readyTitle: LocalizedStringKey {
-        switch self {
-        case .kickstart: "Kickstart ready"
-        case .wrapUp: "Wrap-up ready"
-        }
-    }
-
     var startTitle: LocalizedStringKey {
         switch self {
-        case .kickstart: "Start Kickstart now"
-        case .wrapUp: "Start Wrap-up now"
+        case .kickstart: "Start morning review"
+        case .wrapUp: "Start evening review"
         }
     }
 
     var finishTitle: LocalizedStringKey {
         switch self {
-        case .kickstart: "Finish Kickstart"
-        case .wrapUp: "Finish Wrap-up"
+        case .kickstart: "Finish morning review"
+        case .wrapUp: "Finish evening review"
         }
     }
 
@@ -95,11 +74,13 @@ enum DailyReviewPreferences {
     static let wrapUpTimeKey = "daily-review.wrap-up-minutes"
     static let kickstartCompletedKey = "daily-review.kickstart-completed-date"
     static let wrapUpCompletedKey = "daily-review.wrap-up-completed-date"
+    // Acknowledging the shared introduction is separate from finishing either review.
+    static let introductionAcknowledgedKey = "daily-review.introduction-acknowledged"
 
     static func reset(_ defaults: UserDefaults = .standard) {
         for key in [
             kickstartEnabledKey, wrapUpEnabledKey, kickstartTimeKey, wrapUpTimeKey,
-            kickstartCompletedKey, wrapUpCompletedKey,
+            kickstartCompletedKey, wrapUpCompletedKey, introductionAcknowledgedKey,
         ] {
             defaults.removeObject(forKey: key)
         }
@@ -144,53 +125,53 @@ enum DailyReviewPreferences {
 }
 
 struct DailyReviewPromptCard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let kind: DailyReviewKind
     let taskCount: Int
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 16) {
+            HStack(spacing: OTodoTheme.Spacing.small) {
                 Image(systemName: kind.icon)
-                    .font(.title2.weight(.semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(kind == .kickstart ? OTodoTheme.warmForeground : OTodoTheme.accent)
-                    .frame(width: 48, height: 48)
-                    .background(kind.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: OTodoTheme.Radius.control))
+                    .accessibilityHidden(true)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(kind.promptTitle)
-                        .font(.headline)
+                let labelLayout = dynamicTypeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                    : AnyLayout(HStackLayout(spacing: OTodoTheme.Spacing.small))
+                labelLayout {
+                    Text("Daily review")
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
-                    Text(promptDetail)
+                    Text(taskCount == 1 ? "1 task" : "\(taskCount) tasks")
                         .font(.subheadline)
                         .foregroundStyle(OTodoTheme.secondaryText)
-                        .multilineTextAlignment(.leading)
                 }
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.leading)
 
-                Spacer(minLength: 4)
-
-                Image(systemName: "arrow.right.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(kind.tint)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(OTodoTheme.secondaryText)
+                    .accessibilityHidden(true)
             }
-            .padding(16)
-            .background(OTodoTheme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .frame(minHeight: 44)
+            .padding(.horizontal, OTodoTheme.Spacing.inset)
+            .padding(.vertical, 4)
+            .background(OTodoTheme.card, in: RoundedRectangle(cornerRadius: OTodoTheme.Radius.control))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(kind.readyTitle)
-        .accessibilityValue(taskCount == 1 ? "One todo" : "\(taskCount) todos")
+        .accessibilityLabel("Daily review")
+        .accessibilityValue(taskCount == 1 ? "1 task" : "\(taskCount) tasks")
         .accessibilityHint("Starts the daily review")
         .accessibilityIdentifier("daily-review-prompt-\(kind.rawValue)")
     }
 
-    private var promptDetail: LocalizedStringKey {
-        switch taskCount {
-        case 0: "Your due list is clear."
-        case 1: "One todo is ready for a decision."
-        default: "\(taskCount) todos are ready for a decision."
-        }
-    }
 }
 
 struct DailyReviewSettingsView: View {
@@ -213,7 +194,7 @@ struct DailyReviewSettingsView: View {
                         }
                         Text("A calm beginning. A clean ending.")
                             .font(.title2.bold())
-                        Text("OTodo surfaces each enabled check-in on Today after its chosen time. Open Daily rhythm anytime to start one manually.")
+                        Text("OTodo surfaces each enabled review on Today after its chosen time. Open Daily review anytime to start one manually.")
                             .font(.subheadline)
                             .foregroundStyle(OTodoTheme.secondaryText)
                     }
@@ -236,7 +217,7 @@ struct DailyReviewSettingsView: View {
             }
             .scrollContentBackground(.hidden)
             .background(OTodoTheme.formCanvas.ignoresSafeArea())
-            .navigationTitle("Daily rhythm")
+            .navigationTitle("Daily review")
             .navigationBarTitleDisplayMode(.inline)
             .accessibilityIdentifier("daily-review-settings")
             .toolbar {
@@ -296,6 +277,63 @@ struct DailyReviewSettingsView: View {
     }
 }
 
+private struct DailyReviewIntroduction: View {
+    let kind: DailyReviewKind
+    let taskCount: Int
+    let completedToday: Int
+    let isHelp: Bool
+    let onContinue: () -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: OTodoTheme.Spacing.section) {
+                Image(systemName: kind.icon)
+                    .font(.title.weight(.medium))
+                    .foregroundStyle(kind == .kickstart ? OTodoTheme.warmForeground : OTodoTheme.accent)
+                    .frame(width: 52, height: 52)
+                    .background(kind.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: OTodoTheme.Radius.control))
+                    .accessibilityHidden(true)
+
+                Text(kind.title)
+                    .font(.title.bold())
+                    .foregroundStyle(.primary)
+                Text(summary)
+                    .font(.body)
+                    .foregroundStyle(OTodoTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button(continueTitle, action: onContinue)
+                    .buttonStyle(OTodoPrimaryButtonStyle())
+                    .accessibilityIdentifier(isHelp ? "daily-review-help-return" : "daily-review-begin")
+            }
+            .padding(OTodoTheme.Spacing.section)
+            .frame(maxWidth: 560, alignment: .leading)
+            .background(kind.tint.opacity(0.07), in: RoundedRectangle(cornerRadius: OTodoTheme.Radius.card))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("daily-review-summary-opening")
+            .padding(OTodoTheme.Spacing.inset)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    private var continueTitle: LocalizedStringKey {
+        if isHelp { return "Return to review" }
+        return taskCount == 0 ? "See summary" : "Start review"
+    }
+
+    private var summary: LocalizedStringKey {
+        guard taskCount > 0 else {
+            return completedToday > 0
+                ? "Your due list is clear. \(completedToday) completed today."
+                : "Your due list is clear. Take a moment to plan what comes next."
+        }
+        return taskCount == 1
+            ? "One task to review. Keep for today leaves its schedule unchanged, including an overdue date. You can also reschedule it or mark it done."
+            : "\(taskCount) tasks to review. Keep for today leaves each schedule unchanged, including overdue dates. You can also reschedule or mark each task done."
+    }
+}
+
 struct DailyReviewView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.locale) private var locale
@@ -321,7 +359,9 @@ struct DailyReviewView: View {
     private let onFinish: () -> Void
 
     @State private var sessionTasks: [SessionTask]
-    @State private var page = 0
+    @State private var showsIntroduction: Bool
+    @State private var showsHelp = false
+    @State private var page = 1
     @State private var completedCount = 0
     @State private var rescheduledCount = 0
     @State private var affirmedCount = 0
@@ -343,6 +383,11 @@ struct DailyReviewView: View {
         self.onComplete = onComplete
         self.onReschedule = onReschedule
         self.onFinish = onFinish
+        _showsIntroduction = State(
+            initialValue: !UserDefaults.standard.bool(
+                forKey: DailyReviewPreferences.introductionAcknowledgedKey
+            )
+        )
         let today = TaskSchedule.civilDate(from: .now)
         let terminalStates = Set(states.lazy.filter(\.isTerminal).map(\.id))
         let reviewTasks = tasks.filter { task in
@@ -369,18 +414,30 @@ struct DailyReviewView: View {
         NavigationStack {
             ZStack {
                 OTodoCanvas()
-                TabView(selection: $page) {
-                    summaryCard(isClosing: false)
-                        .tag(0)
-                    ForEach(sessionTasks) { entry in
-                        taskCard(entry.task, position: entry.position)
-                            .tag(entry.position)
+                if showsIntroduction {
+                    DailyReviewIntroduction(
+                        kind: kind,
+                        taskCount: sessionTasks.count,
+                        completedToday: completedTodayAtStart,
+                        isHelp: false
+                    ) {
+                        UserDefaults.standard.set(
+                            true, forKey: DailyReviewPreferences.introductionAcknowledgedKey
+                        )
+                        showsIntroduction = false
                     }
-                    summaryCard(isClosing: true)
-                        .tag(sessionTasks.count + 1)
+                } else {
+                    TabView(selection: $page) {
+                        ForEach(sessionTasks) { entry in
+                            taskCard(entry.task, position: entry.position)
+                                .tag(entry.position)
+                        }
+                        closingCard
+                            .tag(sessionTasks.count + 1)
+                    }
+                    .tabViewStyle(.page(indexDisplayMode: .never))
+                    .padding(.vertical, 8)
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                .padding(.vertical, 8)
             }
             .navigationTitle(kind.title)
             .navigationBarTitleDisplayMode(.inline)
@@ -389,7 +446,39 @@ struct DailyReviewView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                         .disabled(isActing)
+                        .accessibilityIdentifier("daily-review-close")
                 }
+                if !showsIntroduction {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Review help", systemImage: "questionmark.circle") {
+                            showsHelp = true
+                        }
+                        .disabled(isActing)
+                        .accessibilityIdentifier("daily-review-help")
+                    }
+                }
+            }
+            .sheet(isPresented: $showsHelp) {
+                NavigationStack {
+                    DailyReviewIntroduction(
+                        kind: kind,
+                        taskCount: sessionTasks.count,
+                        completedToday: completedTodayAtStart,
+                        isHelp: true
+                    ) {
+                        showsHelp = false
+                    }
+                    .background(OTodoTheme.formCanvas.ignoresSafeArea())
+                    .navigationTitle("Daily review")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showsHelp = false }
+                                .accessibilityIdentifier("daily-review-help-close")
+                        }
+                    }
+                }
+                .presentationDetents([.large])
             }
             .sheet(item: $reschedulePresentation) { presentation in
                 TaskRescheduleView(tasks: [presentation.task]) { date, time in
@@ -409,42 +498,34 @@ struct DailyReviewView: View {
         kind == .kickstart ? OTodoTheme.warmForeground : OTodoTheme.accent
     }
 
-    private func summaryCard(isClosing: Bool) -> some View {
+    private var closingCard: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: OTodoTheme.Spacing.section) {
-                Image(systemName: isClosing ? "checkmark.seal" : kind.icon)
+                Image(systemName: "checkmark.seal")
                     .font(.title.weight(.medium))
                     .foregroundStyle(reviewForeground)
                     .frame(width: 52, height: 52)
                     .background(kind.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: OTodoTheme.Radius.control))
                     .accessibilityHidden(true)
 
-                Text(isClosing ? kind.closingTitle : kind.introTitle)
+                Text(kind.closingTitle)
                     .font(.title.bold())
                     .foregroundStyle(.primary)
 
-                Text(isClosing ? closingSummary : openingSummary)
+                Text(closingSummary)
                     .font(.body)
                     .foregroundStyle(OTodoTheme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
 
-                if isClosing {
-                    Button(kind.finishTitle) { onFinish() }
-                        .buttonStyle(OTodoPrimaryButtonStyle())
-                        .accessibilityIdentifier("daily-review-finish")
-                } else {
-                    Button(sessionTasks.isEmpty ? "See summary" : "Start review") {
-                        advance()
-                    }
+                Button(kind.finishTitle) { onFinish() }
                     .buttonStyle(OTodoPrimaryButtonStyle())
-                    .accessibilityIdentifier("daily-review-begin")
-                }
+                    .accessibilityIdentifier("daily-review-finish")
             }
             .padding(OTodoTheme.Spacing.section)
             .frame(maxWidth: 560, alignment: .leading)
             .background(kind.tint.opacity(0.07), in: RoundedRectangle(cornerRadius: OTodoTheme.Radius.card))
             .accessibilityElement(children: .contain)
-            .accessibilityIdentifier(isClosing ? "daily-review-summary-closing" : "daily-review-summary-opening")
+            .accessibilityIdentifier("daily-review-summary-closing")
             .padding(OTodoTheme.Spacing.inset)
             .frame(maxWidth: .infinity)
         }
@@ -474,8 +555,14 @@ struct DailyReviewView: View {
                     .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                if !task.projectSlugs.isEmpty || !task.tags.isEmpty {
-                    Text(metadata(for: task))
+                if !task.projectSlugs.isEmpty {
+                    Label(task.projectSlugs.joined(separator: ", "), systemImage: "folder")
+                        .font(.subheadline)
+                        .foregroundStyle(OTodoTheme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !task.tags.isEmpty {
+                    Text(task.tags.map { "@\($0)" }.joined(separator: "  "))
                         .font(.subheadline)
                         .foregroundStyle(OTodoTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -500,12 +587,12 @@ struct DailyReviewView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     VStack(spacing: OTodoTheme.Spacing.small) {
-                        Button("Keep", systemImage: "arrow.right") {
+                        Button("Keep for today", systemImage: "arrow.right") {
                             affirmedCount += 1
                             advance(from: task)
                         }
                         .buttonStyle(OTodoPrimaryButtonStyle())
-                        .accessibilityHint("Keeps the current schedule and moves to the next todo")
+                        .accessibilityHint("Leaves the task and its current schedule unchanged and moves to the next todo")
                         .accessibilityIdentifier("daily-review-keep-\(task.id.rawValue)")
 
                         let actionLayout = dynamicTypeSize >= .xxxLarge
@@ -544,16 +631,6 @@ struct DailyReviewView: View {
         .scrollBounceBehavior(.basedOnSize)
     }
 
-    private var openingSummary: LocalizedStringKey {
-        guard !sessionTasks.isEmpty else {
-            return completedTodayAtStart > 0
-                ? "Your due list is clear. \(completedTodayAtStart) completed today."
-                : "Your due list is clear. Take a moment to plan what comes next."
-        }
-        return sessionTasks.count == 1
-            ? "One task to review. Keep it, reschedule it, or mark it done."
-            : "\(sessionTasks.count) tasks to review. Keep, reschedule, or mark each one done."
-    }
 
     private var closingSummary: LocalizedStringKey {
         if sessionTasks.isEmpty {
@@ -585,12 +662,6 @@ struct DailyReviewView: View {
             return "calendar"
         }
         return dueDate.rawValue < today.rawValue ? "exclamationmark.circle.fill" : "calendar.circle.fill"
-    }
-
-    private func metadata(for task: TodoTask) -> String {
-        let projects = task.projectSlugs.map { "#\($0)" }
-        let tags = task.tags.map { "@\($0)" }
-        return (projects + tags).joined(separator: "  ")
     }
 
     private func complete(_ task: TodoTask) {

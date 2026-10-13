@@ -142,6 +142,9 @@ final class TaskEditorSubtasksAndLinkUITests: XCTestCase {
         XCTAssertTrue(reschedule.exists)
         attachScreenshot(in: app, name: "Saved subtask exposes the same leading actions as the main list")
         reschedule.tap()
+        let relativeDisclosure = app.buttons["task-reschedule-relative-due-disclosure"]
+        XCTAssertTrue(relativeDisclosure.waitForExistence(timeout: 8))
+        relativeDisclosure.tap()
         let relative = app.textFields["task-reschedule-relative-due-date"]
         XCTAssertTrue(relative.waitForExistence(timeout: 8))
         relative.tap()

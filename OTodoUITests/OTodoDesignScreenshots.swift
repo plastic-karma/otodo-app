@@ -41,7 +41,7 @@ final class OTodoDesignScreenshots: XCTestCase {
             app.buttons["sidebar-daily-review"].tap()
             app.buttons["sidebar-review-kickstart"].tap()
             XCTAssertTrue(app.buttons["daily-review-begin"].waitForExistence(timeout: 5))
-            capture("Survey · Kickstart overview · \(appearance)", in: app)
+            capture("Survey · Morning review introduction · \(appearance)", in: app)
             app.buttons["daily-review-begin"].tap()
             let keep = app.buttons["daily-review-keep-01ARZ3NDEKTSV4RRFFQ69G5FAW"]
             XCTAssertTrue(keep.waitForExistence(timeout: 5))
@@ -50,6 +50,7 @@ final class OTodoDesignScreenshots: XCTestCase {
             XCTAssertTrue(app.buttons["daily-review-keep-01ARZ3NDEKTSV4RRFFQ69G5FAV"].waitForExistence(timeout: 5))
             app.buttons["Close"].tap()
 
+            app.buttons["task-list-options"].tap()
             app.buttons["filters-open"].tap()
             XCTAssertTrue(app.buttons["filter-add"].waitForExistence(timeout: 5))
             capture("Survey · Filter library · \(appearance)", in: app)

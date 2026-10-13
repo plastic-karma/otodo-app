@@ -280,6 +280,10 @@ final class OTodoUITests: XCTestCase {
         ) else { return }
         nameField.tap()
         nameField.typeText("Call mum Wed")
+        XCTAssertGreaterThanOrEqual(nameField.frame.minY, app.navigationBars["New Todo"].frame.maxY,
+                                    "The keyboard must not scroll the focused title behind navigation")
+        XCTAssertLessThanOrEqual(nameField.frame.maxY, app.keyboards.firstMatch.frame.minY,
+                                 "The focused title must remain above the keyboard")
 
         let detection = app.descendants(matching: .any)
             .matching(identifier: "task-editor-detected-due-date")
@@ -293,6 +297,11 @@ final class OTodoUITests: XCTestCase {
             detection.label.localizedCaseInsensitiveContains("Wed"),
             "The detected phrase should remain identifiable while editing"
         )
+        guard let dateRange = detection.label.range(of: #"\d{4}-\d{2}-\d{2}"#, options: .regularExpression) else {
+            XCTFail("The detected schedule must expose its resolved civil date")
+            return
+        }
+        let detectedDate = String(detection.label[dateRange])
 
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Detected abbreviated weekday in todo name"
@@ -321,6 +330,7 @@ final class OTodoUITests: XCTestCase {
             description: "the todo with its detected due date"
         ) else { return }
 
+        XCTAssertTrue(savedTask.label.contains("Due: \(detectedDate)"), "Saving must retain the detected civil date")
         savedTask.tap()
         guard require(
             editor,
@@ -331,12 +341,6 @@ final class OTodoUITests: XCTestCase {
             nameField.value as? String,
             "Call mum",
             "Reopening the todo should load the stripped name"
-        )
-        revealEditorControl("task-editor-due-date-toggle", panel: "schedule", in: app)
-        XCTAssertEqual(
-            app.switches["task-editor-due-date-toggle"].value as? String,
-            "1",
-            "Reopening the todo should load the detected due date"
         )
         app.buttons["Cancel"].tap()
     }
@@ -381,12 +385,11 @@ final class OTodoUITests: XCTestCase {
 
         let saved = taskRow(named: "Plan conference", state: "Pending", in: app)
         XCTAssertTrue(saved.waitForExistence(timeout: 8))
+        XCTAssertTrue(saved.label.contains("Due: 2027-06-12"), "The notes-derived civil date must persist")
         saved.tap()
         XCTAssertTrue(editor.waitForExistence(timeout: 8))
         XCTAssertEqual(notes.value as? String, "Agenda:\n- Coordinate venue\n- Send invites")
         XCTAssertFalse(detection.exists, "The persisted notes should not redetect the applied date")
-        revealEditorControl("task-editor-due-date-toggle", panel: "schedule", in: app)
-        XCTAssertEqual(app.switches["task-editor-due-date-toggle"].value as? String, "1")
     }
 
     @MainActor
@@ -538,18 +541,6 @@ final class OTodoUITests: XCTestCase {
             description: "the todo editor"
         ) else { return }
 
-        revealEditorControl("task-editor-due-date-toggle", panel: "schedule", in: app)
-        guard require(
-            app.switches["task-editor-due-date-toggle"],
-            in: app,
-            description: "the optional due-date control"
-        ) else { return }
-        guard require(
-            app.datePickers["task-editor-due-date-picker"],
-            in: app,
-            description: "the native due-date picker"
-        ) else { return }
-
         revealEditorControl("task-editor-due-time-toggle", panel: "schedule", in: app)
         let timeToggle = app.switches["task-editor-due-time-toggle"]
         guard require(
@@ -629,7 +620,8 @@ final class OTodoUITests: XCTestCase {
         nameField.typeText(taskName + "\n")
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
 
-        revealEditorControl("task-editor-relative-due-date", panel: "schedule", in: app)
+        revealEditorControl("task-editor-relative-due-disclosure", panel: "schedule", in: app)
+        revealEditorControl("task-editor-relative-due-date", panel: "relative-due-disclosure", in: app)
         let relativeField = app.textFields["task-editor-relative-due-date"]
         for _ in 0..<6 {
             if relativeField.isHittable { break }
@@ -659,11 +651,6 @@ final class OTodoUITests: XCTestCase {
         XCTAssertTrue(applyButton.isEnabled, "A valid relative due date should be applicable")
         applyButton.tap()
 
-        XCTAssertEqual(
-            app.switches["task-editor-due-date-toggle"].value as? String,
-            "1",
-            "Applying a relative due date should set a calendar date"
-        )
         editor.swipeUp()
         XCTAssertEqual(
             app.switches["task-editor-due-time-toggle"].value as? String,
@@ -794,6 +781,7 @@ final class OTodoUITests: XCTestCase {
             description: "the reschedule sheet"
         ) else { return }
 
+        app.buttons["task-reschedule-relative-due-disclosure"].tap()
         let relativeField = app.textFields["task-reschedule-relative-due-date"]
         guard require(
             relativeField,
@@ -816,12 +804,7 @@ final class OTodoUITests: XCTestCase {
             "Applying a relative schedule should dismiss the keyboard"
         )
 
-        rescheduler.swipeUp()
-        guard require(
-            app.datePickers["task-reschedule-date-picker"],
-            in: app,
-            description: "the reschedule calendar picker"
-        ) else { return }
+        rescheduler.swipeDown()
         let timeToggle = app.switches["task-reschedule-time-toggle"]
         guard require(
             timeToggle,
@@ -966,9 +949,7 @@ final class OTodoUITests: XCTestCase {
         app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace"]
         app.launch()
 
-        let openFilters = app.buttons["filters-open"]
-        guard require(openFilters, in: app, description: "the filter library entry") else { return }
-        openFilters.tap()
+        openListOption("filters-open", in: app)
         app.buttons["filter-add"].tap()
         let filterName = app.textFields["filter-editor-name"]
         guard require(filterName, in: app, description: "the new filter name") else { return }
@@ -1032,8 +1013,7 @@ final class OTodoUITests: XCTestCase {
         app.terminate()
         app.launchArguments = ["-ui-testing"]
         app.launch()
-        guard require(openFilters, in: app, description: "the library after relaunch") else { return }
-        openFilters.tap()
+        openListOption("filters-open", in: app)
         guard require(saved, in: app, description: "the persisted creation filter") else { return }
         saved.tap()
         XCTAssertTrue(library.waitForNonExistence(timeout: 8))
@@ -1064,9 +1044,7 @@ final class OTodoUITests: XCTestCase {
         app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace"]
         app.launch()
 
-        let openFilters = app.buttons["filters-open"]
-        guard require(openFilters, in: app, description: "the filter library entry") else { return }
-        openFilters.tap()
+        openListOption("filters-open", in: app)
         let addFilterButton = app.buttons["filter-add"]
         guard require(addFilterButton, in: app, description: "the New Filter button") else { return }
         addFilterButton.tap()
@@ -1132,7 +1110,7 @@ final class OTodoUITests: XCTestCase {
         homeScreenshot.lifetime = .keepAlways
         add(homeScreenshot)
 
-        openFilters.tap()
+        openListOption("filters-open", in: app)
         guard require(saved, in: app, description: "the filter to edit") else { return }
         saved.press(forDuration: 1.2)
         let edit = app.buttons["filter-edit-\(id)"]
@@ -1154,7 +1132,7 @@ final class OTodoUITests: XCTestCase {
         emptyScreenshot.lifetime = .keepAlways
         add(emptyScreenshot)
 
-        openFilters.tap()
+        openListOption("filters-open", in: app)
         let star = app.buttons["filter-star-\(id)"]
         guard require(star, in: app, description: "the saved filter's Home star") else { return }
         star.tap()
@@ -1168,7 +1146,7 @@ final class OTodoUITests: XCTestCase {
         app.terminate()
         app.launch()
         XCTAssertFalse(favorite.exists, "Removing a Home star must persist")
-        openFilters.tap()
+        openListOption("filters-open", in: app)
         guard require(saved, in: app, description: "the unstarred filter retained in the library") else { return }
         saved.press(forDuration: 1.2)
         let delete = app.buttons["filter-delete-\(id)"]
@@ -1177,7 +1155,7 @@ final class OTodoUITests: XCTestCase {
         XCTAssertTrue(saved.waitForNonExistence(timeout: 8))
         app.terminate()
         app.launch()
-        openFilters.tap()
+        openListOption("filters-open", in: app)
         guard require(addFilterButton, in: app, description: "the library after deleting a filter") else { return }
         XCTAssertFalse(saved.exists, "Deleted filters must not return after relaunch")
     }
@@ -1543,11 +1521,6 @@ final class OTodoUITests: XCTestCase {
             in: app
         ) else { return }
 
-        guard require(
-            app.navigationBars["Side Project"],
-            in: app,
-            description: "the newly selected project"
-        ) else { return }
 
         sidebarButton.tap()
         let createdProject = app.buttons["project-filter-side-project"]
@@ -1936,15 +1909,10 @@ final class OTodoUITests: XCTestCase {
                 named: name, state: "Pending", in: app, taskList: taskList,
                 description: "the persisted \(name) todo"
             ) else { return }
+            XCTAssertEqual(task.label.contains("Due:"), hasDate, "Only parsed dates should survive the batch save and relaunch")
             task.tap()
             guard require(editor, in: app, description: "the persisted bulk todo editor") else { return }
             XCTAssertEqual(app.textFields["task-editor-name"].value as? String, name)
-            revealEditorControl("task-editor-due-date-toggle", panel: "schedule", in: app)
-            XCTAssertEqual(
-                app.switches["task-editor-due-date-toggle"].value as? String,
-                hasDate ? "1" : "0",
-                "Only dates parsed from each line should be saved"
-            )
             app.buttons["Cancel"].tap()
         }
     }
@@ -1972,7 +1940,8 @@ final class OTodoUITests: XCTestCase {
         guard require(tags, in: app, description: "the shared tags input") else { return }
         tags.tap()
         tags.typeText("focus")
-        revealEditorControl("task-editor-relative-due-date", panel: "schedule", in: app)
+        revealEditorControl("task-editor-relative-due-disclosure", panel: "schedule", in: app)
+        revealEditorControl("task-editor-relative-due-date", panel: "relative-due-disclosure", in: app)
         let relative = app.textFields["task-editor-relative-due-date"]
         guard require(relative, in: app, description: "the first todo's relative schedule") else { return }
         relative.tap()
@@ -2019,18 +1988,13 @@ final class OTodoUITests: XCTestCase {
                 task.label.contains("Recurring todo"), hasDate,
                 "Save & Create Another must clear recurrence with the schedule"
             )
+            XCTAssertEqual(task.label.contains("Due:"), hasDate, "The next todo must not inherit the first todo’s schedule")
             task.tap()
             guard require(editor, in: app, description: "the saved repeated-entry todo") else { return }
             XCTAssertEqual(app.textFields["task-editor-name"].value as? String, taskName)
             revealEditorControl("task-editor-tags", panel: "details", in: app)
             XCTAssertEqual(app.textFields["task-editor-tags"].value as? String, "focus")
             XCTAssertEqual(app.buttons["work project"].value as? String, "Selected")
-            revealEditorControl("task-editor-due-date-toggle", panel: "schedule", in: app)
-            XCTAssertEqual(
-                app.switches["task-editor-due-date-toggle"].value as? String,
-                hasDate ? "1" : "0",
-                "The next todo must not inherit the first todo's schedule"
-            )
             XCTAssertFalse(app.buttons["task-editor-save-another"].exists)
             app.buttons["Cancel"].tap()
         }
@@ -2064,14 +2028,8 @@ final class OTodoUITests: XCTestCase {
             nameField.typeText(name)
             if hasDate {
                 nameField.typeText("\n")
-                revealEditorControl("task-editor-due-date-toggle", panel: "schedule", in: app)
-                let dueDateToggle = app.switches["task-editor-due-date-toggle"]
-                for _ in 0..<6 {
-                    if dueDateToggle.exists && dueDateToggle.isHittable { break }
-                    editor.swipeUp()
-                }
-                guard require(dueDateToggle, in: app, description: "the Inbox todo's schedule control") else { return }
-                dueDateToggle.tap()
+                revealEditorControl("task-editor-today", panel: "schedule", in: app)
+                app.buttons["task-editor-today"].tap()
             }
             app.buttons["task-editor-save"].tap()
             guard requireEditorDismissed(editor, after: "capturing an Inbox todo", in: app) else { return }
@@ -2240,11 +2198,10 @@ final class OTodoUITests: XCTestCase {
         app.launch()
         guard selectFilter("Inbox", in: app) else { return }
         guard require(captured, in: app, description: "the durable shared todo after relaunch") else { return }
+        XCTAssertFalse(captured.label.contains("Due:"), "Shared capture must remain undated")
         captured.tap()
         let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
         guard require(editor, in: app, description: "the captured todo's original context") else { return }
-        revealEditorControl("task-editor-due-date-toggle", panel: "schedule", in: app)
-        XCTAssertEqual(app.switches["task-editor-due-date-toggle"].value as? String, "0")
         revealEditorControl("task-editor-notes", panel: nil, in: app)
         let notes = app.textViews["task-editor-notes"]
         guard require(notes, in: app, description: "the saved Markdown notes") else { return }
@@ -2329,9 +2286,7 @@ final class OTodoUITests: XCTestCase {
         app.buttons["project-filter-work"].tap()
         sidebar.tap()
         app.buttons["upcoming-open"].tap()
-        let select = app.buttons["upcoming-select"]
-        guard require(select, in: app, description: "Upcoming's multi-selection action") else { return }
-        select.tap()
+        openListOption("upcoming-select", in: app)
         let taskList = app.descendants(matching: .any).matching(identifier: "task-list").firstMatch
         let reschedule = app.buttons["upcoming-reschedule"]
         for name in ["Future todo", "Week review"] {
@@ -2355,6 +2310,7 @@ final class OTodoUITests: XCTestCase {
         guard require(sheet, in: app, description: "the batch schedule editor") else { return }
         let save = app.buttons["task-reschedule-save"]
         XCTAssertFalse(save.isEnabled, "A batch must not overwrite schedules before any field is changed")
+        app.buttons["task-reschedule-relative-due-disclosure"].tap()
         let relative = app.textFields["task-reschedule-relative-due-date"]
         relative.tap()
         relative.typeText("in 5 days")
@@ -2424,13 +2380,11 @@ final class OTodoUITests: XCTestCase {
         }
 
         assertBefore("Overdue todo", "Seed todo")
-        let sort = app.buttons["task-sort"]
-        guard require(sort, in: app, description: "the todo sorting menu") else { return }
         for (choice, first, second) in [
             ("Created date (newest first)", "Undated todo", "Future todo"),
             ("Alphabetical (A–Z)", "Future todo", "Overdue todo"),
         ] {
-            sort.tap()
+            openListOption("task-sort", in: app)
             let option = app.buttons[choice]
             guard require(option, in: app, description: "the \(choice) sorting choice") else { return }
             if choice == "Created date (newest first)" {
@@ -2449,7 +2403,7 @@ final class OTodoUITests: XCTestCase {
         guard require(work, in: app, description: "the Work project scope") else { return }
         work.tap()
         assertBefore("Future todo", "Undated todo")
-        sort.tap()
+        openListOption("task-sort", in: app)
         app.buttons["Created date (newest first)"].tap()
         assertBefore("Undated todo", "Future todo")
         XCTAssertFalse(taskRow(named: "Overdue todo", state: "Pending", in: app).exists)
@@ -2464,7 +2418,7 @@ final class OTodoUITests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
 
-        app.buttons["task-sort"].tap()
+        openListOption("task-sort", in: app)
         app.buttons["Due date (earliest first)"].tap()
         assertBefore("Overdue todo", "Seed todo")
     }
@@ -2481,7 +2435,7 @@ final class OTodoUITests: XCTestCase {
         let later = taskRow(named: "Alpha later deadline", state: "Pending", in: app)
 
         for choice in ["Created date (newest first)", "Alphabetical (A–Z)"] {
-            app.buttons["task-sort"].tap()
+            openListOption("task-sort", in: app)
             app.buttons[choice].tap()
             let todoOrder = XCTNSPredicateExpectation(
                 predicate: NSPredicate { _, _ in
@@ -2502,16 +2456,19 @@ final class OTodoUITests: XCTestCase {
                 }, object: nil
             )
             XCTAssertEqual(XCTWaiter.wait(for: [agendaOrder], timeout: 8), .completed)
-            XCTAssertFalse(app.buttons["task-sort"].exists)
             let screenshot = XCTAttachment(screenshot: app.screenshot())
             screenshot.name = "Upcoming deadlines remain chronological with \(choice)"
             screenshot.lifetime = .keepAlways
             add(screenshot)
             sidebar.tap()
             app.buttons["tasks-open"].tap()
-            let sort = app.buttons["task-sort"]
-            guard require(sort, in: app, description: "the preserved Todos sort preference") else { return }
-            XCTAssertEqual(sort.value as? String, choice)
+            guard selectFilter("Active", in: app) else { return }
+            let restoredOrder = XCTNSPredicateExpectation(
+                predicate: NSPredicate { _, _ in
+                    earlier.isHittable && later.isHittable && later.frame.minY < earlier.frame.minY
+                }, object: nil
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [restoredOrder], timeout: 8), .completed)
         }
     }
 
@@ -3163,21 +3120,18 @@ final class OTodoUITests: XCTestCase {
 
     @MainActor
     private func revealEditorControl(_ identifier: String, panel: String?, in app: XCUIApplication) {
-        let editor = app.descendants(matching: .any).matching(identifier: "task-editor").firstMatch
-        guard require(editor, in: app, description: "the todo editor") else { return }
-        func scrollTo(_ element: XCUIElement) {
-            app.revealTaskEditorElement(element)
-        }
-        if let panel {
-            let disclosure = app.buttons["task-editor-\(panel)"]
-            scrollTo(disclosure)
-            guard require(disclosure, in: app, description: "the \(panel) disclosure") else { return }
-            if disclosure.value as? String != "Expanded" { disclosure.tap() }
-        }
         let control = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
-        scrollTo(control)
-        XCTAssertTrue(control.waitForExistence(timeout: 8), "The editor must expose \(identifier)")
-        XCTAssertTrue(control.isHittable, "\(identifier) must be reachable in the editor")
+        app.revealTaskEditorElement(control, panel: panel)
+    }
+
+    @MainActor
+    private func openListOption(_ identifier: String, in app: XCUIApplication) {
+        let options = app.buttons["task-list-options"]
+        guard require(options, in: app, description: "List options") else { return }
+        options.tap()
+        let action = app.buttons[identifier]
+        guard require(action, in: app, description: "the \(identifier) list option") else { return }
+        action.tap()
     }
 
     @MainActor

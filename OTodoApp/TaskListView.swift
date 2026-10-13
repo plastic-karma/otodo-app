@@ -63,7 +63,7 @@ struct TaskListView: View {
     @FocusState private var isSearchFocused: Bool
 
     private enum SettingsDestination {
-        case reminders, dailyRhythm, changelog, account
+        case reminders, dailyReview, changelog, account
     }
 
     private struct ProjectArchivePresentation: Identifiable {
@@ -273,7 +273,7 @@ struct TaskListView: View {
                             Image(systemName: "line.3.horizontal")
                                 .font(.body.weight(.semibold))
                         }
-                        .accessibilityLabel("Projects")
+                        .accessibilityLabel("Navigation")
                         .accessibilityHint("Shows views, projects, daily reviews, and settings")
                         .accessibilityIdentifier("project-sidebar-toggle")
                     }
@@ -285,26 +285,40 @@ struct TaskListView: View {
                         .labelStyle(.iconOnly)
                         .accessibilityIdentifier("task-search-open")
                     }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button(isSelecting ? "Cancel" : "Select") {
-                            guard !selectionIsBusy else { return }
-                            selectedTaskIDs.removeAll()
-                            isSelecting.toggle()
-                        }
-                        .disabled(selectionIsBusy || (!isSelecting && scopedTasks.isEmpty))
-                        .accessibilityIdentifier("upcoming-select")
-                    }
-                    if !isUpcoming || isSearching {
+                    if isSelecting {
                         ToolbarItem(placement: .topBarTrailing) {
-                            sortMenu
+                            Button("Cancel") {
+                                guard !selectionIsBusy else { return }
+                                clearSelection()
+                            }
+                            .disabled(selectionIsBusy)
+                            .accessibilityLabel("Cancel selection")
+                            .accessibilityIdentifier("upcoming-select")
                         }
                     }
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("Filters", systemImage: "slider.horizontal.3") {
-                            isFilterLibraryPresented = true
+                        Menu {
+                            if !isSelecting {
+                                Button("Select todos", systemImage: "checkmark.circle") {
+                                    guard !selectionIsBusy else { return }
+                                    selectedTaskIDs.removeAll()
+                                    isSelecting = true
+                                }
+                                .disabled(selectionIsBusy || scopedTasks.isEmpty)
+                                .accessibilityIdentifier("upcoming-select")
+                            }
+                            if !isUpcoming || isSearching {
+                                sortMenu
+                            }
+                            Button("Filters", systemImage: "slider.horizontal.3") {
+                                isFilterLibraryPresented = true
+                            }
+                            .accessibilityIdentifier("filters-open")
+                        } label: {
+                            Label("List options", systemImage: "ellipsis")
+                                .labelStyle(.iconOnly)
                         }
-                        .labelStyle(.iconOnly)
-                        .accessibilityIdentifier("filters-open")
+                        .accessibilityIdentifier("task-list-options")
                     }
                 }
                 .sheet(item: $editorPresentation, onDismiss: presentPendingNotificationRequest) { presentation in
@@ -577,7 +591,7 @@ struct TaskListView: View {
         } label: {
             Label("Sort todos", systemImage: "arrow.up.arrow.down")
         }
-        .labelStyle(.iconOnly)
+        .labelStyle(.titleAndIcon)
         .accessibilityValue(model.taskSortOrder.title)
         .accessibilityIdentifier("task-sort")
     }
@@ -787,10 +801,7 @@ struct TaskListView: View {
             return "Search"
         }
         if isUpcoming {
-            return selectedProject.map(projectDisplayName) ?? "Upcoming"
-        }
-        if let selectedProject {
-            return projectDisplayName(selectedProject)
+            return "Upcoming"
         }
         return selectedFilter.name
     }
@@ -799,15 +810,21 @@ struct TaskListView: View {
 
     private var workspaceSubtitle: LocalizedStringKey {
         if isSearching {
+            if let selectedProject {
+                return "Project: \(projectDisplayName(selectedProject)) · Names, notes, and more"
+            }
             return "Names, notes, projects, tags, links, and IDs"
         }
         if isUpcoming {
+            if let selectedProject {
+                return "Project: \(projectDisplayName(selectedProject)) · \(selectedFilter.name)"
+            }
             return selectedFilterID == "active"
                 ? "Review deadlines and undated work"
                 : "Upcoming · \(selectedFilter.name)"
         }
-        if selectedProject != nil {
-            return "\(selectedFilter.name) todos"
+        if let selectedProject {
+            return "Project: \(projectDisplayName(selectedProject))"
         }
         switch selectedFilter.id {
         case "today":
@@ -873,7 +890,7 @@ struct TaskListView: View {
                     .accessibilityIdentifier("stats-open")
 
                     HStack {
-                        Text("Projects")
+                        Text("Project scope")
                             .font(.caption.smallCaps().weight(.semibold))
                             .foregroundStyle(.secondary)
                             .accessibilityAddTraits(.isHeader)
@@ -1060,7 +1077,7 @@ struct TaskListView: View {
                     .accessibilityIdentifier("sidebar-review-\(kind.rawValue)")
                 }
                 Divider()
-                Button("Daily rhythm settings", systemImage: "slider.horizontal.3") {
+                Button("Daily review settings", systemImage: "slider.horizontal.3") {
                     dismissProjectSidebar()
                     isDailyReviewSettingsPresented = true
                 }
@@ -1109,6 +1126,28 @@ struct TaskListView: View {
                     .accessibilityIdentifier("changelog-open")
                 }
                 Section("Account") {
+                    if let selection = model.workspaceSelection {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Label(
+                                selection.isLocalOnly ? "On this device" : "GitHub workspace",
+                                systemImage: selection.isLocalOnly ? "internaldrive" : "arrow.triangle.2.circlepath"
+                            )
+                            .font(.subheadline.weight(.semibold))
+                            Text(selection.isLocalOnly ? selection.name : "\(selection.owner)/\(selection.name)")
+                                .font(.body)
+                            if !selection.isLocalOnly {
+                                Text("Branch: \(selection.branch)")
+                                    .font(.footnote)
+                                    .foregroundStyle(OTodoTheme.secondaryText)
+                                Text(selection.storePath.isEmpty ? "Repository root" : "Folder: \(selection.storePath)")
+                                    .font(.footnote)
+                                    .foregroundStyle(OTodoTheme.secondaryText)
+                            }
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("settings-workspace-identity")
+                    }
                     Button {
                         openSettingsDestination(.account)
                     } label: {
@@ -1143,7 +1182,7 @@ struct TaskListView: View {
         pendingSettingsDestination = nil
         switch destination {
         case .reminders: isReminderSettingsPresented = true
-        case .dailyRhythm: isDailyReviewSettingsPresented = true
+        case .dailyReview: isDailyReviewSettingsPresented = true
         case .changelog: isChangelogPresented = true
         case .account:
             Task { @MainActor in await model.signOut() }
@@ -1153,7 +1192,7 @@ struct TaskListView: View {
 
     private var dailyReviewControl: some View {
         Button {
-            openSettingsDestination(.dailyRhythm)
+            openSettingsDestination(.dailyReview)
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "sunrise")
@@ -1164,7 +1203,7 @@ struct TaskListView: View {
                     .frame(width: sidebarIconWidth)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Daily rhythm")
+                    Text("Daily review")
                         .font(.subheadline)
                         .foregroundStyle(.primary)
                     Text(dailyReviewDetail)
@@ -1183,17 +1222,17 @@ struct TaskListView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Daily rhythm")
+        .accessibilityLabel("Daily review")
         .accessibilityValue(dailyReviewDetail)
-        .accessibilityHint("Configures morning Kickstart and evening Wrap-up")
+        .accessibilityHint("Configures morning and evening reviews")
         .accessibilityIdentifier("daily-review-settings-open")
     }
 
     private var dailyReviewDetail: LocalizedStringKey {
         switch (kickstartEnabled, wrapUpEnabled) {
-        case (true, true): "Kickstart and Wrap-up enabled"
-        case (true, false): "Kickstart enabled"
-        case (false, true): "Wrap-up enabled"
+        case (true, true): "Morning and evening enabled"
+        case (true, false): "Morning enabled"
+        case (false, true): "Evening enabled"
         case (false, false): "Off"
         }
     }
@@ -1243,7 +1282,7 @@ struct TaskListView: View {
 
     private func projectFilterButton(_ project: String?) -> some View {
         let isSelected = selectedProject == project && selectedFilterID != "inbox"
-        let title = project.map(projectDisplayName) ?? "Entire workspace"
+        let title = project.map(projectDisplayName) ?? "All projects"
         let count = project.map { model.openTaskCountsByProject[$0, default: 0] } ?? model.openTaskCount
         let color = isSelected ? OTodoTheme.accent : Color.secondary
         let layout = dynamicTypeSize.isAccessibilitySize
@@ -1603,18 +1642,19 @@ struct TaskListView: View {
     }
 
     private var agendaModeButtons: some View {
-        VStack(spacing: 4) {
+        let isToday = !isUpcoming && selectedFilterID == "today"
+        return VStack(spacing: 4) {
             Button {
                 isUpcoming = false
-                clearSelection()
+                selectFilter("today")
                 dismissProjectSidebar()
             } label: {
                 HStack(spacing: 12) {
-                    Image(systemName: "checklist")
-                        .foregroundStyle(isUpcoming ? Color.secondary : OTodoTheme.accent)
+                    Image(systemName: "sun.max")
+                        .foregroundStyle(isToday ? OTodoTheme.accent : Color.secondary)
                         .frame(width: sidebarIconWidth)
-                    Text("Todos")
-                        .font(.body.weight(isUpcoming ? .regular : .semibold))
+                    Text("Today")
+                        .font(.body.weight(isToday ? .semibold : .regular))
                         .foregroundStyle(.primary)
                     Spacer(minLength: 0)
                 }
@@ -1623,9 +1663,9 @@ struct TaskListView: View {
                 .frame(minHeight: 48)
                 .contentShape(Rectangle())
             }
-            .tint(isUpcoming ? .secondary : OTodoTheme.accent)
+            .tint(isToday ? OTodoTheme.accent : .secondary)
             .accessibilityIdentifier("tasks-open")
-            .accessibilityAddTraits(isUpcoming ? [] : .isSelected)
+            .accessibilityAddTraits(isToday ? .isSelected : [])
 
             Button {
                 if !isUpcoming {
@@ -1814,7 +1854,8 @@ struct TaskListView: View {
             },
             isSelected: isSelecting ? selectedTaskIDs.contains(task.id) : nil,
             ancestry: ancestryContext(for: task),
-            hierarchyDepth: displayedDepths[task.id] ?? 0
+            hierarchyDepth: displayedDepths[task.id] ?? 0,
+            hidesTodayDate: !isUpcoming && !isSearching && selectedFilterID == "today"
         )
         .padding(.leading, CGFloat(min(displayedDepths[task.id] ?? 0, 8)) * 12)
         .modifier(TaskRowActions(
@@ -2020,11 +2061,10 @@ private struct TaskListReminderControl: View {
                 } else if notifications.isEnabled {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(OTodoTheme.mint)
-                } else {
-                    Image(systemName: "chevron.right")
-                        .font(.caption.bold())
-                        .foregroundStyle(OTodoTheme.secondaryText)
                 }
+                Image(systemName: "chevron.right")
+                    .font(.caption.bold())
+                    .foregroundStyle(OTodoTheme.secondaryText)
             }
             .padding(.vertical, 4)
             .frame(minHeight: 44)
