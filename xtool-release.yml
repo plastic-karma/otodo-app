@@ -11,10 +11,12 @@ appStoreConnect:
     - 2a16b67b-f282-48d0-bf9f-42696c0bf03b
   locale: en-US
   testNotes: >-
-    Bulk actions: tap Select in Todos, search or Upcoming to complete, delete or
-    reschedule multiple todos. Verify confirmation, offline persistence, scoped
-    Select all, recurring parent/child completion once, and child-safe deletion.
-    Check the selection controls with large Dynamic Type and narrow screens.
+    Reschedule: tapping Today, Tomorrow or Next week now saves immediately and
+    closes the sheet for single and multiple todos, including daily review and
+    subtasks. Check that existing time settings are preserved, unfinished
+    relative-date input is replaced by the chosen preset, and changes persist
+    offline after relaunch. Custom dates still use Save. Verify save errors
+    remain visible and the task editor keeps its Save/Cancel behavior.
     Includes the iPhone app, widget, Share extension, Watch app and Watch widget.
     Verify Watch installation and sync, widgets, sharing, GitHub login and
     Add Todo Shortcuts.

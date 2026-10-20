@@ -23,7 +23,7 @@ final class DailyReviewUITests: XCTestCase {
         )
 
         let settingsScreenshot = XCTAttachment(screenshot: app.screenshot())
-        settingsScreenshot.name = "Opt-in morning and evening daily rhythm"
+        settingsScreenshot.name = "Opt-in morning and evening daily review"
         settingsScreenshot.lifetime = .keepAlways
         add(settingsScreenshot)
 
@@ -45,12 +45,12 @@ final class DailyReviewUITests: XCTestCase {
         XCTAssertTrue(app.buttons["daily-review-done-\(overdueID)"].exists)
         XCTAssertTrue(app.buttons["daily-review-keep-\(overdueID)"].exists)
         app.buttons["daily-review-reschedule-\(overdueID)"].tap()
+        scrollToAndTap(app.buttons["task-reschedule-relative-due-disclosure"], in: app)
 
         let relative = app.textFields["task-reschedule-relative-due-date"]
-        XCTAssertTrue(relative.waitForExistence(timeout: 8))
-        relative.tap()
+        scrollToAndTap(relative, in: app)
         relative.typeText("in 2 days")
-        app.buttons["task-reschedule-relative-due-apply"].tap()
+        scrollToAndTap(app.buttons["task-reschedule-relative-due-apply"], in: app)
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
         app.buttons["task-reschedule-save"].tap()
         XCTAssertTrue(relative.waitForNonExistence(timeout: 8))
@@ -61,7 +61,7 @@ final class DailyReviewUITests: XCTestCase {
                 .waitForExistence(timeout: 8)
         )
         let taskScreenshot = XCTAttachment(screenshot: app.screenshot())
-        taskScreenshot.name = "Large swipeable Kickstart decision card"
+        taskScreenshot.name = "Morning review decision card"
         taskScreenshot.lifetime = .keepAlways
         add(taskScreenshot)
 
@@ -85,13 +85,10 @@ final class DailyReviewUITests: XCTestCase {
             app.descendants(matching: .any)["daily-review-wrapUp"]
                 .waitForExistence(timeout: 8)
         )
-        XCTAssertTrue(app.staticTexts["Close the loop."].exists)
-        app.buttons["daily-review-begin"].tap()
         XCTAssertTrue(
             app.descendants(matching: .any)["daily-review-summary-closing"]
                 .waitForExistence(timeout: 8)
         )
-        XCTAssertTrue(app.staticTexts["Nothing is waiting for a decision. Rest easy."].exists)
         app.buttons["daily-review-finish"].tap()
 
         app.terminate()
@@ -100,6 +97,148 @@ final class DailyReviewUITests: XCTestCase {
         openDailyReviewSettings(in: app)
         XCTAssertEqual(app.switches["daily-review-kickstart-enabled"].value as? String, "1")
         XCTAssertEqual(app.switches["daily-review-wrapUp-enabled"].value as? String, "1")
+    }
+
+    func testIntroductionCancellationAndAcknowledgementSurviveRelaunch() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-ui-testing", "-ui-testing-reset-workspace",
+            "-daily-review.kickstart-minutes", "0",
+        ]
+        app.launch()
+        defer { app.terminate() }
+
+        openDailyReviewSettings(in: app)
+        enableMorningReview(in: app)
+        scrollToAndTap(app.buttons["daily-review-start-kickstart"], in: app)
+        XCTAssertTrue(app.buttons["daily-review-begin"].waitForExistence(timeout: 8))
+        app.buttons["daily-review-close"].tap()
+        XCTAssertTrue(app.buttons["daily-review-prompt-kickstart"].waitForExistence(timeout: 8))
+
+        app.terminate()
+        app.launchArguments = ["-ui-testing", "-daily-review.kickstart-minutes", "0"]
+        app.launch()
+        let prompt = app.buttons["daily-review-prompt-kickstart"]
+        XCTAssertTrue(prompt.waitForExistence(timeout: 10))
+        prompt.tap()
+        let begin = app.buttons["daily-review-begin"]
+        XCTAssertTrue(begin.waitForExistence(timeout: 8), "Cancel must not acknowledge the introduction")
+        begin.tap()
+        let firstDecision = app.buttons["daily-review-keep-01ARZ3NDEKTSV4RRFFQ69G5FAW"]
+        XCTAssertTrue(firstDecision.waitForExistence(timeout: 8))
+        app.buttons["daily-review-close"].tap()
+        XCTAssertTrue(prompt.waitForExistence(timeout: 8), "Acknowledgement must not finish the review")
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(prompt.waitForExistence(timeout: 10))
+        prompt.tap()
+        XCTAssertTrue(firstDecision.waitForExistence(timeout: 8))
+        XCTAssertFalse(begin.exists, "Subsequent entry must not require a second start decision")
+    }
+
+    func testHelpPreservesProgressAndKeepLeavesTasksUnchangedAcrossRelaunch() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace"]
+        app.launch()
+        defer { app.terminate() }
+
+        let taskIDs = ["01ARZ3NDEKTSV4RRFFQ69G5FAW", "01ARZ3NDEKTSV4RRFFQ69G5FAV"]
+        var originalLabels: [String: String] = [:]
+        for taskID in taskIDs {
+            let row = app.buttons["task-row-\(taskID)"]
+            XCTAssertTrue(row.waitForExistence(timeout: 10))
+            originalLabels[taskID] = row.label
+        }
+        openDailyReviewSettings(in: app)
+        enableMorningReview(in: app)
+        scrollToAndTap(app.buttons["daily-review-start-kickstart"], in: app)
+        scrollToAndTap(app.buttons["daily-review-begin"], in: app)
+        scrollToAndTap(app.buttons["daily-review-keep-\(taskIDs[0])"], in: app)
+
+        let secondDecision = app.buttons["daily-review-keep-\(taskIDs[1])"]
+        XCTAssertTrue(secondDecision.waitForExistence(timeout: 8))
+        let secondCard = app.descendants(matching: .any)["daily-review-task-\(taskIDs[1])"]
+        let progress = secondCard.staticTexts["daily-review-progress"].label
+        app.buttons["daily-review-help"].tap()
+        scrollToAndTap(app.buttons["daily-review-help-return"], in: app)
+        XCTAssertTrue(secondDecision.waitForExistence(timeout: 8))
+        XCTAssertEqual(secondCard.staticTexts["daily-review-progress"].label, progress)
+
+        app.buttons["daily-review-help"].tap()
+        let closeHelp = app.buttons["daily-review-help-close"]
+        XCTAssertTrue(closeHelp.waitForExistence(timeout: 8))
+        closeHelp.tap()
+        XCTAssertTrue(secondDecision.waitForExistence(timeout: 8))
+        secondDecision.tap()
+        let finish = app.buttons["daily-review-finish"]
+        XCTAssertTrue(finish.waitForExistence(timeout: 8))
+        let counts = app.staticTexts["0 finished, 0 rescheduled, and 2 kept."]
+        XCTAssertTrue(counts.exists)
+        app.buttons["daily-review-help"].tap()
+        scrollToAndTap(app.buttons["daily-review-help-return"], in: app)
+        XCTAssertTrue(finish.waitForExistence(timeout: 8))
+        XCTAssertTrue(counts.exists, "Help must preserve decisions and the closing page")
+        app.buttons["daily-review-close"].tap()
+
+        for taskID in taskIDs {
+            let row = app.buttons["task-row-\(taskID)"]
+            XCTAssertTrue(row.waitForExistence(timeout: 8))
+            XCTAssertEqual(row.label, originalLabels[taskID])
+        }
+        app.terminate()
+        app.launchArguments = ["-ui-testing"]
+        app.launch()
+        for taskID in taskIDs {
+            let row = app.buttons["task-row-\(taskID)"]
+            XCTAssertTrue(row.waitForExistence(timeout: 10))
+            XCTAssertEqual(row.label, originalLabels[taskID], "Keep must not change a persisted task or schedule")
+        }
+    }
+
+    func testEmptyFirstReviewAcknowledgesIntroductionWithoutFinishingAndResetRestoresIt() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-ui-testing", "-ui-testing-reset-workspace",
+            "-daily-review.kickstart-minutes", "0",
+        ]
+        app.launch()
+        defer { app.terminate() }
+        for taskID in ["01ARZ3NDEKTSV4RRFFQ69G5FAW", "01ARZ3NDEKTSV4RRFFQ69G5FAV"] {
+            scrollToAndTap(app.buttons["task-toggle-completion-\(taskID)"], in: app)
+            XCTAssertTrue(app.buttons["task-row-\(taskID)"].waitForNonExistence(timeout: 8))
+        }
+
+        openDailyReviewSettings(in: app)
+        enableMorningReview(in: app)
+        scrollToAndTap(app.buttons["daily-review-start-kickstart"], in: app)
+        scrollToAndTap(app.buttons["daily-review-begin"], in: app)
+        XCTAssertTrue(app.buttons["daily-review-finish"].waitForExistence(timeout: 8))
+        app.buttons["daily-review-close"].tap()
+        let prompt = app.buttons["daily-review-prompt-kickstart"]
+        XCTAssertTrue(prompt.waitForExistence(timeout: 8), "Seeing an empty summary must not finish the review")
+
+        app.terminate()
+        app.launchArguments = ["-ui-testing", "-daily-review.kickstart-minutes", "0"]
+        app.launch()
+        XCTAssertTrue(prompt.waitForExistence(timeout: 10))
+        prompt.tap()
+        let finish = app.buttons["daily-review-finish"]
+        XCTAssertTrue(finish.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["daily-review-begin"].exists)
+        finish.tap()
+        XCTAssertTrue(prompt.waitForNonExistence(timeout: 8))
+
+        app.terminate()
+        app.launchArguments = ["-ui-testing", "-ui-testing-reset-workspace"]
+        app.launch()
+        openDailyReviewSettings(in: app)
+        enableMorningReview(in: app)
+        scrollToAndTap(app.buttons["daily-review-start-kickstart"], in: app)
+        XCTAssertTrue(app.buttons["daily-review-begin"].waitForExistence(timeout: 8))
     }
 
     func testReviewDecisionsRemainReachableAtAccessibilityTextSize() {
@@ -145,6 +284,13 @@ final class DailyReviewUITests: XCTestCase {
             app.swipeUp()
         }
         XCTFail("Review action must be reachable by scrolling: \(button.identifier)")
+    }
+
+    private func enableMorningReview(in app: XCUIApplication) {
+        let toggle = app.switches["daily-review-kickstart-enabled"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 8))
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(toggle.value as? String, "1")
     }
 
     private func openDailyReviewSettings(in app: XCUIApplication) {

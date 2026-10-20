@@ -17,6 +17,7 @@ struct TaskAttachmentSection: View {
     @Binding var attachments: [AttachmentDraft]
     @Binding var removingAttachmentPaths: [String]
     @State private var choosesFiles = false
+    @State private var isAddingExpanded = false
     @State private var photos: [PhotosPickerItem] = []
     @Binding var isImporting: Bool
     @State private var importError: String?
@@ -30,7 +31,7 @@ struct TaskAttachmentSection: View {
     }
 
     var body: some View {
-        Section {
+        VStack(alignment: .leading, spacing: 12) {
             ForEach(links, id: \.path) { link in
                 AttachmentRow(model: model, selection: selection, path: link.path,
                               name: link.displayName, imported: nil) {
@@ -44,13 +45,36 @@ struct TaskAttachmentSection: View {
                     Task { await model.discardAttachmentDrafts([attachment], selection: selection) }
                 }
             }
-            Button("Choose Files", systemImage: "folder") { choosesFiles = true }
-                .accessibilityIdentifier("attachment-choose-files")
-            PhotosPicker(selection: $photos, maxSelectionCount: 20, matching: .images,
-                         preferredItemEncoding: .current) {
-                Label("Choose Photos", systemImage: "photo")
+            DisclosureGroup(isExpanded: $isAddingExpanded) {
+                Button("Choose Files", systemImage: "folder") { choosesFiles = true }
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("attachment-choose-files")
+                PhotosPicker(selection: $photos, maxSelectionCount: 20, matching: .images,
+                             preferredItemEncoding: .current) {
+                    Label("Choose Photos", systemImage: "photo")
+                        .frame(minHeight: 44)
+                }
+                .accessibilityIdentifier("attachment-choose-photos")
+                Text("Up to 20 MiB per file.")
+                    .font(.footnote)
+                    .foregroundStyle(OTodoTheme.secondaryText)
+                DisclosureGroup("Manual links") {
+                    Text("Use explicit Attachments/ paths in notes for manually added links.")
+                        .font(.footnote)
+                        .foregroundStyle(OTodoTheme.secondaryText)
+                }
+                .frame(minHeight: 44)
+            } label: {
+                Label("Add an attachment", systemImage: "paperclip")
             }
-            .accessibilityIdentifier("attachment-choose-photos")
+            .disclosureGroupStyle(TaskEditorDisclosureStyle(
+                identifier: "task-editor-attachments",
+                beforeToggle: {
+                    UIApplication.shared.sendAction(
+                        #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil
+                    )
+                }
+            ))
             if isImporting { ProgressView("Importing attachments…") }
             if let importError {
                 Label(importError, systemImage: "exclamationmark.triangle")
@@ -71,10 +95,6 @@ struct TaskAttachmentSection: View {
                 }.accessibilityIdentifier("attachment-import-sample")
             }
             #endif
-        } header: {
-            Text("Attachments")
-        } footer: {
-            Text("Up to 20 MiB per file. Removing a link keeps the file in your vault. Use explicit Attachments/ paths for manually added links.")
         }
         .disabled(isImporting)
         .fileImporter(isPresented: $choosesFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
@@ -207,6 +227,7 @@ private struct AttachmentRow: View {
                         Button(file?.isPinned == true ? "Allow Cache Eviction" : "Keep Offline",
                                systemImage: "pin") { pin() }
                     }
+                    Text("Removing the link keeps the file in your vault.")
                     Button("Remove Link", systemImage: "link.badge.plus", role: .destructive, action: remove)
                 } label: {
                     Image(systemName: "ellipsis.circle")

@@ -20,7 +20,7 @@ final class TaskNameTimeDetectionUITests: XCTestCase {
         app.revealTaskEditorElement(schedule)
         schedule.tap()
         let relative = app.textFields["task-editor-relative-due-date"]
-        app.revealTaskEditorElement(relative)
+        app.revealTaskEditorElement(relative, panel: "relative-due-disclosure")
         relative.tap()
         relative.typeText("in 2 days")
         let apply = app.buttons["task-editor-relative-due-apply"]
@@ -68,6 +68,38 @@ final class TaskNameTimeDetectionUITests: XCTestCase {
         screenshot.name = "Name clock persisted with selected calendar date"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+
+        // Shared quick choices edit only the draft and preserve the existing exact time.
+        let tomorrow = app.buttons["task-editor-tomorrow"]
+        app.revealTaskEditorElement(tomorrow)
+        tomorrow.tap()
+        app.revealTaskEditorElement(schedule)
+        XCTAssertTrue(schedule.label.contains(dateString(dayOffset: 1)))
+        XCTAssertTrue(schedule.label.contains("14:45"))
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(name.waitForNonExistence(timeout: 8))
+        XCTAssertTrue(saved.label.contains("Due: \(expectedDate) at 14:45"),
+                      "Cancel must leave the persisted schedule unchanged")
+
+        saved.tap()
+        XCTAssertTrue(name.waitForExistence(timeout: 8))
+        app.revealTaskEditorElement(schedule)
+        schedule.tap()
+        let nextWeek = app.buttons["task-editor-next-week"]
+        app.revealTaskEditorElement(nextWeek)
+        let nextWeekDate = dateString(dayOffset: 7)
+        nextWeek.tap()
+        save.tap()
+        XCTAssertTrue(name.waitForNonExistence(timeout: 8))
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(active.waitForExistence(timeout: 8))
+        active.tap()
+        for _ in 0..<6 where !saved.exists { list.swipeUp() }
+        for _ in 0..<6 where !saved.exists { list.swipeDown() }
+        XCTAssertTrue(saved.waitForExistence(timeout: 8))
+        XCTAssertTrue(saved.label.contains("Due: \(nextWeekDate) at 14:45"),
+                      "Next week means seven calendar days, retaining the time across relaunch")
     }
 
     private func dateString(dayOffset: Int) -> String {

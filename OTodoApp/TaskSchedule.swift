@@ -2,6 +2,26 @@ import Foundation
 import OTodoCore
 
 enum TaskSchedule {
+    enum FieldChange: Hashable {
+        case preserve
+        case set
+        case clear
+    }
+
+    /// Quick choices use calendar days, not elapsed 24-hour periods across DST.
+    static func quickDate(daysFromToday days: Int, now: Date = .now) -> Date {
+        calendar.date(byAdding: .day, value: days, to: calendar.startOfDay(for: now)) ?? now
+    }
+
+    static func replacingDay(of date: Date, with day: Date) -> Date {
+        let time = calendar.dateComponents([.hour, .minute, .second], from: date)
+        return calendar.date(
+            bySettingHour: time.hour ?? 12,
+            minute: time.minute ?? 0,
+            second: time.second ?? 0,
+            of: day
+        ) ?? day
+    }
     static let calendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .autoupdatingCurrent

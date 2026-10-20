@@ -5,11 +5,7 @@ import SwiftUI
 struct TaskRescheduleView: View {
     @Environment(\.dismiss) private var dismiss
 
-    private enum Change: Hashable {
-        case preserve
-        case set
-        case clear
-    }
+    private typealias Change = TaskSchedule.FieldChange
 
     private let tasks: [TodoTask]
     private let onSave: @MainActor (TaskDueDateChange, TaskDueTimeChange) async -> String?
@@ -46,7 +42,7 @@ struct TaskRescheduleView: View {
                             Text(tasks.first?.name ?? String(localized: "No todos selected"))
                         }
                     } icon: {
-                        Image(systemName: isBulk ? "checkmark.circle.fill" : "checkmark.circle")
+                        Image(systemName: isBulk ? "calendar.badge.clock" : "calendar")
                     }
                     .font(.body.weight(.semibold))
                     .fixedSize(horizontal: false, vertical: true)
@@ -57,75 +53,20 @@ struct TaskRescheduleView: View {
                     }
                 }
 
-                Section {
-                    RelativeDueDateField(
-                        accessibilityIdentifierPrefix: "task-reschedule-relative-due",
-                        onPendingChange: { hasPendingRelativeDueDate = $0 },
-                        onApply: { resolvedDate, unit in
-                            selectedDate = resolvedDate
-                            dateChange = .set
-                            if !isBulk || unit == .minute || unit == .hour {
-                                selectedTime = resolvedDate
-                                timeChange = .set
-                            }
-                            saveError = nil
-                        }
+                Section("Date and time") {
+                    TaskScheduleFields(
+                        date: $selectedDate,
+                        time: $selectedTime,
+                        dateChange: $dateChange,
+                        timeChange: $timeChange,
+                        hasPendingRelativeDueDate: $hasPendingRelativeDueDate,
+                        isBulk: isBulk,
+                        identifierPrefix: "task-reschedule",
+                        dateIdentifierPrefix: "task-reschedule",
+                        helpText: scheduleExplanation,
+                        onRelativeApply: { saveError = nil },
+                        onQuickChoice: save
                     )
-                } header: {
-                    Text("Relative")
-                }
-
-                Section {
-                    if isBulk {
-                        Picker("Due dates", selection: $dateChange) {
-                            Text("Keep existing dates").tag(Change.preserve)
-                            Text("Set date").tag(Change.set)
-                            Text("Remove dates").tag(Change.clear)
-                        }
-                        .accessibilityIdentifier("task-reschedule-date-change")
-                    }
-
-                    if dateChange == .set {
-                        DatePicker(
-                            "Date",
-                            selection: $selectedDate,
-                            displayedComponents: .date
-                        )
-                        .datePickerStyle(.graphical)
-                        .environment(\.calendar, TaskSchedule.calendar)
-                        .accessibilityIdentifier("task-reschedule-date-picker")
-                    }
-
-                    if dateChange != .clear {
-                        if isBulk {
-                            Picker("Due times", selection: $timeChange) {
-                                Text("Keep existing times").tag(Change.preserve)
-                                Text("Set time").tag(Change.set)
-                                Text("Remove times").tag(Change.clear)
-                            }
-                            .accessibilityIdentifier("task-reschedule-time-change")
-                        } else {
-                            Toggle("Include time", isOn: Binding(
-                                get: { timeChange == .set },
-                                set: { timeChange = $0 ? .set : .clear }
-                            ))
-                            .accessibilityIdentifier("task-reschedule-time-toggle")
-                        }
-
-                        if timeChange == .set {
-                            DatePicker(
-                                "Time",
-                                selection: $selectedTime,
-                                displayedComponents: .hourAndMinute
-                            )
-                            .environment(\.calendar, TaskSchedule.calendar)
-                            .accessibilityIdentifier("task-reschedule-time-picker")
-                        }
-                    }
-                } header: {
-                    Text("Date and time")
-                } footer: {
-                    Text(scheduleExplanation)
                 }
 
                 if let message = validationMessage ?? saveError {
@@ -136,6 +77,7 @@ struct TaskRescheduleView: View {
                     }
                 }
             }
+            .disabled(isSaving)
             .accessibilityIdentifier("task-reschedule")
             .scrollContentBackground(.hidden)
             .background(OTodoTheme.formCanvas.ignoresSafeArea())
@@ -177,7 +119,7 @@ struct TaskRescheduleView: View {
 
     private var isBulk: Bool { tasks.count > 1 }
 
-    private var scheduleExplanation: LocalizedStringKey {
+    private var scheduleExplanation: LocalizedStringResource {
         if dateChange == .clear {
             return "Removing dates also removes their times. Recurring todos require a due date."
         }
@@ -192,6 +134,9 @@ struct TaskRescheduleView: View {
     private var validationMessage: String? {
         if tasks.isEmpty {
             return "Select at least one todo."
+        }
+        if dateChange == .clear && tasks.contains(where: { $0.recurrence != nil }) {
+            return "Recurring todos require a due date."
         }
         if dateChange == .set && TaskSchedule.civilDate(from: selectedDate) == nil {
             return "Choose a valid due date."
@@ -208,7 +153,7 @@ struct TaskRescheduleView: View {
     }
 
     private func save() {
-        guard !hasPendingRelativeDueDate, validationMessage == nil else { return }
+        guard !isSaving, !hasPendingRelativeDueDate, validationMessage == nil else { return }
         let dueDate: TaskDueDateChange
         switch dateChange {
         case .preserve: dueDate = .preserve

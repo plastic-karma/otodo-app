@@ -233,65 +233,63 @@ struct TaskEditorView: View {
 
 
                     Section {
-                        DisclosureGroup(isExpanded: $isLinkExpanded) {
+                        if draft.url != nil || isLinkExpanded {
                             TaskEditorLinkFields(url: $draft.url, onFocus: {
                                 requestsNameFocus = false
                                 notesFocused = false
+                                isLinkExpanded = true
                             })
-                        } label: {
-                            Label {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text("Link")
-                                    if let host = draft.url.flatMap({ URL(string: $0)?.host }) {
-                                        Text(host)
-                                            .font(.subheadline)
-                                            .foregroundStyle(OTodoTheme.secondaryText)
-                                    }
+                        } else {
+                            Button {
+                                dismissKeyboard()
+                                isLinkExpanded = true
+                            } label: {
+                                Label("Add a link", systemImage: "link")
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("task-editor-link")
+                        }
+
+                        if hasSubtaskContent {
+                            Label(subtaskSummary, systemImage: "checklist")
+                                .font(.subheadline.weight(.semibold))
+                                .accessibilityIdentifier("task-editor-subtasks-summary")
+                        } else {
+                            Button {
+                                dismissKeyboard()
+                                isSubtasksExpanded.toggle()
+                            } label: {
+                                HStack {
+                                    Label("Subtasks", systemImage: "checklist")
+                                    Spacer(minLength: 12)
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(OTodoTheme.secondaryText)
+                                        .rotationEffect(.degrees(isSubtasksExpanded ? 90 : 0))
                                 }
-                            } icon: {
-                                Image(systemName: "link")
+                                .frame(minHeight: 44)
+                                .contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("task-editor-subtasks")
+                            .accessibilityValue(isSubtasksExpanded ? "Expanded" : "Collapsed")
                         }
-                        .disclosureGroupStyle(TaskEditorDisclosureStyle(
-                            identifier: "task-editor-link", beforeToggle: dismissKeyboard
-                        ))
+                        // Existing children remain visible Form rows with native swipe actions.
+                        if hasSubtaskContent || isSubtasksExpanded { subtaskFields }
 
-                    }
-
-                    Section {
-                        Button {
-                            dismissKeyboard()
-                            isSubtasksExpanded.toggle()
-                        } label: {
-                            HStack {
-                                Label(subtaskSummary, systemImage: "checklist")
-                                Spacer(minLength: 12)
-                                Image(systemName: "chevron.right")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(OTodoTheme.secondaryText)
-                                    .rotationEffect(.degrees(isSubtasksExpanded ? 90 : 0))
-                            }
-                            .frame(minHeight: 44)
-                            .contentShape(Rectangle())
+                        if let attachmentModel, let attachmentSelection, AttachmentLinks.enabled(configuration: configuration) {
+                            TaskAttachmentSection(
+                                model: attachmentModel, selection: attachmentSelection,
+                                bodyText: draft.body,
+                                taskPath: draft.preservedTask?.relativePath ?? configuration.tasksDirectory + "/draft.md",
+                                storePrefix: configuration.obsidianLinkPrefix,
+                                attachments: $draft.attachments,
+                                removingAttachmentPaths: $draft.removingAttachmentPaths,
+                                isImporting: $isImportingAttachments,
+                                isEditorPresented: $isEditorPresented
+                            )
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("task-editor-subtasks")
-                        .accessibilityValue(isSubtasksExpanded ? "Expanded" : "Collapsed")
-                        // Saved children remain separate Form rows so their native swipe actions work.
-                        if isSubtasksExpanded { subtaskFields }
-                    }
-
-                    if let attachmentModel, let attachmentSelection, AttachmentLinks.enabled(configuration: configuration) {
-                        TaskAttachmentSection(
-                            model: attachmentModel, selection: attachmentSelection,
-                            bodyText: draft.body,
-                            taskPath: draft.preservedTask?.relativePath ?? configuration.tasksDirectory + "/draft.md",
-                            storePrefix: configuration.obsidianLinkPrefix,
-                            attachments: $draft.attachments,
-                            removingAttachmentPaths: $draft.removingAttachmentPaths,
-                            isImporting: $isImportingAttachments,
-                            isEditorPresented: $isEditorPresented
-                        )
                     }
 
                     if let message = displayedValidationMessage ?? saveError {
@@ -355,6 +353,11 @@ struct TaskEditorView: View {
                 }
                 .onChange(of: nameFocusRequest) { _, _ in
                     proxy.scrollTo("task-editor-top", anchor: .top)
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
+                    if nameFocused {
+                        proxy.scrollTo("task-editor-top", anchor: .top)
+                    }
                 }
             }
         }
@@ -633,6 +636,12 @@ struct TaskEditorView: View {
         return { save(createAnother: true) }
     }
 
+    private var hasSubtaskContent: Bool {
+        !queuedSubtasks.isEmpty || draft.preservedTask.map {
+            !(attachmentModel?.hierarchy ?? hierarchy).children(of: $0.id).isEmpty
+        } == true
+    }
+
     private var subtaskSummary: LocalizedStringKey {
         let existing = draft.preservedTask.map {
             (attachmentModel?.hierarchy ?? hierarchy).children(of: $0.id).count
@@ -698,7 +707,7 @@ struct TaskEditorView: View {
                     }
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 } icon: {
-                    Image(systemName: projectsIncludingMentions.isEmpty ? "folder" : "checkmark.circle")
+                    Image(systemName: "folder")
                 }
             }
             .buttonStyle(OTodoChipStyle(isSelected: !projectsIncludingMentions.isEmpty))
@@ -724,44 +733,20 @@ struct TaskEditorView: View {
 
     private var editorActions: some View {
         VStack(alignment: .leading, spacing: 0) {
-            let layout = dynamicTypeSize.isAccessibilitySize
-                ? AnyLayout(VStackLayout(spacing: 8))
-                : AnyLayout(HStackLayout(spacing: 8))
-            layout {
-                Button {
-                    dismissKeyboard()
-                    isScheduleExpanded.toggle()
-                } label: {
-                    editorActionLabel("Change schedule", systemImage: "calendar", color: OTodoTheme.accent)
+            VStack(spacing: OTodoTheme.Spacing.small) {
+                finishButton
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: OTodoTheme.Spacing.small) {
+                        scheduleButton
+                        archiveButton
+                    }
+                } else {
+                    HStack(spacing: OTodoTheme.Spacing.inset) {
+                        scheduleButton
+                        archiveButton
+                    }
                 }
-                .accessibilityIdentifier("task-editor-schedule")
-                .accessibilityValue(isScheduleExpanded ? "Expanded" : "Collapsed")
-
-                Button {
-                    save(completing: true)
-                } label: {
-                    editorActionLabel("Finish", systemImage: "checkmark.circle", color: OTodoTheme.accent)
-                }
-                .disabled(isSaveDisabled || !canFinish)
-                .accessibilityIdentifier("task-editor-finish")
-                .accessibilityHint("Saves edits and completes this todo or its current repeat occurrence")
-
-                Button(role: .destructive) {
-                    dismissKeyboard()
-                    isArchiveConfirmationPresented = true
-                } label: {
-                    editorActionLabel("Archive", systemImage: "archivebox", color: .red)
-                }
-                .disabled(attachmentModel == nil || isImportingAttachments)
-                .accessibilityIdentifier("task-editor-archive")
-                .accessibilityHint("Asks before deleting this todo")
             }
-            .buttonStyle(.plain)
-
-            Text(scheduleSummary)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .padding(.top, 8)
 
             // Keep recurrence input mounted so collapsing never clears an invalid edit.
             VStack(alignment: .leading, spacing: 16) {
@@ -778,25 +763,64 @@ struct TaskEditorView: View {
         }
     }
 
-    private func editorActionLabel(_ title: LocalizedStringKey, systemImage: String, color: Color) -> some View {
-        let layout = dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(HStackLayout(spacing: 8))
-            : AnyLayout(VStackLayout(spacing: 6))
-        return layout {
-            Image(systemName: systemImage)
-                .font(.title3)
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .multilineTextAlignment(.center)
+    private var scheduleButton: some View {
+        Button {
+            dismissKeyboard()
+            isScheduleExpanded.toggle()
+        } label: {
+            Label {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Schedule")
+                        .font(.subheadline.weight(.semibold))
+                    Text(scheduleSummary)
+                        .font(.caption)
+                        .foregroundStyle(OTodoTheme.secondaryText)
+                }
                 .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "calendar")
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .frame(maxWidth: .infinity, minHeight: 72)
-        .padding(.horizontal, 4)
-        .padding(.vertical, 8)
-        .foregroundStyle(color)
-        .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
+        .foregroundStyle(OTodoTheme.accent)
+        .accessibilityIdentifier("task-editor-schedule")
+        .accessibilityValue(isScheduleExpanded ? "Expanded" : "Collapsed")
     }
+
+    private var finishButton: some View {
+        Button {
+            save(completing: true)
+        } label: {
+            Label("Finish", systemImage: "checkmark.circle")
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(OTodoTheme.filledAccent)
+        .disabled(isSaveDisabled || !canFinish)
+        .accessibilityIdentifier("task-editor-finish")
+        .accessibilityHint("Saves edits and completes this todo or its current repeat occurrence")
+    }
+
+    private var archiveButton: some View {
+        Button(role: .destructive) {
+            dismissKeyboard()
+            isArchiveConfirmationPresented = true
+        } label: {
+            Label("Archive", systemImage: "archivebox")
+                .font(.subheadline)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(OTodoTheme.coral)
+        .disabled(attachmentModel == nil || isImportingAttachments)
+        .accessibilityIdentifier("task-editor-archive")
+        .accessibilityHint("Asks before deleting this todo")
+    }
+
 
     private func archive() {
         guard !isSaving, !isImportingAttachments,
@@ -826,7 +850,11 @@ struct TaskEditorView: View {
             } else {
                 parts.append(calendarDate.formatted(.dateTime.month(.abbreviated).day().year()))
             }
-            if let time = resolvedDueTime { parts.append(time.rawValue) }
+            if let time = resolvedDueTime {
+                parts.append(TaskSchedule.date(from: date, time: time).formatted(
+                    Date.FormatStyle(date: .omitted, time: .shortened).locale(locale)
+                ))
+            }
         } else {
             parts.append("No due date")
         }
@@ -861,7 +889,6 @@ struct TaskEditorView: View {
 
     private var scheduleFields: some View {
         TaskEditorScheduleFields(
-            isNewTask: draft.preservedTask == nil,
             hasDueDate: $hasDueDate,
             hasDueTime: $hasDueTime,
             dueDate: $dueDate,
@@ -1285,7 +1312,7 @@ struct TaskEditorView: View {
         activeDueDatePhrase?.dueTime ?? selectedDueTime
     }
 
-    private var dueDateHelpText: String {
+    private var dueDateHelpText: LocalizedStringResource {
         if let activeDueDatePhrase {
             return "The detected phrases set \(resolvedDueDate?.rawValue ?? activeDueDatePhrase.dueDate.rawValue)\(resolvedDueTime.map { " at \($0.rawValue)" } ?? "") when saved. A time-only phrase keeps your selected calendar date."
         }
@@ -1459,7 +1486,6 @@ private struct TaskEditorClassificationFields: View {
 }
 
 private struct TaskEditorScheduleFields: View {
-    let isNewTask: Bool
     @Binding var hasDueDate: Bool
     @Binding var hasDueTime: Bool
     @Binding var dueDate: Date
@@ -1470,39 +1496,27 @@ private struct TaskEditorScheduleFields: View {
     @Binding var recurrenceRule: RecurrenceRule?
     @Binding var recurrenceError: String?
     let initialRecurrenceSettings: TaskRecurrenceFields.Settings
-    let helpText: String
+    let helpText: LocalizedStringResource
 
     var body: some View {
-        if isNewTask {
-            RelativeDueDateField(
-                accessibilityIdentifierPrefix: "task-editor-relative-due",
-                onPendingChange: { hasPendingRelativeDueDate = $0 },
-                onApply: { resolvedDate, _ in
-                    dueDate = resolvedDate
-                    hasDueDate = true
-                    hasDueTime = true
-                    saveError = nil
-                }
-            )
-        }
-        Toggle("Set due date", isOn: $hasDueDate)
-            .accessibilityIdentifier("task-editor-due-date-toggle")
-        if hasDueDate {
-            DatePicker("Date", selection: $dueDate, displayedComponents: .date)
-                .datePickerStyle(.compact)
-                .environment(\.calendar, TaskSchedule.calendar)
-                .accessibilityIdentifier("task-editor-due-date-picker")
-            Toggle("Include time", isOn: $hasDueTime)
-                .accessibilityIdentifier("task-editor-due-time-toggle")
-            if hasDueTime {
-                DatePicker("Time", selection: $dueDate, displayedComponents: .hourAndMinute)
-                    .environment(\.calendar, TaskSchedule.calendar)
-                    .accessibilityIdentifier("task-editor-due-time-picker")
-            }
-        }
-        Text(helpText)
-            .font(.footnote)
-            .foregroundStyle(.secondary)
+        TaskScheduleFields(
+            date: $dueDate,
+            time: $dueDate,
+            dateChange: Binding(
+                get: { hasDueDate ? .set : .clear },
+                set: { hasDueDate = $0 == .set }
+            ),
+            timeChange: Binding(
+                get: { hasDueTime ? .set : .clear },
+                set: { hasDueTime = $0 == .set }
+            ),
+            hasPendingRelativeDueDate: $hasPendingRelativeDueDate,
+            isBulk: false,
+            identifierPrefix: "task-editor",
+            dateIdentifierPrefix: "task-editor-due",
+            helpText: helpText,
+            onRelativeApply: { saveError = nil }
+        )
         TaskRecurrenceFields(
             recurrence: $recurrence,
             recurrenceFrom: $recurrenceFrom,
@@ -1536,6 +1550,7 @@ private struct TaskEditorLinkFields: View {
             }
             if url != nil {
                 Button {
+                    onFocus()
                     url = nil
                 } label: {
                     Image(systemName: "xmark.circle.fill")
@@ -1615,7 +1630,7 @@ private struct TaskEditorSubtaskInput: View {
 
 /// Keep input subtrees mounted while collapsed, so child-owned date parser and
 /// invalid recurrence text survive opening and closing a panel.
-private struct TaskEditorDisclosureStyle: DisclosureGroupStyle {
+struct TaskEditorDisclosureStyle: DisclosureGroupStyle {
     let identifier: String
     let beforeToggle: () -> Void
 
@@ -1781,7 +1796,7 @@ private struct TaskRecurrenceFields: View {
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("task-editor-repeat-anchor")
             }
-            Group {
+            DisclosureGroup("Repeat help") {
                 if settings.frequency != nil {
                     if settings.anchor == .schedule {
                         Text("Completing an occurrence keeps the original schedule and skips missed dates. A due date matching any selections is required. Empty selections use the anchor date. Impossible dates are skipped, never shortened. Choose a terminal State to finish the series without scheduling another occurrence.")
@@ -1794,6 +1809,8 @@ private struct TaskRecurrenceFields: View {
             }
             .font(.footnote)
             .foregroundStyle(OTodoTheme.secondaryText)
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("task-editor-repeat-help")
         }
         .onChange(of: settings) { _, _ in publishRule() }
     }

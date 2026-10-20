@@ -13,6 +13,7 @@ struct TaskRowView: View {
     var ancestry: String? = nil
     var hierarchyDepth: Int = 0
     var rowIdentifier: String? = nil
+    var hidesTodayDate = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -47,7 +48,8 @@ struct TaskRowView: View {
                     name: task.name, dueDate: task.dueDate, dueTime: task.dueTime,
                     isRecurring: task.recurrence != nil,
                     projectSlugs: task.projectSlugs, tags: task.tags,
-                    workflowState: workflowState, today: today, ancestry: ancestry
+                    workflowState: workflowState, today: today, ancestry: ancestry,
+                    hidesTodayDate: hidesTodayDate
                 )
                 .padding(.vertical, 11)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -126,7 +128,6 @@ struct TaskRowView: View {
 
 private struct TaskRowLabel: View {
     @Environment(\.locale) private var locale
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let name: String
     let dueDate: CivilDate?
     let dueTime: CivilTime?
@@ -136,6 +137,7 @@ private struct TaskRowLabel: View {
     let workflowState: WorkflowState?
     let today: String
     let ancestry: String?
+    let hidesTodayDate: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -146,55 +148,54 @@ private struct TaskRowLabel: View {
                 .strikethrough(workflowState?.isTerminal == true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            let due = duePresentation
-            let context = contextPresentation
-            if due != nil || context != nil || isRecurring || workflowState?.isInProgress == true {
-                VStack(alignment: .leading, spacing: 4) {
-                    let layout = dynamicTypeSize.isAccessibilitySize
-                        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
-                        : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 8))
-                    layout {
-                        if let due {
-                            Text(due.label)
-                                .foregroundStyle(due.color)
-                                .monospacedDigit()
-                        }
-                        if let workflowState, workflowState.isInProgress {
-                            Text(workflowState.name)
-                                .foregroundStyle(OTodoTheme.accent)
-                        }
-                        if isRecurring {
-                            Image(systemName: "repeat")
-                                .accessibilityHidden(true)
-                        }
-                    }
-                    if let context {
-                        Label(context.label, systemImage: context.icon)
-                    }
-                }
-                .fixedSize(horizontal: false, vertical: true)
-                .font(.caption)
-                .foregroundStyle(OTodoTheme.secondaryText)
+            if let metadata {
+                metadata
+                    .fixedSize(horizontal: false, vertical: true)
+                    .font(.caption)
+                    .foregroundStyle(OTodoTheme.secondaryText)
             }
         }
     }
 
+    private var metadata: Text? {
+        var result = duePresentation.map { Text($0.label).foregroundStyle($0.color).monospacedDigit() }
+        if let context = contextPresentation {
+            let text = Text("\(Image(systemName: context.icon)) \(context.label)")
+            result = result.map { Text("\($0) · \(text)") } ?? text
+        }
+        if let workflowState, workflowState.isInProgress {
+            let text = Text(workflowState.name).foregroundStyle(OTodoTheme.accent)
+            result = result.map { Text("\($0) · \(text)") } ?? text
+        }
+        if isRecurring {
+            let text = Text("\(Image(systemName: "repeat"))")
+            result = result.map { Text("\($0) · \(text)") } ?? text
+        }
+        return result
+    }
+
     private var duePresentation: (label: LocalizedStringKey, color: Color)? {
         guard let dueDate else { return nil }
+        if hidesTodayDate, dueDate.rawValue == today, dueTime == nil {
+            return nil
+        }
         let date = formattedDate(dueDate.rawValue)
         let time = dueTime.map { formattedTime($0) }
         if workflowState?.isTerminal == true {
             return (time.map { "\(date) · \($0)" } ?? "\(date)", .secondary)
         }
         if dueDate.rawValue < today {
-            return (time.map { "Overdue · \(date) · \($0)" } ?? "Overdue · \(date)", .red)
+            return (time.map { "Overdue · \(date) · \($0)" } ?? "Overdue · \(date)", OTodoTheme.coral)
         }
         if dueDate.rawValue == today {
             if let dueTime,
                let currentTime,
                dueTime < currentTime
             {
-                return ("Overdue · \(time ?? dueTime.rawValue)", .red)
+                return ("Overdue · \(time ?? dueTime.rawValue)", OTodoTheme.coral)
+            }
+            if hidesTodayDate, let time {
+                return ("\(time)", OTodoTheme.accent)
             }
             return (time.map { "Today · \($0)" } ?? "Today", OTodoTheme.accent)
         }

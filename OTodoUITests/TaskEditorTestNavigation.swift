@@ -10,10 +10,21 @@ extension XCUIApplication {
         line: UInt = #line
     ) {
         if let panel {
+            if panel == "link" || panel == "subtasks" {
+                let contentID = panel == "link" ? "task-editor-url" : "task-editor-subtasks-summary"
+                let anchors = descendants(matching: .any).matching(NSPredicate(
+                    format: "identifier IN %@", ["task-editor-\(panel)", contentID]
+                ))
+                let anchor = anchors.element(boundBy: max(0, anchors.count - 1))
+                revealTaskEditorElement(anchor, file: file, line: line)
+            }
             let panels = buttons.matching(identifier: "task-editor-\(panel)")
-            let disclosure = panels.element(boundBy: max(0, panels.count - 1))
-            revealTaskEditorElement(disclosure, file: file, line: line)
-            if disclosure.value as? String != "Expanded" { disclosure.tap() }
+            // Existing link and subtask content is always exposed without a disclosure.
+            if !["link", "subtasks"].contains(panel) || panels.count > 0 {
+                let disclosure = panels.element(boundBy: max(0, panels.count - 1))
+                revealTaskEditorElement(disclosure, file: file, line: line)
+                if disclosure.value as? String != "Expanded" { disclosure.tap() }
+            }
         }
         let editors = descendants(matching: .any).matching(identifier: "task-editor")
         XCTAssertTrue(editors.firstMatch.waitForExistence(timeout: 8), file: file, line: line)

@@ -52,8 +52,10 @@ final class AppModel {
     private(set) var isOnline: Bool
     private(set) var isBusy = false
     private(set) var isSyncing = false
+    private(set) var hasSyncedWorkspace = false
     private(set) var statusMessage: String?
     private(set) var errorMessage: String?
+    private(set) var syncErrorMessage: String?
 
     @ObservationIgnored private let isUITesting: Bool
     @ObservationIgnored private let resetsUITestingWorkspace: Bool
@@ -79,7 +81,6 @@ final class AppModel {
     @ObservationIgnored private var authorizationTask: Task<Void, Never>?
     @ObservationIgnored private var syncTask: Task<Void, Never>?
     @ObservationIgnored private var syncFollowUpRequested = false
-    @ObservationIgnored private var syncFollowUpSurfacesErrors = false
     @ObservationIgnored private var localMutationsInProgress = 0
     @ObservationIgnored private var isEndingSession = false
     @ObservationIgnored private var connectivityTask: Task<Void, Never>?
@@ -197,7 +198,7 @@ final class AppModel {
                     restoredWorkspace = true
                     if selection.isLocalOnly {
                         statusMessage = "Stored only on this device."
-                        errorMessage = nil
+                        syncErrorMessage = nil
                         return
                     }
                 } else if selection.isLocalOnly {
@@ -213,7 +214,7 @@ final class AppModel {
                 if restoredWorkspace {
                     rootState = .workspace
                     statusMessage = "Saved todos remain available offline."
-                    errorMessage = "GitHub sign-in is not configured in this build."
+                    syncErrorMessage = "GitHub sign-in is not configured in this build."
                 } else {
                     rootState = .missingOAuthConfiguration
                 }
@@ -226,7 +227,7 @@ final class AppModel {
                 if restoredWorkspace {
                     rootState = .workspace
                     statusMessage = "Saved todos remain available offline."
-                    errorMessage = "GitHub authorization is required. Sign out, then authorize again to synchronize."
+                    syncErrorMessage = "GitHub authorization is required. Sign out, then authorize again to synchronize."
                 } else {
                     rootState = .authentication
                 }
@@ -240,7 +241,7 @@ final class AppModel {
                 if restoredWorkspace {
                     rootState = .workspace
                     statusMessage = "Saved todos remain available offline."
-                    errorMessage = "GitHub authorization expired. Sign out, then authorize again to synchronize."
+                    syncErrorMessage = "GitHub authorization expired. Sign out, then authorize again to synchronize."
                 } else {
                     rootState = .authentication
                     errorMessage = "GitHub authorization expired. Sign in again to continue."
@@ -250,10 +251,10 @@ final class AppModel {
 
             configureAuthenticatedGitHub(with: token)
             if restoredWorkspace {
-                errorMessage = nil
+                syncErrorMessage = nil
                 statusMessage = isOnline ? "Checking for changes…" : "Offline — showing saved todos."
                 if isOnline {
-                    triggerSynchronization(surfacesErrors: true)
+                    triggerSynchronization()
                 }
             } else {
                 if workspaceSelection != nil {
@@ -267,7 +268,7 @@ final class AppModel {
         } catch {
             guard sessionID == operationSession, !isEndingSession else { return }
             if restoredWorkspace {
-                errorMessage = "\(Self.message(for: error)) Sign out, then authorize again to synchronize."
+                syncErrorMessage = "\(Self.message(for: error)) Sign out, then authorize again to synchronize."
                 rootState = .workspace
             } else {
                 errorMessage = Self.message(for: error)
@@ -291,7 +292,7 @@ final class AppModel {
         }
         guard sessionID == operationSession, !isEndingSession else { return }
         if isOnline, !selection.isLocalOnly {
-            await synchronize(surfacesErrors: true)
+            await synchronize()
         }
     }
 
@@ -303,6 +304,8 @@ final class AppModel {
         }
 
         sessionID = UUID()
+        syncErrorMessage = nil
+        hasSyncedWorkspace = false
         let operationSession = sessionID
         errorMessage = nil
         statusMessage = "Preparing local storage…"
@@ -348,7 +351,6 @@ final class AppModel {
             authenticatedGitHub = nil
             syncEngine = nil
             syncFollowUpRequested = false
-            syncFollowUpSurfacesErrors = false
             apply(workspace)
             rootState = .workspace
             statusMessage = "Stored only on this device."
@@ -369,13 +371,14 @@ final class AppModel {
 
         isEndingSession = true
         sessionID = UUID()
+        syncErrorMessage = nil
+        hasSyncedWorkspace = false
         let preparationSession = sessionID
         let activeSync = syncTask
         let activeGitHub = authenticatedGitHub
         syncTask = nil
         isSyncing = false
         syncFollowUpRequested = false
-        syncFollowUpSurfacesErrors = false
         activeSync?.cancel()
         authenticatedGitHub = nil
         syncEngine = nil
@@ -579,8 +582,10 @@ final class AppModel {
             rootState = .workspace
             statusMessage = "Todo store is ready."
             errorMessage = nil
+            syncErrorMessage = nil
+            hasSyncedWorkspace = !loadedCachedWorkspace
             if loadedCachedWorkspace, isOnline {
-                triggerSynchronization(surfacesErrors: true)
+                triggerSynchronization()
             }
         } catch {
             await handleNetworkError(error, session: operationSession)
@@ -1223,7 +1228,6 @@ final class AppModel {
     func refresh() async {
         guard let selection = workspaceSelection else { return }
         let operationSession = sessionID
-        errorMessage = nil
         do {
             if let workspace = try await taskService.load(selection: selection) {
                 guard sessionID == operationSession, !isEndingSession else { return }
@@ -1234,35 +1238,37 @@ final class AppModel {
             errorMessage = Self.message(for: error)
             return
         }
+        guard sessionID == operationSession, !isEndingSession else { return }
         if selection.isLocalOnly {
-            statusMessage = "Stored only on this device."
-            errorMessage = nil
+            statusMessage = "Local-only workspace."
+            syncErrorMessage = nil
             return
         }
         guard authenticatedGitHub != nil else {
-            statusMessage = "Saved todos remain available on this device."
-            errorMessage = "GitHub authorization is required. Sign out, then authorize again to synchronize."
+            statusMessage = "GitHub authorization is required to synchronize."
+            syncErrorMessage = "GitHub authorization is required. Sign out, then authorize again to synchronize."
             return
         }
 
         guard sessionID == operationSession, !isEndingSession else { return }
         guard isOnline else {
-            statusMessage = "Offline — showing saved todos."
+            statusMessage = "Offline — synchronization is paused."
             return
         }
-        await synchronize(surfacesErrors: true)
+        await synchronize()
     }
 
     func signOut() async {
         guard !isEndingSession else { return }
         isEndingSession = true
         sessionID = UUID()
+        syncErrorMessage = nil
+        hasSyncedWorkspace = false
         let activeSync = syncTask
         let activeGitHub = authenticatedGitHub
         syncTask = nil
         isSyncing = false
         syncFollowUpRequested = false
-        syncFollowUpSurfacesErrors = false
         activeSync?.cancel()
         authenticatedGitHub = nil
         syncEngine = nil
@@ -1338,6 +1344,8 @@ final class AppModel {
             }
 
             sessionID = UUID()
+            syncErrorMessage = nil
+            hasSyncedWorkspace = false
             configureAuthenticatedGitHub(with: token)
             deviceCode = nil
             isBusy = false
@@ -1415,13 +1423,15 @@ final class AppModel {
         conflictCount = workspace.conflicts.count
     }
 
-    private func triggerSynchronization(surfacesErrors: Bool) {
+    private func triggerSynchronization() {
+        let operationSession = sessionID
         Task { [weak self] in
-            guard let self else { return }
-            await self.synchronize(surfacesErrors: surfacesErrors)
+            guard let self, self.sessionID == operationSession else { return }
+            await self.synchronize()
         }
     }
-    private func synchronize(surfacesErrors: Bool) async {
+
+    private func synchronize() async {
         guard !isUITesting,
               !isEndingSession,
               isOnline,
@@ -1431,28 +1441,21 @@ final class AppModel {
 
         if localMutationsInProgress > 0 {
             syncFollowUpRequested = true
-            syncFollowUpSurfacesErrors = syncFollowUpSurfacesErrors || surfacesErrors
             return
         }
         if let activeSync = syncTask {
             syncFollowUpRequested = true
-            syncFollowUpSurfacesErrors = syncFollowUpSurfacesErrors || surfacesErrors
             await activeSync.value
             return
         }
 
-        let effectiveSurfacesErrors = surfacesErrors || syncFollowUpSurfacesErrors
         syncFollowUpRequested = false
-        syncFollowUpSurfacesErrors = false
         let operationSession = sessionID
         isSyncing = true
         statusMessage = "Synchronizing with GitHub…"
         let task = Task<Void, Never> { [weak self] in
             guard let self else { return }
-            await self.performSynchronization(
-                session: operationSession,
-                surfacesErrors: effectiveSurfacesErrors
-            )
+            await self.performSynchronization(session: operationSession)
         }
         syncTask = task
         await task.value
@@ -1461,20 +1464,21 @@ final class AppModel {
         isSyncing = false
 
         if syncFollowUpRequested {
-            let followUpSurfacesErrors = syncFollowUpSurfacesErrors
-            await synchronize(surfacesErrors: followUpSurfacesErrors)
+            await synchronize()
         }
     }
 
-    private func performSynchronization(session operationSession: UUID, surfacesErrors: Bool) async {
+    private func performSynchronization(session operationSession: UUID) async {
         guard let selection = workspaceSelection, let syncEngine else { return }
         do {
             let report = try await syncEngine.sync(selection: selection)
             try Task.checkCancellation()
             let workspace = try await taskService.loadWorkspace(selection: selection)
-            guard sessionID == operationSession else { return }
+            try Task.checkCancellation()
+            guard sessionID == operationSession, !isEndingSession else { return }
             apply(workspace)
-            errorMessage = nil
+            syncErrorMessage = nil
+            hasSyncedWorkspace = true
             if report.conflicts.isEmpty {
                 statusMessage = Self.syncDescription(report)
             } else {
@@ -1490,29 +1494,27 @@ final class AppModel {
         } catch is CancellationError {
             return
         } catch {
-            guard sessionID == operationSession else { return }
-            if let workspace = try? await taskService.load(selection: selection) {
+            guard sessionID == operationSession, !isEndingSession, !Task.isCancelled else { return }
+            let workspace = try? await taskService.load(selection: selection)
+            guard sessionID == operationSession, !isEndingSession, !Task.isCancelled else { return }
+            if let workspace {
                 apply(workspace)
             }
             if Self.isAuthenticationError(error) {
                 await returnToAuthentication(because: error)
                 return
             }
-            if surfacesErrors {
-                errorMessage = Self.message(for: error)
-                statusMessage = "Synchronization could not finish. Saved changes remain on this device."
-            } else {
-                statusMessage = "Saved locally; synchronization will retry later. \(Self.message(for: error))"
-            }
+            syncErrorMessage = Self.message(for: error)
+            statusMessage = "Synchronization could not finish."
         }
     }
 
     private func handleNetworkError(_ error: Error, session operationSession: UUID) async {
         guard sessionID == operationSession else { return }
+        errorMessage = Self.message(for: error)
         if Self.isAuthenticationError(error) {
             await returnToAuthentication(because: error)
         } else {
-            errorMessage = Self.message(for: error)
             statusMessage = nil
         }
     }
@@ -1520,13 +1522,14 @@ final class AppModel {
     private func returnToAuthentication(because error: Error) async {
         isEndingSession = true
         sessionID = UUID()
+        syncErrorMessage = nil
+        hasSyncedWorkspace = false
         let operationSession = sessionID
         let activeSync = syncTask
         let activeGitHub = authenticatedGitHub
         syncTask = nil
         isSyncing = false
         syncFollowUpRequested = false
-        syncFollowUpSurfacesErrors = false
         activeSync?.cancel()
         authenticatedGitHub = nil
         syncEngine = nil
@@ -1547,8 +1550,8 @@ final class AppModel {
         isBusy = false
         if workspaceSelection != nil {
             rootState = .workspace
-            statusMessage = "Saved todos remain available offline."
-            errorMessage = "\(Self.message(for: error)) Sign out, then authorize again to synchronize."
+            statusMessage = "GitHub authorization is required to synchronize."
+            syncErrorMessage = "\(Self.message(for: error)) Sign out, then authorize again to synchronize."
         } else {
             statusMessage = nil
             errorMessage = Self.message(for: error)
@@ -1573,9 +1576,9 @@ final class AppModel {
         isOnline = online
         guard rootState == .workspace, !isLocalOnly else { return }
         if !online {
-            statusMessage = "Offline — changes are saved locally."
+            statusMessage = "Offline — synchronization will resume when connected."
         } else if !wasOnline {
-            triggerSynchronization(surfacesErrors: true)
+            triggerSynchronization()
         }
     }
 
@@ -1592,11 +1595,10 @@ final class AppModel {
         guard localMutationsInProgress == 0 else { return }
         if isLocalOnly {
             syncFollowUpRequested = false
-            syncFollowUpSurfacesErrors = false
             return
         }
         guard isOnline, syncFollowUpRequested else { return }
-        triggerSynchronization(surfacesErrors: false)
+        triggerSynchronization()
     }
 
     private func publishLocalSaveStatus(
@@ -1605,10 +1607,8 @@ final class AppModel {
     ) {
         if isLocalOnly {
             statusMessage = "Saved on this device."
-            errorMessage = nil
         } else if authenticatedGitHub == nil {
             statusMessage = "Saved on this device. Sign out, then authorize again to synchronize."
-            errorMessage = nil
         } else {
             statusMessage = isOnline ? onlineMessage : offlineMessage
         }
@@ -1745,6 +1745,8 @@ final class AppModel {
             isOnline = false
             isBusy = false
             errorMessage = nil
+            syncErrorMessage = nil
+            hasSyncedWorkspace = false
             statusMessage = "Offline UI test workspace"
         } catch {
             rootState = .workspace
