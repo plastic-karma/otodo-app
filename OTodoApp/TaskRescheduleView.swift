@@ -64,7 +64,8 @@ struct TaskRescheduleView: View {
                         identifierPrefix: "task-reschedule",
                         dateIdentifierPrefix: "task-reschedule",
                         helpText: scheduleExplanation,
-                        onRelativeApply: { saveError = nil }
+                        onRelativeApply: { saveError = nil },
+                        onQuickChoice: save
                     )
                 }
 
@@ -152,7 +153,7 @@ struct TaskRescheduleView: View {
     }
 
     private func save() {
-        guard !hasPendingRelativeDueDate, validationMessage == nil else { return }
+        guard !isSaving, !hasPendingRelativeDueDate, validationMessage == nil else { return }
         let dueDate: TaskDueDateChange
         switch dateChange {
         case .preserve: dueDate = .preserve

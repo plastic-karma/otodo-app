@@ -104,7 +104,7 @@ struct RelativeDueDateField: View {
     }
 }
 
-/// Edits only caller-owned draft fields. The caller remains the Save/Cancel boundary.
+/// Edits caller-owned draft fields and lets the caller commit quick choices.
 struct TaskScheduleFields: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Binding var date: Date
@@ -117,8 +117,10 @@ struct TaskScheduleFields: View {
     let dateIdentifierPrefix: String
     let helpText: LocalizedStringResource
     let onRelativeApply: () -> Void
+    var onQuickChoice: (() -> Void)? = nil
     @State private var isCustomExpanded = false
     @State private var isRelativeExpanded = false
+    @State private var relativeInputID = 0
 
     var body: some View {
         if isBulk {
@@ -210,6 +212,7 @@ struct TaskScheduleFields: View {
                     onRelativeApply()
                 }
             )
+            .id(relativeInputID)
         } label: {
             Label("Relative date", systemImage: "text.cursor")
         }
@@ -237,6 +240,9 @@ struct TaskScheduleFields: View {
             date = TaskSchedule.replacingDay(of: date, with: TaskSchedule.quickDate(daysFromToday: days))
             dateChange = .set
             isCustomExpanded = false
+            hasPendingRelativeDueDate = false
+            relativeInputID += 1
+            onQuickChoice?()
         } label: {
             Text(title)
                 .frame(maxWidth: .infinity, minHeight: 44)
